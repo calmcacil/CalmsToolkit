@@ -1,20 +1,13 @@
 ---
-name: Feature request
-about: Suggest an idea for this project
-title: ''
-labels: ''
-assignees: ''
+name: 🚀 Feature Request
+about: I have a suggestion (and may want to implement it 💪)!
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## Feature Request
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+### Problem description
+A clear and concise description of what the problem is. Ex. I have an issue when [...]
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
-
-**Additional context**
-Add any other context or screenshots about the feature request here.
+### Proposed solution
+A clear and concise description of what you want to happen. Add any considered drawbacks.
