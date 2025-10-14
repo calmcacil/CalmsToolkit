@@ -1,9 +1,11 @@
 .PHONY: all build clean install test help
 
-INSTALL_DIR=~/.local/bin
+# Installation parameters
+prefix?=/usr/local
+INSTALL_DIR?=$(prefix)/bin
 
-# Binary name
-BUILD_DIR=build
+# Binary names and build directory
+BUILD_DIR=bin
 BINARY_STREAMSTOOL=media-streams
 
 
