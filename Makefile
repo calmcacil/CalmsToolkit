@@ -1,6 +1,7 @@
 .PHONY: all build clean install test help
 
 # Binary name
+BUILD_DIR=build
 BINARY_PLEX=plex-streams
 BINARY_JELLYFIN=jellyfin-streams
 BINARY_MEDIA=media-streams
