@@ -2,9 +2,7 @@
 
 # Binary name
 BUILD_DIR=build
-BINARY_PLEX=plex-streams
-BINARY_JELLYFIN=jellyfin-streams
-BINARY_MEDIA=media-streams
+BINARY_STREAMSTOOL=media-streams
 
 # Go parameters
 GOCMD=go
@@ -31,9 +29,7 @@ help:
 build:
 	@echo "Building binaries..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_PLEX) plex-streams.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_JELLYFIN) jellyfin-streams.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MEDIA) media-streams.go
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -56,9 +52,7 @@ build-all:
 
 install: build
 	@echo "Installing binaries to /usr/local/bin..."
-	@install -m 755 $(BUILD_DIR)/$(BINARY_PLEX) ~/.local/bin/$(BINARY_PLEX)
-	@install -m 755 $(BUILD_DIR)/$(BINARY_JELLYFIN) ~/.local/bin/$(BINARY_JELLYFIN)
-	@install -m 755 $(BUILD_DIR)/$(BINARY_MEDIA) ~/.local/bin/$(BINARY_MEDIA)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_STREAMSTOOL) ~/.local/bin/$(BINARY_STREAMSTOOL)
 	@echo "Installation complete!"
 
 clean:
@@ -72,10 +66,3 @@ test:
 
 tidy:
 	$(GOMOD) tidy
-
-# Windows-specific targets
-build-windows:
-	@echo "Building for Windows..."
-	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME).exe plex-streams.go
-	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME).exe"
