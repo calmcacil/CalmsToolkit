@@ -30,6 +30,15 @@ const (
 	ColorOrange  = "\033[0;33m" // Using yellow as orange approximation
 )
 
+// Layout and formatting constants
+const (
+	minComfortableColumnWidth = 45 // Minimum column width for readable content
+	minShowTitleLength        = 15 // Minimum show title length before truncation
+	minEpisodeTitleLength     = 10 // Minimum episode title length before truncation
+	minMovieTitleLength       = 20 // Minimum movie title length before truncation
+	minTerminalWidth          = 40 // Minimum terminal width before falling back to vertical layout
+)
+
 // Sonarr API structures
 type SonarrEpisode struct {
 	SeriesID       int       `json:"seriesId"`
@@ -662,55 +671,12 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Conf
 	termWidth := getTerminalWidth()
 
 	// Minimum width for vertical fallback
-	if termWidth < 40 {
+	if termWidth < minTerminalWidth {
 		return displayVertical(items, config, now, start)
 	}
 
 	// Calculate how many columns (days) we can fit
-	// Each column needs: time(5) + space(1) + status_icon + show(15+) + " - S##E## - " + episode(10+)
-	// Estimate minimum: ~40 chars, comfortable: ~60 chars
-	// Table borders: 3 chars per column (| space content space)
-	
-	// Start with all days if possible
-	numColumns := config.Days
-	
-	// Calculate the available width per column
-	// tablewriter uses: | col1 | col2 | col3 |
-	// That's: 1 (left border) + (numCols * (1 space + content + 1 space + 1 border))
-	// Simplified: 1 + numCols * 3 + total_content_width
-	
-	// Work backwards: given terminal width, how much space per column?
-	tableBorderOverhead := 1 + (numColumns * 3)
-	availableContentWidth := termWidth - tableBorderOverhead
-	
-	if availableContentWidth > 0 {
-		widthPerColumn := availableContentWidth / numColumns
-		
-		// If each column would be too narrow, reduce number of columns
-		minComfortableWidth := 45 // Minimum to show reasonable content
-		
-		for widthPerColumn < minComfortableWidth && numColumns > 1 {
-			numColumns--
-			tableBorderOverhead = 1 + (numColumns * 3)
-			availableContentWidth = termWidth - tableBorderOverhead
-			if availableContentWidth > 0 {
-				widthPerColumn = availableContentWidth / numColumns
-			}
-		}
-	}
-	
-	// Ensure at least 1 column
-	if numColumns < 1 {
-		numColumns = 1
-	}
-	
-	// Calculate final width per column for formatting decisions
-	finalBorderOverhead := 1 + (numColumns * 3)
-	finalContentWidth := termWidth - finalBorderOverhead
-	widthPerColumn := 60 // default
-	if finalContentWidth > 0 && numColumns > 0 {
-		widthPerColumn = finalContentWidth / numColumns
-	}
+	numColumns, widthPerColumn := calculateColumnLayout(termWidth, config.Days)
 
 	// Group items by day
 	dayGroups := make(map[string][]CalendarItem)
@@ -729,6 +695,51 @@ func getTerminalWidth() int {
 		return 80 // Default fallback
 	}
 	return width
+}
+
+// calculateColumnLayout determines the optimal number of columns and width per column
+// based on the terminal width and desired number of days
+func calculateColumnLayout(termWidth, desiredDays int) (numColumns, widthPerColumn int) {
+	// Start with all days if possible
+	numColumns = desiredDays
+	
+	// Calculate the available width per column
+	// tablewriter uses: | col1 | col2 | col3 |
+	// That's: 1 (left border) + (numCols * (1 space + content + 1 space + 1 border))
+	// Simplified: 1 + numCols * 3 + total_content_width
+	
+	// Work backwards: given terminal width, how much space per column?
+	tableBorderOverhead := 1 + (numColumns * 3)
+	availableContentWidth := termWidth - tableBorderOverhead
+	
+	if availableContentWidth > 0 {
+		widthPerColumn = availableContentWidth / numColumns
+		
+		// If each column would be too narrow, reduce number of columns
+		for widthPerColumn < minComfortableColumnWidth && numColumns > 1 {
+			numColumns--
+			tableBorderOverhead = 1 + (numColumns * 3)
+			availableContentWidth = termWidth - tableBorderOverhead
+			if availableContentWidth > 0 {
+				widthPerColumn = availableContentWidth / numColumns
+			}
+		}
+	}
+	
+	// Ensure at least 1 column
+	if numColumns < 1 {
+		numColumns = 1
+	}
+	
+	// Calculate final width per column for formatting decisions
+	finalBorderOverhead := 1 + (numColumns * 3)
+	finalContentWidth := termWidth - finalBorderOverhead
+	widthPerColumn = 60 // default
+	if finalContentWidth > 0 && numColumns > 0 {
+		widthPerColumn = finalContentWidth / numColumns
+	}
+	
+	return numColumns, widthPerColumn
 }
 
 func truncateText(text string, maxLen int) string {
@@ -903,11 +914,11 @@ func formatEpisode(ep CalendarItem, now time.Time, config Config, color func(str
 		maxEpisodeLen := availableForTitles - maxShowLen - 3 // -3 for spacing
 		
 		// Apply minimum sensible lengths
-		if maxShowLen < 15 {
-			maxShowLen = 15
+		if maxShowLen < minShowTitleLength {
+			maxShowLen = minShowTitleLength
 		}
-		if maxEpisodeLen < 10 {
-			maxEpisodeLen = 10
+		if maxEpisodeLen < minEpisodeTitleLength {
+			maxEpisodeLen = minEpisodeTitleLength
 		}
 		
 		if len(showTitle) > maxShowLen {
@@ -938,8 +949,8 @@ func formatMovie(movie CalendarItem, now time.Time, config Config, color func(st
 	
 	// Only truncate if necessary
 	if maxTitleLen < len(title) {
-		if maxTitleLen < 20 {
-			maxTitleLen = 20 // Minimum reasonable length
+		if maxTitleLen < minMovieTitleLength {
+			maxTitleLen = minMovieTitleLength
 		}
 		if len(title) > maxTitleLen {
 			title = title[:maxTitleLen-3] + "..."
