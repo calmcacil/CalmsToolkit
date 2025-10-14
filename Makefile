@@ -1,10 +1,12 @@
 .PHONY: all build clean install test help
 
-# Binary name
-BUILD_DIR=build
-BINARY_PLEX=plex-streams
-BINARY_JELLYFIN=jellyfin-streams
-BINARY_MEDIA=media-streams
+# Installation parameters
+prefix?=/usr/local
+INSTALL_DIR?=$(prefix)/bin
+
+# Binary names and build directory
+BUILD_DIR=bin
+BINARY_STREAMSTOOL=media-streams
 BINARY_CALENDAR=media-calendar
 
 # Go parameters
@@ -24,7 +26,7 @@ help:
 	@echo "Available targets:"
 	@echo "  make build         - Build for current platform"
 	@echo "  make build-all     - Build for all platforms"
-	@echo "  make install       - Install to /usr/local/bin (Linux/macOS)"
+	@echo "  make install       - Install to $(INSTALL_DIR) (Linux/macOS)"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make test          - Run tests"
 	@echo "  make tidy          - Tidy go.mod"
@@ -32,9 +34,7 @@ help:
 build:
 	@echo "Building binaries..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_PLEX) plex-streams.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_JELLYFIN) jellyfin-streams.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MEDIA) media-streams.go
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
@@ -44,7 +44,7 @@ build-all:
 
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
-			for SRC in plex-streams jellyfin-streams media-streams media-calendar; do \
+			for SRC in media-streams media-calendar; do \
 				BIN=$${SRC}-$$GOOS-$$GOARCH; \
 				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
@@ -57,11 +57,10 @@ build-all:
 	@ls -lh $(BUILD_DIR)
 
 install: build
-	@echo "Installing binaries to /usr/local/bin..."
-	@install -m 755 $(BUILD_DIR)/$(BINARY_PLEX) ~/.local/bin/$(BINARY_PLEX)
-	@install -m 755 $(BUILD_DIR)/$(BINARY_JELLYFIN) ~/.local/bin/$(BINARY_JELLYFIN)
-	@install -m 755 $(BUILD_DIR)/$(BINARY_MEDIA) ~/.local/bin/$(BINARY_MEDIA)
-	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) ~/.local/bin/$(BINARY_CALENDAR)
+	@echo "Installing binaries to $(INSTALL_DIR)..."
+	@install -m 755 $(BUILD_DIR)/$(BINARY_STREAMSTOOL) $(INSTALL_DIR)/$(BINARY_STREAMSTOOL)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) $(INSTALL_DIR)/$(BINARY_CALENDAR)
+	@echo "Make sure $(INSTALL_DIR) is in your PATH."
 	@echo "Installation complete!"
 
 clean:
@@ -75,10 +74,3 @@ test:
 
 tidy:
 	$(GOMOD) tidy
-
-# Windows-specific targets
-build-windows:
-	@echo "Building for Windows..."
-	@if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME).exe plex-streams.go
-	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME).exe"
