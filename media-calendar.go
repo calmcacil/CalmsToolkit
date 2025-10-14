@@ -107,6 +107,7 @@ type Config struct {
 	JSONOutput    bool
 	WatchMode     bool
 	WatchSeconds  int
+	Debug         bool
 }
 
 // QueueIssue represents a service with queue problems
@@ -143,12 +144,13 @@ func main() {
 		jsonOutput   = flag.Bool("json", false, "Output in JSON format")
 		watchMode    = flag.Bool("watch", false, "Continuously monitor calendar")
 		watchSeconds = flag.Int("interval", 300, "Watch mode refresh interval in seconds")
+		debug        = flag.Bool("debug", false, "Enable debug logging (shows API URLs)")
 	)
 	flag.Parse()
 
 	// Load configuration
 	config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens,
-		*timeout, *days, *noColor, *jsonOutput, *watchMode, *watchSeconds)
+		*timeout, *days, *noColor, *jsonOutput, *watchMode, *watchSeconds, *debug)
 
 	// Validate configuration
 	if len(config.SonarrURLs) == 0 && len(config.RadarrURLs) == 0 {
@@ -177,7 +179,7 @@ func main() {
 }
 
 func loadConfig(sonarrURLsFlag, sonarrTokensFlag, radarrURLsFlag, radarrTokensFlag string,
-	timeout time.Duration, days int, noColor, jsonOutput, watchMode bool, watchSeconds int) Config {
+	timeout time.Duration, days int, noColor, jsonOutput, watchMode bool, watchSeconds int, debug bool) Config {
 
 	config := Config{
 		Timeout:      timeout,
@@ -186,6 +188,7 @@ func loadConfig(sonarrURLsFlag, sonarrTokensFlag, radarrURLsFlag, radarrTokensFl
 		JSONOutput:   jsonOutput,
 		WatchMode:    watchMode,
 		WatchSeconds: watchSeconds,
+		Debug:        debug || os.Getenv("DEBUG") == "true" || os.Getenv("DEBUG") == "1",
 	}
 
 	// Try to load from .env file first
@@ -199,17 +202,33 @@ func loadConfig(sonarrURLsFlag, sonarrTokensFlag, radarrURLsFlag, radarrTokensFl
 	}
 
 	// Environment variables override .env file
+	// Support both plural (SONARR_URLS) and singular (SONARR_URL) variants
 	if envURLs := os.Getenv("SONARR_URLS"); envURLs != "" {
 		config.SonarrURLs = parseCommaSeparated(envURLs)
+	} else if envURL := os.Getenv("SONARR_URL"); envURL != "" {
+		// Fallback to singular SONARR_URL
+		config.SonarrURLs = []string{envURL}
 	}
+	
 	if envTokens := os.Getenv("SONARR_TOKENS"); envTokens != "" {
 		config.SonarrTokens = parseCommaSeparated(envTokens)
+	} else if envToken := os.Getenv("SONARR_API_TOKEN"); envToken != "" {
+		// Fallback to singular SONARR_API_TOKEN
+		config.SonarrTokens = []string{envToken}
 	}
+	
 	if envURLs := os.Getenv("RADARR_URLS"); envURLs != "" {
 		config.RadarrURLs = parseCommaSeparated(envURLs)
+	} else if envURL := os.Getenv("RADARR_URL"); envURL != "" {
+		// Fallback to singular RADARR_URL
+		config.RadarrURLs = []string{envURL}
 	}
+	
 	if envTokens := os.Getenv("RADARR_TOKENS"); envTokens != "" {
 		config.RadarrTokens = parseCommaSeparated(envTokens)
+	} else if envToken := os.Getenv("RADARR_API_TOKEN"); envToken != "" {
+		// Fallback to singular RADARR_API_TOKEN
+		config.RadarrTokens = []string{envToken}
 	}
 
 	// Command line flags override everything
@@ -283,9 +302,13 @@ func parseCommaSeparated(s string) []string {
 	return result
 }
 
-func fetchSonarrCalendar(url, token string, start, end time.Time) ([]SonarrEpisode, error) {
+func fetchSonarrCalendar(url, token string, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s&includeSeries=true",
 		url, start.Format("2006-01-02"), end.Format("2006-01-02"))
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Fetching Sonarr calendar from: %s\n", apiURL)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -317,9 +340,13 @@ func fetchSonarrCalendar(url, token string, start, end time.Time) ([]SonarrEpiso
 	return episodes, nil
 }
 
-func fetchRadarrCalendar(url, token string, start, end time.Time) ([]RadarrMovie, error) {
+func fetchRadarrCalendar(url, token string, start, end time.Time, debug bool) ([]RadarrMovie, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s",
 		url, start.Format("2006-01-02"), end.Format("2006-01-02"))
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Fetching Radarr calendar from: %s\n", apiURL)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -351,8 +378,12 @@ func fetchRadarrCalendar(url, token string, start, end time.Time) ([]RadarrMovie
 	return movies, nil
 }
 
-func fetchQueue(url, token string) (*QueueResponse, error) {
+func fetchQueue(url, token string, debug bool) (*QueueResponse, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/queue", url)
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "DEBUG: Fetching queue from: %s\n", apiURL)
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", apiURL, nil)
@@ -404,7 +435,7 @@ func aggregateCalendar(config Config) ([]CalendarItem, []QueueIssue, error) {
 		}
 		token := config.SonarrTokens[i]
 
-		episodes, err := fetchSonarrCalendar(url, token, start, end)
+		episodes, err := fetchSonarrCalendar(url, token, start, end, config.Debug)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch from Sonarr %s: %v\n", url, err)
 			continue
@@ -444,7 +475,7 @@ func aggregateCalendar(config Config) ([]CalendarItem, []QueueIssue, error) {
 		}
 
 		// Check queue
-		queue, err := fetchQueue(url, token)
+		queue, err := fetchQueue(url, token, config.Debug)
 		if err == nil && queue != nil {
 			errorCount := 0
 			for _, item := range queue.Records {
@@ -471,7 +502,7 @@ func aggregateCalendar(config Config) ([]CalendarItem, []QueueIssue, error) {
 		}
 		token := config.RadarrTokens[i]
 
-		movies, err := fetchRadarrCalendar(url, token, start, end)
+		movies, err := fetchRadarrCalendar(url, token, start, end, config.Debug)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch from Radarr %s: %v\n", url, err)
 			continue
@@ -515,7 +546,7 @@ func aggregateCalendar(config Config) ([]CalendarItem, []QueueIssue, error) {
 		}
 
 		// Check queue
-		queue, err := fetchQueue(url, token)
+		queue, err := fetchQueue(url, token, config.Debug)
 		if err == nil && queue != nil {
 			errorCount := 0
 			for _, item := range queue.Records {
