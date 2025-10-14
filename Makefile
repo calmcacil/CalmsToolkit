@@ -1,8 +1,12 @@
 .PHONY: all build clean install test help
 
+INSTALL_DIR=~/.local/bin
+
 # Binary name
 BUILD_DIR=build
 BINARY_STREAMSTOOL=media-streams
+
+
 
 # Go parameters
 GOCMD=go
@@ -21,7 +25,7 @@ help:
 	@echo "Available targets:"
 	@echo "  make build         - Build for current platform"
 	@echo "  make build-all     - Build for all platforms"
-	@echo "  make install       - Install to /usr/local/bin (Linux/macOS)"
+	@echo "  make install       - Install to $(INSTALL_DIR) (Linux/macOS)"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make test          - Run tests"
 	@echo "  make tidy          - Tidy go.mod"
@@ -51,8 +55,9 @@ build-all:
 	@ls -lh $(BUILD_DIR)
 
 install: build
-	@echo "Installing binaries to /usr/local/bin..."
-	@install -m 755 $(BUILD_DIR)/$(BINARY_STREAMSTOOL) ~/.local/bin/$(BINARY_STREAMSTOOL)
+	@echo "Installing binaries to $(INSTALL_DIR)..."
+	@install -m 755 $(BUILD_DIR)/$(BINARY_STREAMSTOOL) $(INSTALL_DIR)/$(BINARY_STREAMSTOOL)
+	@echo "Make sure $(INSTALL_DIR) is in your PATH."
 	@echo "Installation complete!"
 
 clean:
