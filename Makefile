@@ -5,6 +5,7 @@ BUILD_DIR=build
 BINARY_PLEX=plex-streams
 BINARY_JELLYFIN=jellyfin-streams
 BINARY_MEDIA=media-streams
+BINARY_CALENDAR=media-calendar
 
 # Go parameters
 GOCMD=go
@@ -34,6 +35,7 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_PLEX) plex-streams.go
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_JELLYFIN) jellyfin-streams.go
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MEDIA) media-streams.go
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -42,7 +44,7 @@ build-all:
 
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
-			for SRC in plex-streams jellyfin-streams media-streams; do \
+			for SRC in plex-streams jellyfin-streams media-streams media-calendar; do \
 				BIN=$${SRC}-$$GOOS-$$GOARCH; \
 				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
@@ -59,6 +61,7 @@ install: build
 	@install -m 755 $(BUILD_DIR)/$(BINARY_PLEX) ~/.local/bin/$(BINARY_PLEX)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_JELLYFIN) ~/.local/bin/$(BINARY_JELLYFIN)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_MEDIA) ~/.local/bin/$(BINARY_MEDIA)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) ~/.local/bin/$(BINARY_CALENDAR)
 	@echo "Installation complete!"
 
 clean:
