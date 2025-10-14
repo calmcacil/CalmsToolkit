@@ -13,6 +13,7 @@
 
 # Build directory
 build/
+bin/
 dist/
 
 # Dependency directories
@@ -54,3 +55,10 @@ plex-streams-*
 # Test files
 coverage.txt
 coverage.html
+
+# Screenshots and images
+*.png
+*.jpg
+*.jpeg
+*.gif
+WarpPreview*
