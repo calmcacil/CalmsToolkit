@@ -852,14 +852,6 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 			}
 			table.Append(rowData...)
 		}
-
-		table.SetRowSeparator("-")
-		table.SetCenterSeparator("|")
-		table.SetColumnSeparator("|")
-		table.SetBorder(true)
-		table.SetAutoWrapText(false)
-		table.SetPaddingLeft(" ")
-		table.SetPaddingRight(" ")
 		table.Render()
 
 		// NO spacing between sections - they should appear attached
