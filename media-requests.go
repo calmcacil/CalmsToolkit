@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -135,13 +136,42 @@ type User struct {
 }
 
 type CreateRequest struct {
-	MediaType string      `json:"mediaType"`
-	MediaID   int         `json:"mediaId"`
-	TvdbID    int         `json:"tvdbId,omitempty"`
-	Seasons   interface{} `json:"seasons,omitempty"`
-	Is4k      bool        `json:"is4k,omitempty"`
-	ServerID  int         `json:"serverId,omitempty"`
-	ProfileID int         `json:"profileId,omitempty"`
+	MediaType  string      `json:"mediaType"`
+	MediaID    int         `json:"mediaId"`
+	TvdbID     int         `json:"tvdbId,omitempty"`
+	Seasons    interface{} `json:"seasons,omitempty"`
+	Is4k       bool        `json:"is4k,omitempty"`
+	ServerID   int         `json:"serverId,omitempty"`
+	ProfileID  int         `json:"profileId,omitempty"`
+	RootFolder string      `json:"rootFolder,omitempty"`
+}
+
+type RequestOverrides struct {
+	ServerID   int
+	ServerName string
+	RootFolder string
+}
+
+type ServiceInstance struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	Is4k      bool   `json:"is4k"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+type ServiceProfile struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type ServiceRootFolder struct {
+	ID   int    `json:"id"`
+	Path string `json:"path"`
+}
+
+type ServiceDetails struct {
+	Profiles    []ServiceProfile    `json:"profiles"`
+	RootFolders []ServiceRootFolder `json:"rootFolders"`
 }
 
 type RequestsResponse struct {
@@ -437,6 +467,11 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 		}
 	}
 
+	overrides, err := selectRootFolderOverride(config, selectedMedia, reader)
+	if err != nil {
+		return
+	}
+
 	// Confirm and submit request
 	clearScreen()
 	fmt.Printf("%s%s=== Confirm Request ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
@@ -463,6 +498,15 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 		}
 	}
 
+	if overrides != nil {
+		if overrides.ServerName != "" {
+			fmt.Printf("%sServer:%s %s\n", color(ColorBold), color(ColorReset), overrides.ServerName)
+		}
+		if overrides.RootFolder != "" {
+			fmt.Printf("%sRoot Folder:%s %s\n", color(ColorBold), color(ColorReset), overrides.RootFolder)
+		}
+	}
+
 	fmt.Printf("\nSubmit request? (y/n): ")
 	confirm, _ := reader.ReadString('\n')
 	confirm = strings.TrimSpace(strings.ToLower(confirm))
@@ -476,7 +520,7 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 
 	// Submit request
 	fmt.Printf("\n%sSubmitting request...%s\n", color(ColorYellow), color(ColorReset))
-	request, err := createRequest(config, selectedMedia, seasons)
+	request, err := createRequest(config, selectedMedia, seasons, overrides)
 	if err != nil {
 		fmt.Printf("\n%sError creating request: %v%s\n", color(ColorRed), err, color(ColorReset))
 		fmt.Printf("\nPress Enter to continue...")
@@ -814,6 +858,143 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 	}
 }
 
+func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.Reader) (*RequestOverrides, error) {
+	mediaType := strings.ToLower(media.MediaType)
+
+	var service string
+	var serviceLabel string
+	switch mediaType {
+	case "movie":
+		service = "radarr"
+		serviceLabel = "Radarr"
+	case "tv":
+		service = "sonarr"
+		serviceLabel = "Sonarr"
+	default:
+		return nil, nil
+	}
+
+	servers, err := fetchServiceInstances(config, service)
+	if err != nil {
+		color := func(code string) string {
+			if config.NoColor {
+				return ""
+			}
+			return code
+		}
+		fmt.Printf("\n%sError fetching %s servers: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("\nPress Enter to continue...")
+		reader.ReadString('\n')
+		return nil, err
+	}
+
+	if len(servers) == 0 {
+		return nil, nil
+	}
+
+	color := func(code string) string {
+		if config.NoColor {
+			return ""
+		}
+		return code
+	}
+
+	fmt.Printf("\n%sSelect %s destination%s\n", color(ColorBold), serviceLabel, color(ColorReset))
+
+	var selected *ServiceInstance
+
+	if len(servers) > 1 {
+		for {
+			fmt.Printf("\nAvailable %s servers:\n", serviceLabel)
+			for i, server := range servers {
+				fmt.Printf("%s%d.%s %s", color(ColorYellow), i+1, color(ColorReset), server.Name)
+
+				var badges []string
+				if server.IsDefault {
+					badges = append(badges, "default")
+				}
+				if server.Is4k {
+					badges = append(badges, "4K")
+				}
+				if len(badges) > 0 {
+					fmt.Printf(" %s[%s]%s", color(ColorGray), strings.Join(badges, ", "), color(ColorReset))
+				}
+				fmt.Println()
+			}
+
+			fmt.Printf("\nSelect a server (1-%d), press Enter to use defaults, or type 'back' to cancel: ", len(servers))
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(strings.ToLower(input))
+
+			switch input {
+			case "":
+				return nil, nil
+			case "back", "b":
+				return nil, fmt.Errorf("cancelled")
+			default:
+				index, convErr := strconv.Atoi(input)
+				if convErr != nil || index < 1 || index > len(servers) {
+					fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+					continue
+				}
+				selected = &servers[index-1]
+			}
+
+			if selected != nil {
+				break
+			}
+		}
+	} else {
+		selected = &servers[0]
+		fmt.Printf("Using %s server: %s%s%s\n", serviceLabel, color(ColorBold), selected.Name, color(ColorReset))
+	}
+
+	details, err := fetchServiceDetails(config, service, selected.ID)
+	if err != nil {
+		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("\nPress Enter to continue...")
+		reader.ReadString('\n')
+		return nil, err
+	}
+
+	if len(details.RootFolders) == 0 {
+		fmt.Printf("\n%sNo root folders configured for %s.%s\n", color(ColorYellow), selected.Name, color(ColorReset))
+		fmt.Printf("Press Enter to continue...")
+		reader.ReadString('\n')
+		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
+	}
+
+	for {
+		fmt.Printf("\n%sRoot folders for %s:%s\n", color(ColorBold), selected.Name, color(ColorReset))
+		for i, folder := range details.RootFolders {
+			fmt.Printf("%s%d.%s %s\n", color(ColorYellow), i+1, color(ColorReset), folder.Path)
+		}
+
+		fmt.Printf("\nSelect a root folder (1-%d), press Enter to use server default, or type 'back' to cancel: ", len(details.RootFolders))
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+
+		switch input {
+		case "":
+			return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
+		case "back", "b":
+			return nil, fmt.Errorf("cancelled")
+		default:
+			index, convErr := strconv.Atoi(input)
+			if convErr != nil || index < 1 || index > len(details.RootFolders) {
+				fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+				continue
+			}
+			folder := details.RootFolders[index-1]
+			return &RequestOverrides{
+				ServerID:   selected.ID,
+				ServerName: selected.Name,
+				RootFolder: folder.Path,
+			}, nil
+		}
+	}
+}
+
 func getYear(result SearchResult) string {
 	if result.ReleaseDate != "" {
 		return result.ReleaseDate[:4]
@@ -852,6 +1033,59 @@ func clearScreen() {
 
 // API functions
 
+func fetchServiceInstances(config Config, service string) ([]ServiceInstance, error) {
+	var endpoint string
+	switch service {
+	case "radarr":
+		endpoint = "/service/radarr"
+	case "sonarr":
+		endpoint = "/service/sonarr"
+	default:
+		return nil, nil
+	}
+
+	resp, err := makeRequest(config, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch %s servers: status %d", service, resp.StatusCode)
+	}
+
+	var servers []ServiceInstance
+	if err := json.NewDecoder(resp.Body).Decode(&servers); err != nil {
+		return nil, err
+	}
+
+	return servers, nil
+}
+
+func fetchServiceDetails(config Config, service string, id int) (*ServiceDetails, error) {
+	if service != "radarr" && service != "sonarr" {
+		return nil, fmt.Errorf("unsupported service type: %s", service)
+	}
+
+	endpoint := fmt.Sprintf("/service/%s/%d", service, id)
+	resp, err := makeRequest(config, "GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to fetch %s details: status %d", service, resp.StatusCode)
+	}
+
+	var details ServiceDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, err
+	}
+
+	return &details, nil
+}
+
 func makeRequest(config Config, method, endpoint string, body interface{}) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
@@ -878,7 +1112,11 @@ func makeRequest(config Config, method, endpoint string, body interface{}) (*htt
 }
 
 func searchMedia(config Config, query string) ([]SearchResult, error) {
-	resp, err := makeRequest(config, "GET", "/search?query="+query, nil)
+	params := url.Values{}
+	params.Set("query", query)
+	endpoint := "/search?" + params.Encode()
+
+	resp, err := makeRequest(config, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -916,7 +1154,7 @@ func getTVDetails(config Config, tmdbID int) (*TVDetails, error) {
 	return &details, nil
 }
 
-func createRequest(config Config, media SearchResult, seasons interface{}) (*MediaRequest, error) {
+func createRequest(config Config, media SearchResult, seasons interface{}, overrides *RequestOverrides) (*MediaRequest, error) {
 	reqData := CreateRequest{
 		MediaType: media.MediaType,
 		MediaID:   media.ID,
@@ -924,6 +1162,15 @@ func createRequest(config Config, media SearchResult, seasons interface{}) (*Med
 
 	if media.MediaType == "tv" && seasons != nil {
 		reqData.Seasons = seasons
+	}
+
+	if overrides != nil {
+		if overrides.ServerID > 0 {
+			reqData.ServerID = overrides.ServerID
+		}
+		if overrides.RootFolder != "" {
+			reqData.RootFolder = overrides.RootFolder
+		}
 	}
 
 	resp, err := makeRequest(config, "POST", "/request", reqData)
@@ -946,22 +1193,43 @@ func createRequest(config Config, media SearchResult, seasons interface{}) (*Med
 }
 
 func getPendingRequests(config Config) ([]MediaRequest, error) {
-	resp, err := makeRequest(config, "GET", "/request?filter=pending&take=50", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+	const pageSize = 50
+	skip := 0
+	var pending []MediaRequest
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to get requests: status %d", resp.StatusCode)
+	for {
+		endpoint := fmt.Sprintf("/request?filter=all&take=%d&skip=%d", pageSize, skip)
+		resp, err := makeRequest(config, "GET", endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("failed to get requests: status %d - %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		var reqResp RequestsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&reqResp); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+		resp.Body.Close()
+
+		for _, req := range reqResp.Results {
+			if req.Status == StatusPending {
+				pending = append(pending, req)
+			}
+		}
+
+		skip += pageSize
+		if skip >= reqResp.PageInfo.Results || len(reqResp.Results) == 0 {
+			break
+		}
 	}
 
-	var reqResp RequestsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&reqResp); err != nil {
-		return nil, err
-	}
-
-	return reqResp.Results, nil
+	return pending, nil
 }
 
 func approveRequest(config Config, requestID int) error {
