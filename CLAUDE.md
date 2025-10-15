@@ -73,6 +73,9 @@ export JELLYFIN_TOKEN="your-token"
 ./build/media-streams -server both -plex-token "..." -jellyfin-token "..."
 ./build/media-streams -server plex  # Plex only
 ./build/media-streams -server jellyfin  # Jellyfin only
+
+# Watch mode with session history
+./build/media-streams -watch -interval 5 -history-duration 5m
 ```
 
 ## Architecture
@@ -119,9 +122,29 @@ Both terminal and JSON output modes are supported via the `-json` flag.
 ### Watch Mode
 
 The `-watch` flag enables continuous monitoring with auto-refresh:
-- Clears screen using platform-specific commands (`clear` on Unix, `cls` on Windows)
+- Clears screen using ANSI escape sequences for flicker-free updates
 - Refreshes at `-interval` seconds (default: 5)
 - Runs indefinitely until interrupted
+- Hides cursor during watch mode for cleaner display
+
+### Session History (media-streams only)
+
+The `media-streams` tool supports session history tracking in watch mode:
+- Tracks recently ended sessions in memory (no database required)
+- Configurable via `-history-duration` flag (default: 5 minutes)
+- Displays both active and recently ended sessions separately
+- Shows when sessions ended (e.g., "2 minutes ago")
+- Shows session duration (e.g., "45m 20s")
+- Automatically cleans up old sessions beyond the history duration
+- Session tracking uses unique IDs based on server, user, title, and client
+
+**Key Implementation Details:**
+- `SessionRecord` struct tracks streams with start/end timestamps and unique session IDs
+- `SessionHistory` maintains an in-memory map of all tracked sessions
+- `generateSessionID()` creates unique identifiers from stream metadata
+- `updateHistory()` compares current streams with history to detect ended sessions
+- Ended sessions are displayed in gray with condensed information
+- Only active in watch mode; single execution mode shows live data only
 
 ## Code Patterns
 
