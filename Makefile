@@ -35,9 +35,9 @@ help:
 build:
 	@echo "Building binaries..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
+	$(GOBUILD) $(LDFLAGS) -tags mediastreams -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
+	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
+	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -49,8 +49,13 @@ build-all:
 			for SRC in media-streams media-calendar media-requests; do \
 				BIN=$${SRC}-$$GOOS-$$GOARCH; \
 				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
+				case $$SRC in \
+					media-streams) TAG=mediastreams ;; \
+					media-calendar) TAG=mediacalendar ;; \
+					media-requests) TAG=mediarequests ;; \
+				esac; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
-				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
+				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
 			done; \
 		done; \
 	done

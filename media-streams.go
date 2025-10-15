@@ -1,3 +1,6 @@
+//go:build mediastreams
+// +build mediastreams
+
 package main
 
 import (
@@ -27,8 +30,8 @@ const (
 
 // ANSI control sequences
 const (
-	AnsiClearScreen = "\033[2J"  // Clear entire screen
-	AnsiHomeCursor  = "\033[H"   // Move cursor to home position (0,0)
+	AnsiClearScreen = "\033[2J"   // Clear entire screen
+	AnsiHomeCursor  = "\033[H"    // Move cursor to home position (0,0)
 	AnsiHideCursor  = "\033[?25l" // Hide cursor
 	AnsiShowCursor  = "\033[?25h" // Show cursor
 )
