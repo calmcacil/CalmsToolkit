@@ -8,6 +8,7 @@ INSTALL_DIR?=$(prefix)/bin
 BUILD_DIR=bin
 BINARY_STREAMSTOOL=media-streams
 BINARY_CALENDAR=media-calendar
+BINARY_REQUESTS=media-requests
 
 # Go parameters
 GOCMD=go
@@ -36,6 +37,7 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -44,7 +46,7 @@ build-all:
 
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
-			for SRC in media-streams media-calendar; do \
+			for SRC in media-streams media-calendar media-requests; do \
 				BIN=$${SRC}-$$GOOS-$$GOARCH; \
 				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
@@ -60,6 +62,7 @@ install: build
 	@echo "Installing binaries to $(INSTALL_DIR)..."
 	@install -m 755 $(BUILD_DIR)/$(BINARY_STREAMSTOOL) $(INSTALL_DIR)/$(BINARY_STREAMSTOOL)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) $(INSTALL_DIR)/$(BINARY_CALENDAR)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_REQUESTS) $(INSTALL_DIR)/$(BINARY_REQUESTS)
 	@echo "Make sure $(INSTALL_DIR) is in your PATH."
 	@echo "Installation complete!"
 
