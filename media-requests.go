@@ -1,3 +1,6 @@
+//go:build mediarequests
+// +build mediarequests
+
 package main
 
 import (
@@ -29,8 +32,8 @@ const (
 
 // ANSI control sequences
 const (
-	AnsiClearScreen = "\033[2J"  // Clear entire screen
-	AnsiHomeCursor  = "\033[H"   // Move cursor to home position (0,0)
+	AnsiClearScreen = "\033[2J"   // Clear entire screen
+	AnsiHomeCursor  = "\033[H"    // Move cursor to home position (0,0)
 	AnsiHideCursor  = "\033[?25l" // Hide cursor
 	AnsiShowCursor  = "\033[?25h" // Show cursor
 )
@@ -43,12 +46,12 @@ const (
 )
 
 const (
-	MediaStatusUnknown           = 1
-	MediaStatusPending           = 2
-	MediaStatusProcessing        = 3
+	MediaStatusUnknown            = 1
+	MediaStatusPending            = 2
+	MediaStatusProcessing         = 3
 	MediaStatusPartiallyAvailable = 4
-	MediaStatusAvailable         = 5
-	MediaStatusDeleted           = 6
+	MediaStatusAvailable          = 5
+	MediaStatusDeleted            = 6
 )
 
 // API structures
@@ -67,30 +70,30 @@ type SearchResponse struct {
 }
 
 type SearchResult struct {
-	ID               int        `json:"id"`
-	MediaType        string     `json:"mediaType"`
-	Title            string     `json:"title,omitempty"`
-	Name             string     `json:"name,omitempty"`
-	OriginalTitle    string     `json:"originalTitle,omitempty"`
-	OriginalName     string     `json:"originalName,omitempty"`
-	Overview         string     `json:"overview,omitempty"`
-	PosterPath       string     `json:"posterPath,omitempty"`
-	ReleaseDate      string     `json:"releaseDate,omitempty"`
-	FirstAirDate     string     `json:"firstAirDate,omitempty"`
-	VoteAverage      float64    `json:"voteAverage,omitempty"`
-	Popularity       float64    `json:"popularity,omitempty"`
-	MediaInfo        *MediaInfo `json:"mediaInfo,omitempty"`
+	ID            int        `json:"id"`
+	MediaType     string     `json:"mediaType"`
+	Title         string     `json:"title,omitempty"`
+	Name          string     `json:"name,omitempty"`
+	OriginalTitle string     `json:"originalTitle,omitempty"`
+	OriginalName  string     `json:"originalName,omitempty"`
+	Overview      string     `json:"overview,omitempty"`
+	PosterPath    string     `json:"posterPath,omitempty"`
+	ReleaseDate   string     `json:"releaseDate,omitempty"`
+	FirstAirDate  string     `json:"firstAirDate,omitempty"`
+	VoteAverage   float64    `json:"voteAverage,omitempty"`
+	Popularity    float64    `json:"popularity,omitempty"`
+	MediaInfo     *MediaInfo `json:"mediaInfo,omitempty"`
 }
 
 type MediaInfo struct {
-	ID            int              `json:"id"`
-	TmdbID        int              `json:"tmdbId"`
-	TvdbID        int              `json:"tvdbId,omitempty"`
-	Status        int              `json:"status"`
-	Requests      []MediaRequest   `json:"requests,omitempty"`
+	ID             int              `json:"id"`
+	TmdbID         int              `json:"tmdbId"`
+	TvdbID         int              `json:"tvdbId,omitempty"`
+	Status         int              `json:"status"`
+	Requests       []MediaRequest   `json:"requests,omitempty"`
 	DownloadStatus []DownloadStatus `json:"downloadStatus,omitempty"`
-	CreatedAt     string           `json:"createdAt,omitempty"`
-	UpdatedAt     string           `json:"updatedAt,omitempty"`
+	CreatedAt      string           `json:"createdAt,omitempty"`
+	UpdatedAt      string           `json:"updatedAt,omitempty"`
 }
 
 type DownloadStatus struct {
@@ -162,11 +165,11 @@ type TVDetails struct {
 }
 
 type Season struct {
-	ID            int    `json:"id"`
-	SeasonNumber  int    `json:"seasonNumber"`
-	Name          string `json:"name"`
-	EpisodeCount  int    `json:"episodeCount"`
-	AirDate       string `json:"airDate,omitempty"`
+	ID           int    `json:"id"`
+	SeasonNumber int    `json:"seasonNumber"`
+	Name         string `json:"name"`
+	EpisodeCount int    `json:"episodeCount"`
+	AirDate      string `json:"airDate,omitempty"`
 }
 
 func main() {
