@@ -32,6 +32,7 @@ const (
 const (
 	AnsiClearScreen = "\033[2J"   // Clear entire screen
 	AnsiHomeCursor  = "\033[H"    // Move cursor to home position (0,0)
+	AnsiClearToEnd  = "\033[J"    // Clear from cursor to end of screen
 	AnsiHideCursor  = "\033[?25l" // Hide cursor
 	AnsiShowCursor  = "\033[?25h" // Show cursor
 )
@@ -243,6 +244,8 @@ func main() {
 	if config.WatchMode {
 		// Hide cursor for cleaner display
 		fmt.Print(AnsiHideCursor)
+		fmt.Print(AnsiClearScreen)
+		fmt.Print(AnsiHomeCursor)
 		// Ensure cursor is shown on exit
 		defer fmt.Print(AnsiShowCursor)
 
@@ -252,10 +255,11 @@ func main() {
 		}
 
 		for {
-			clearScreen()
+			fmt.Print(AnsiHomeCursor)
 			if err := displayAllSessionsWithHistory(config, history); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
+			fmt.Print(AnsiClearToEnd)
 			time.Sleep(time.Duration(config.WatchSeconds) * time.Second)
 		}
 	}
@@ -1037,11 +1041,4 @@ func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, no
 	buf.WriteString(fmt.Sprintf("%sTranscoding%s: %d\n", color(ColorBold), color(ColorReset), transcodeCount))
 	buf.WriteString(fmt.Sprintf("%sTotal Bandwidth%s: %s%.2f Mbps%s\n", color(ColorBold), color(ColorReset),
 		color(ColorMagenta), totalBandwidth, color(ColorReset)))
-}
-
-func clearScreen() {
-	// Use ANSI escape sequences for smooth, flicker-free clearing
-	// This works on all modern terminals (Linux, macOS, Windows 10+)
-	fmt.Print(AnsiHomeCursor)  // Move cursor to top-left
-	fmt.Print(AnsiClearScreen) // Clear screen
 }
