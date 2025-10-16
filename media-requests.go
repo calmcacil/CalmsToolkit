@@ -1263,6 +1263,8 @@ func getRequestCount(config Config) (*RequestCount, error) {
 }
 
 func getPendingRequests(config Config) ([]MediaRequest, error) {
+	var expectedPendingCount int
+
 	if verbose {
 		fmt.Fprintf(os.Stderr, "\n=== Diagnostic: Checking pending requests ===\n")
 
@@ -1283,19 +1285,31 @@ func getPendingRequests(config Config) ([]MediaRequest, error) {
 		} else {
 			fmt.Fprintf(os.Stderr, "⚠ Failed to check permissions: %v\n", err)
 		}
+	}
 
-		if count, err := getRequestCount(config); err == nil {
+	if count, err := getRequestCount(config); err == nil {
+		expectedPendingCount = count.Pending
+		if verbose {
 			fmt.Fprintf(os.Stderr, "Request counts - Pending: %d, Approved: %d, Total: %d\n",
 				count.Pending, count.Approved, count.Total)
-		} else {
+		}
+	} else {
+		if verbose {
 			fmt.Fprintf(os.Stderr, "⚠ Failed to get request count: %v\n", err)
 		}
+	}
+
+	if verbose {
 		fmt.Fprintf(os.Stderr, "===========================================\n\n")
 	}
 
 	const pageSize = 50
 	skip := 0
 	var pending []MediaRequest
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Attempting primary fetch with filter=pending...\n")
+	}
 
 	for {
 		endpoint := fmt.Sprintf("/request?filter=pending&take=%d&skip=%d", pageSize, skip)
@@ -1336,7 +1350,86 @@ func getPendingRequests(config Config) ([]MediaRequest, error) {
 	}
 
 	if verbose {
-		fmt.Fprintf(os.Stderr, "Total pending requests fetched: %d\n\n", len(pending))
+		fmt.Fprintf(os.Stderr, "Primary fetch complete: %d pending requests fetched\n", len(pending))
+	}
+
+	if expectedPendingCount > 0 && len(pending) == 0 {
+		color := func(code string) string {
+			if config.NoColor {
+				return ""
+			}
+			return code
+		}
+
+		fmt.Fprintf(os.Stderr, "\n%s⚠ WARNING: Overseerr API bug detected!%s\n", color(ColorYellow), color(ColorReset))
+		fmt.Fprintf(os.Stderr, "Expected %d pending request(s) but filter=pending returned 0 results.\n", expectedPendingCount)
+		fmt.Fprintf(os.Stderr, "Activating fallback: fetching all requests and filtering client-side...\n\n")
+
+		if verbose {
+			fmt.Fprintf(os.Stderr, "=== Fallback Mode: Fetching filter=all ===\n")
+		}
+
+		skip = 0
+		var allRequests []MediaRequest
+
+		for {
+			endpoint := fmt.Sprintf("/request?filter=all&take=%d&skip=%d", pageSize, skip)
+
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Fetching: %s\n", endpoint)
+			}
+
+			resp, err := makeRequest(config, "GET", endpoint, nil)
+			if err != nil {
+				return nil, fmt.Errorf("fallback fetch failed: %w", err)
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				bodyBytes, _ := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				return nil, fmt.Errorf("fallback fetch failed: status %d - %s", resp.StatusCode, string(bodyBytes))
+			}
+
+			var reqResp RequestsResponse
+			if err := json.NewDecoder(resp.Body).Decode(&reqResp); err != nil {
+				resp.Body.Close()
+				return nil, fmt.Errorf("fallback decode failed: %w", err)
+			}
+			resp.Body.Close()
+
+			if verbose {
+				fmt.Fprintf(os.Stderr, "Fallback page %d: Got %d results (total: %d)\n",
+					reqResp.PageInfo.Page, len(reqResp.Results), reqResp.PageInfo.Results)
+			}
+
+			allRequests = append(allRequests, reqResp.Results...)
+
+			skip += pageSize
+			if skip >= reqResp.PageInfo.Results || len(reqResp.Results) == 0 {
+				break
+			}
+		}
+
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Fallback fetch complete: %d total requests retrieved\n", len(allRequests))
+			fmt.Fprintf(os.Stderr, "Filtering for status=%d (PENDING)...\n", StatusPending)
+		}
+
+		for _, req := range allRequests {
+			if req.Status == StatusPending {
+				pending = append(pending, req)
+			}
+		}
+
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Client-side filtering complete: %d pending requests found\n", len(pending))
+			fmt.Fprintf(os.Stderr, "===========================================\n\n")
+		}
+
+		fmt.Fprintf(os.Stderr, "%s✓ Fallback successful: Found %d pending request(s)%s\n\n",
+			color(ColorGreen), len(pending), color(ColorReset))
+	} else if verbose {
+		fmt.Fprintf(os.Stderr, "Primary fetch successful, no fallback needed.\n\n")
 	}
 
 	return pending, nil
