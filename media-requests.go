@@ -636,11 +636,21 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 
 	switch action {
 	case "a":
+		// Prompt for root folder override before approving
+		overrides, err := selectRootFolderForApproval(config, request, reader)
+		if err != nil {
+			// User cancelled
+			return
+		}
+
 		fmt.Printf("\n%sApproving request...%s\n", color(ColorYellow), color(ColorReset))
-		if err := approveRequest(config, request.ID); err != nil {
+		if err := approveRequestWithOverrides(config, request.ID, overrides); err != nil {
 			fmt.Printf("\n%sError approving: %v%s\n", color(ColorRed), err, color(ColorReset))
 		} else {
 			fmt.Printf("\n%s✓ Request approved!%s\n", color(ColorGreen), color(ColorReset))
+			if overrides != nil && overrides.RootFolder != "" {
+				fmt.Printf("%s  Root folder set to: %s%s\n", color(ColorGray), overrides.RootFolder, color(ColorReset))
+			}
 		}
 		fmt.Printf("\nPress Enter to continue...")
 		reader.ReadString('\n')
@@ -1449,6 +1459,218 @@ func approveRequest(config Config, requestID int) error {
 	}
 
 	return nil
+}
+
+// approveRequestWithOverrides approves a request and optionally updates it with rootFolder override.
+// It first approves the request via POST, then updates it via PUT if overrides are provided.
+func approveRequestWithOverrides(config Config, requestID int, overrides *RequestOverrides) error {
+	// First, approve the request
+	if err := approveRequest(config, requestID); err != nil {
+		return err
+	}
+
+	// If no overrides or no rootFolder specified, we're done
+	if overrides == nil || overrides.RootFolder == "" {
+		return nil
+	}
+
+	// Update the request with the rootFolder override
+	updateData := map[string]interface{}{
+		"rootFolder": overrides.RootFolder,
+	}
+
+	endpoint := fmt.Sprintf("/request/%d", requestID)
+	resp, err := makeRequest(config, "PUT", endpoint, updateData)
+	if err != nil {
+		return fmt.Errorf("approved but failed to update root folder: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("approved but root folder update failed: status %d - %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+// selectRootFolderForApproval prompts the user to optionally override the root folder when approving a request.
+// Returns the selected overrides or nil if the user chooses to use defaults or cancels.
+func selectRootFolderForApproval(config Config, request MediaRequest, reader *bufio.Reader) (*RequestOverrides, error) {
+	color := func(code string) string {
+		if config.NoColor {
+			return ""
+		}
+		return code
+	}
+
+	// Determine service type from request
+	var service string
+	var serviceLabel string
+	switch request.Type {
+	case "movie":
+		service = "radarr"
+		serviceLabel = "Radarr"
+	case "tv":
+		service = "sonarr"
+		serviceLabel = "Sonarr"
+	default:
+		// Unknown type, proceed without override option
+		return nil, nil
+	}
+
+	// Fetch available service instances
+	servers, err := fetchServiceInstances(config, service)
+	if err != nil {
+		fmt.Printf("\n%sError fetching %s servers: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("Proceeding with approval without overrides...\n")
+		return nil, nil
+	}
+
+	if len(servers) == 0 {
+		// No servers configured, proceed without overrides
+		return nil, nil
+	}
+
+	// Show override prompt
+	clearScreen()
+	fmt.Printf("%s%s=== Approve Request - Root Folder Override ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+
+	displayRequestDetail(config, request)
+
+	fmt.Printf("\n%sWould you like to override the root folder for this request?%s\n", color(ColorBold), color(ColorReset))
+	fmt.Printf("%s[Y]%s Yes, select root folder\n", color(ColorGreen), color(ColorReset))
+	fmt.Printf("%s[N]%s No, use default (proceed with approval)\n", color(ColorYellow), color(ColorReset))
+	fmt.Printf("%s[B]%s Back (cancel approval)\n\n", color(ColorRed), color(ColorReset))
+
+	fmt.Printf("Select option: ")
+	option, _ := reader.ReadString('\n')
+	option = strings.TrimSpace(strings.ToLower(option))
+
+	switch option {
+	case "n", "":
+		// Proceed without overrides
+		return nil, nil
+
+	case "b", "back":
+		// Cancel approval
+		return nil, fmt.Errorf("cancelled")
+
+	case "y", "yes":
+		// Continue to root folder selection
+		break
+
+	default:
+		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
+		fmt.Printf("\nPress Enter to continue...")
+		reader.ReadString('\n')
+		return nil, fmt.Errorf("invalid option")
+	}
+
+	// Select server
+	var selected *ServiceInstance
+
+	if len(servers) > 1 {
+		for {
+			clearScreen()
+			fmt.Printf("%s%s=== Select %s Server ===%s\n\n", color(ColorBold), color(ColorCyan), serviceLabel, color(ColorReset))
+
+			fmt.Printf("Available %s servers:\n", serviceLabel)
+			for i, server := range servers {
+				fmt.Printf("%s%d.%s %s", color(ColorYellow), i+1, color(ColorReset), server.Name)
+
+				var badges []string
+				if server.IsDefault {
+					badges = append(badges, "default")
+				}
+				if server.Is4k {
+					badges = append(badges, "4K")
+				}
+				if len(badges) > 0 {
+					fmt.Printf(" %s[%s]%s", color(ColorGray), strings.Join(badges, ", "), color(ColorReset))
+				}
+				fmt.Println()
+			}
+
+			fmt.Printf("\nSelect a server (1-%d) or type 'back' to cancel: ", len(servers))
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(strings.ToLower(input))
+
+			switch input {
+			case "back", "b", "":
+				return nil, fmt.Errorf("cancelled")
+			default:
+				index, convErr := strconv.Atoi(input)
+				if convErr != nil || index < 1 || index > len(servers) {
+					fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+					fmt.Printf("\nPress Enter to continue...")
+					reader.ReadString('\n')
+					continue
+				}
+				selected = &servers[index-1]
+			}
+
+			if selected != nil {
+				break
+			}
+		}
+	} else {
+		selected = &servers[0]
+		fmt.Printf("\nUsing %s server: %s%s%s\n", serviceLabel, color(ColorBold), selected.Name, color(ColorReset))
+	}
+
+	// Fetch server details to get root folders
+	details, err := fetchServiceDetails(config, service, selected.ID)
+	if err != nil {
+		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("Proceeding with approval without overrides...\n")
+		fmt.Printf("\nPress Enter to continue...")
+		reader.ReadString('\n')
+		return nil, nil
+	}
+
+	if len(details.RootFolders) == 0 {
+		fmt.Printf("\n%sNo root folders configured for %s.%s\n", color(ColorYellow), selected.Name, color(ColorReset))
+		fmt.Printf("Proceeding with approval without overrides...\n")
+		fmt.Printf("\nPress Enter to continue...")
+		reader.ReadString('\n')
+		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
+	}
+
+	// Select root folder
+	for {
+		clearScreen()
+		fmt.Printf("%s%s=== Select Root Folder ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+
+		fmt.Printf("%sServer:%s %s\n\n", color(ColorBold), color(ColorReset), selected.Name)
+		fmt.Printf("%sRoot folders:%s\n", color(ColorBold), color(ColorReset))
+		for i, folder := range details.RootFolders {
+			fmt.Printf("%s%d.%s %s\n", color(ColorYellow), i+1, color(ColorReset), folder.Path)
+		}
+
+		fmt.Printf("\nSelect a root folder (1-%d) or type 'back' to cancel: ", len(details.RootFolders))
+		input, _ := reader.ReadString('\n')
+		input = strings.TrimSpace(strings.ToLower(input))
+
+		switch input {
+		case "back", "b", "":
+			return nil, fmt.Errorf("cancelled")
+		default:
+			index, convErr := strconv.Atoi(input)
+			if convErr != nil || index < 1 || index > len(details.RootFolders) {
+				fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+				fmt.Printf("\nPress Enter to continue...")
+				reader.ReadString('\n')
+				continue
+			}
+			folder := details.RootFolders[index-1]
+			return &RequestOverrides{
+				ServerID:   selected.ID,
+				ServerName: selected.Name,
+				RootFolder: folder.Path,
+			}, nil
+		}
+	}
 }
 
 func declineRequest(config Config, requestID int) error {
