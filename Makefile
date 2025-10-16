@@ -78,7 +78,16 @@ clean:
 	@echo "Clean complete!"
 
 test:
-	$(GOTEST) -v ./...
+	@echo "Running media-requests tests..."
+	$(GOTEST) -tags mediarequests -v ./...
+	@echo ""
+	@echo "Running media-streams tests..."
+	$(GOTEST) -tags mediastreams -v ./...
+	@echo ""
+	@echo "Running media-calendar tests..."
+	$(GOTEST) -tags mediacalendar -v ./...
+	@echo ""
+	@echo "All tests complete!"
 
 tidy:
 	$(GOMOD) tidy
