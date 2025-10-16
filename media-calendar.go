@@ -868,61 +868,66 @@ func buildDayContent(dayItems []CalendarItem, now time.Time, config Config, colo
 		return content
 	}
 
-	// Group episodes by show for truncation
-	showEpisodes := make(map[string][]CalendarItem)
-	var movieItems []CalendarItem
-
-	for _, item := range dayItems {
-		if item.Type == "episode" {
-			showEpisodes[item.ShowTitle] = append(showEpisodes[item.ShowTitle], item)
-		} else {
-			movieItems = append(movieItems, item)
+	// Sort all items by air time first, then by type (episodes before movies), then by season/episode
+	sort.Slice(dayItems, func(i, j int) bool {
+		// Primary sort: air time
+		if !dayItems[i].AirTime.Equal(dayItems[j].AirTime) {
+			return dayItems[i].AirTime.Before(dayItems[j].AirTime)
 		}
-	}
-
-	// Sort shows alphabetically
-	var showNames []string
-	for show := range showEpisodes {
-		showNames = append(showNames, show)
-	}
-	sort.Strings(showNames)
-
-	// Add episodes with truncation
-	for _, show := range showNames {
-		episodes := showEpisodes[show]
-
-		// Sort episodes by time, then season/episode
-		sort.Slice(episodes, func(i, j int) bool {
-			if episodes[i].AirTime.Equal(episodes[j].AirTime) {
-				if episodes[i].Season == episodes[j].Season {
-					return episodes[i].Episode < episodes[j].Episode
-				}
-				return episodes[i].Season < episodes[j].Season
+		// Secondary sort: episodes before movies
+		if dayItems[i].Type != dayItems[j].Type {
+			return dayItems[i].Type == "episode"
+		}
+		// Tertiary sort for episodes: season then episode number
+		if dayItems[i].Type == "episode" {
+			if dayItems[i].Season != dayItems[j].Season {
+				return dayItems[i].Season < dayItems[j].Season
 			}
-			return episodes[i].AirTime.Before(episodes[j].AirTime)
-		})
+			return dayItems[i].Episode < dayItems[j].Episode
+		}
+		// For movies, maintain stable order
+		return false
+	})
 
-		// If multiple episodes from same show, show first 2 then collapse
+	// Process items in chronological order with truncation for consecutive same-show episodes
+	i := 0
+	for i < len(dayItems) {
+		item := dayItems[i]
+
+		if item.Type == "movie" {
+			content = append(content, formatMovie(item, now, config, color, widthPerColumn))
+			i++
+			continue
+		}
+
+		// For episodes, check if there are consecutive episodes from the same show
+		showStart := i
+		showEnd := i + 1
+		for showEnd < len(dayItems) &&
+			dayItems[showEnd].Type == "episode" &&
+			dayItems[showEnd].ShowTitle == item.ShowTitle {
+			showEnd++
+		}
+		consecutiveCount := showEnd - showStart
+
+		// If multiple consecutive episodes from same show, show first 2 then collapse
 		maxDisplay := 2
-		if len(episodes) > maxDisplay {
+		if consecutiveCount > maxDisplay {
 			// Show first 2
-			for i := 0; i < maxDisplay; i++ {
-				content = append(content, formatEpisode(episodes[i], now, config, color, widthPerColumn))
+			for j := showStart; j < showStart+maxDisplay; j++ {
+				content = append(content, formatEpisode(dayItems[j], now, config, color, widthPerColumn))
 			}
 			// Add truncation
-			remaining := len(episodes) - maxDisplay
+			remaining := consecutiveCount - maxDisplay
 			content = append(content, color(ColorCyan)+fmt.Sprintf("  + %d more episodes", remaining)+color(ColorReset))
 		} else {
-			// Show all if only 1-2 episodes
-			for _, ep := range episodes {
-				content = append(content, formatEpisode(ep, now, config, color, widthPerColumn))
+			// Show all if only 1-2 consecutive episodes
+			for j := showStart; j < showEnd; j++ {
+				content = append(content, formatEpisode(dayItems[j], now, config, color, widthPerColumn))
 			}
 		}
-	}
 
-	// Add movies
-	for _, movie := range movieItems {
-		content = append(content, formatMovie(movie, now, config, color, widthPerColumn))
+		i = showEnd
 	}
 
 	return content

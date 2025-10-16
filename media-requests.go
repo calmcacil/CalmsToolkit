@@ -135,6 +135,18 @@ type User struct {
 	Avatar       string `json:"avatar,omitempty"`
 }
 
+type AuthMe struct {
+	ID          int    `json:"id"`
+	Email       string `json:"email"`
+	Permissions int    `json:"permissions"`
+}
+
+type RequestCount struct {
+	Pending  int `json:"pending"`
+	Approved int `json:"approved"`
+	Total    int `json:"total"`
+}
+
 type CreateRequest struct {
 	MediaType  string      `json:"mediaType"`
 	MediaID    int         `json:"mediaId"`
@@ -202,14 +214,21 @@ type Season struct {
 	AirDate      string `json:"airDate,omitempty"`
 }
 
+// Global flag for verbose diagnostics
+var verbose bool
+
 func main() {
 	var (
-		serverURL = flag.String("url", "", "Overseerr/Jellyseerr server URL")
-		apiKey    = flag.String("token", "", "API key/token")
-		timeout   = flag.Duration("timeout", 30*time.Second, "Connection timeout")
-		noColor   = flag.Bool("no-color", false, "Disable colored output")
+		serverURL  = flag.String("url", "", "Overseerr/Jellyseerr server URL")
+		apiKey     = flag.String("token", "", "API key/token")
+		timeout    = flag.Duration("timeout", 30*time.Second, "Connection timeout")
+		noColor    = flag.Bool("no-color", false, "Disable colored output")
+		verbosePtr = flag.Bool("verbose", false, "Enable verbose diagnostic output")
 	)
 	flag.Parse()
+
+	// Set global verbose flag
+	verbose = *verbosePtr
 
 	config := loadConfig(*serverURL, *apiKey, *timeout, *noColor)
 
@@ -928,7 +947,17 @@ func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.R
 
 			switch input {
 			case "":
-				return nil, nil
+				// Select default server or fall back to first server
+				for i := range servers {
+					if servers[i].IsDefault {
+						selected = &servers[i]
+						break
+					}
+				}
+				if selected == nil {
+					selected = &servers[0]
+				}
+				fmt.Printf("Using default %s server: %s%s%s\n", serviceLabel, color(ColorBold), selected.Name, color(ColorReset))
 			case "back", "b":
 				return nil, fmt.Errorf("cancelled")
 			default:
@@ -1130,7 +1159,8 @@ func searchMedia(config Config, query string) ([]SearchResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("search failed: status %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("search failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var searchResp SearchResponse
@@ -1199,13 +1229,88 @@ func createRequest(config Config, media SearchResult, seasons interface{}, overr
 	return &request, nil
 }
 
+func checkUserPermissions(config Config) (*AuthMe, error) {
+	resp, err := makeRequest(config, "GET", "/auth/me", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get user info: status %d - %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var authMe AuthMe
+	if err := json.NewDecoder(resp.Body).Decode(&authMe); err != nil {
+		return nil, err
+	}
+
+	return &authMe, nil
+}
+
+func getRequestCount(config Config) (*RequestCount, error) {
+	resp, err := makeRequest(config, "GET", "/request/count", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get request count: status %d - %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var count RequestCount
+	if err := json.NewDecoder(resp.Body).Decode(&count); err != nil {
+		return nil, err
+	}
+
+	return &count, nil
+}
+
 func getPendingRequests(config Config) ([]MediaRequest, error) {
+	if verbose {
+		fmt.Fprintf(os.Stderr, "\n=== Diagnostic: Checking pending requests ===\n")
+
+		if authMe, err := checkUserPermissions(config); err == nil {
+			fmt.Fprintf(os.Stderr, "User ID: %d\n", authMe.ID)
+			fmt.Fprintf(os.Stderr, "User Email: %s\n", authMe.Email)
+			fmt.Fprintf(os.Stderr, "User Permissions: %d\n", authMe.Permissions)
+
+			const MANAGE_REQUESTS = 16
+			const ADMIN = 2
+			if (authMe.Permissions & MANAGE_REQUESTS) != 0 {
+				fmt.Fprintf(os.Stderr, "✓ Has MANAGE_REQUESTS permission\n")
+			} else if (authMe.Permissions & ADMIN) != 0 {
+				fmt.Fprintf(os.Stderr, "✓ Has ADMIN permission\n")
+			} else {
+				fmt.Fprintf(os.Stderr, "⚠ WARNING: May lack MANAGE_REQUESTS (16) or ADMIN (2) permission\n")
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠ Failed to check permissions: %v\n", err)
+		}
+
+		if count, err := getRequestCount(config); err == nil {
+			fmt.Fprintf(os.Stderr, "Request counts - Pending: %d, Approved: %d, Total: %d\n",
+				count.Pending, count.Approved, count.Total)
+		} else {
+			fmt.Fprintf(os.Stderr, "⚠ Failed to get request count: %v\n", err)
+		}
+		fmt.Fprintf(os.Stderr, "===========================================\n\n")
+	}
+
 	const pageSize = 50
 	skip := 0
 	var pending []MediaRequest
 
 	for {
 		endpoint := fmt.Sprintf("/request?filter=pending&take=%d&skip=%d", pageSize, skip)
+
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Fetching: %s\n", endpoint)
+		}
+
 		resp, err := makeRequest(config, "GET", endpoint, nil)
 		if err != nil {
 			return nil, err
@@ -1224,12 +1329,21 @@ func getPendingRequests(config Config) ([]MediaRequest, error) {
 		}
 		resp.Body.Close()
 
+		if verbose {
+			fmt.Fprintf(os.Stderr, "Page %d: Got %d results (total: %d)\n",
+				reqResp.PageInfo.Page, len(reqResp.Results), reqResp.PageInfo.Results)
+		}
+
 		pending = append(pending, reqResp.Results...)
 
 		skip += pageSize
 		if skip >= reqResp.PageInfo.Results || len(reqResp.Results) == 0 {
 			break
 		}
+	}
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "Total pending requests fetched: %d\n\n", len(pending))
 	}
 
 	return pending, nil
