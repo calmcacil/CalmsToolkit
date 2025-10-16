@@ -647,3 +647,124 @@ func TestFetchServiceDetails(t *testing.T) {
 		t.Errorf("Got %d profiles, want 2", len(details.Profiles))
 	}
 }
+
+// TestSearchMediaWithSpaces verifies that search queries with spaces are properly URL encoded
+func TestSearchMediaWithSpaces(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         string
+		expectedQuery string // What we expect to see in the URL
+	}{
+		{
+			name:          "Query with single space",
+			query:         "The Matrix",
+			expectedQuery: "The+Matrix", // URL encoded space
+		},
+		{
+			name:          "Query with multiple spaces",
+			query:         "Star Wars Episode IV",
+			expectedQuery: "Star+Wars+Episode+IV",
+		},
+		{
+			name:          "Query with special characters",
+			query:         "Rick & Morty",
+			expectedQuery: "Rick+%26+Morty", // & becomes %26
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Verify the query parameter is properly encoded
+				query := r.URL.Query().Get("query")
+				if query != tt.query {
+					t.Errorf("Query parameter = %q, want %q", query, tt.query)
+				}
+
+				// Verify URL encoding in raw query
+				if !strings.Contains(r.URL.RawQuery, tt.expectedQuery) {
+					t.Errorf("RawQuery = %q, should contain %q", r.URL.RawQuery, tt.expectedQuery)
+				}
+
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(SearchResponse{
+					Page:         1,
+					TotalPages:   1,
+					TotalResults: 1,
+					Results:      []SearchResult{},
+				})
+			}))
+			defer server.Close()
+
+			config := Config{
+				ServerURL: server.URL,
+				APIKey:    "test-key",
+				Timeout:   5 * time.Second,
+			}
+
+			_, err := searchMedia(config, tt.query)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestSearchMediaErrorDiagnostics verifies that error messages include response body
+func TestSearchMediaErrorDiagnostics(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockStatusCode int
+		mockBody       string
+		expectErrorMsg string
+	}{
+		{
+			name:           "Bad Request with body",
+			mockStatusCode: http.StatusBadRequest,
+			mockBody:       `{"message":"Invalid query parameter"}`,
+			expectErrorMsg: "Invalid query parameter",
+		},
+		{
+			name:           "Unauthorized with body",
+			mockStatusCode: http.StatusUnauthorized,
+			mockBody:       `{"error":"Invalid API key"}`,
+			expectErrorMsg: "Invalid API key",
+		},
+		{
+			name:           "Server error with body",
+			mockStatusCode: http.StatusInternalServerError,
+			mockBody:       `{"error":"Database connection failed"}`,
+			expectErrorMsg: "Database connection failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.mockStatusCode)
+				w.Write([]byte(tt.mockBody))
+			}))
+			defer server.Close()
+
+			config := Config{
+				ServerURL: server.URL,
+				APIKey:    "test-key",
+				Timeout:   5 * time.Second,
+			}
+
+			_, err := searchMedia(config, "test query")
+			if err == nil {
+				t.Fatal("Expected error, got nil")
+			}
+
+			// Verify error message includes both status code and response body
+			errMsg := err.Error()
+			if !strings.Contains(errMsg, tt.expectErrorMsg) {
+				t.Errorf("Error message = %q, should contain %q", errMsg, tt.expectErrorMsg)
+			}
+			if !strings.Contains(errMsg, "status") {
+				t.Errorf("Error message = %q, should contain status code", errMsg)
+			}
+		})
+	}
+}

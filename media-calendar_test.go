@@ -530,3 +530,247 @@ func TestGetStatusColor(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildDayContentSorting verifies that episodes are sorted by air time, not alphabetically by show name
+func TestBuildDayContentSorting(t *testing.T) {
+	now := time.Date(2025, 10, 16, 12, 0, 0, 0, time.UTC)
+	baseTime := now.Truncate(24 * time.Hour)
+
+	config := Config{
+		NoColor: true,
+	}
+
+	// Create items with different air times and show names
+	// Shows are alphabetically: Alpha, Beta, Zulu
+	// But air times should be: 14:00 (Zulu), 16:00 (Alpha), 18:00 (Beta)
+	dayItems := []CalendarItem{
+		{
+			Type:      "episode",
+			ShowTitle: "Alpha Show",
+			Title:     "Episode 1",
+			Season:    1,
+			Episode:   1,
+			AirTime:   baseTime.Add(16 * time.Hour), // 16:00
+			HasFile:   false,
+		},
+		{
+			Type:      "episode",
+			ShowTitle: "Zulu Show",
+			Title:     "Episode 1",
+			Season:    1,
+			Episode:   1,
+			AirTime:   baseTime.Add(14 * time.Hour), // 14:00 - should be first
+			HasFile:   false,
+		},
+		{
+			Type:      "episode",
+			ShowTitle: "Beta Show",
+			Title:     "Episode 1",
+			Season:    1,
+			Episode:   1,
+			AirTime:   baseTime.Add(18 * time.Hour), // 18:00
+			HasFile:   false,
+		},
+	}
+
+	colorFunc := func(s string) string { return "" }
+	content := buildDayContent(dayItems, now, config, colorFunc, 80)
+
+	// Verify we got content (3 episodes)
+	if len(content) < 3 {
+		t.Fatalf("Expected at least 3 content lines, got %d", len(content))
+	}
+
+	// The content should be in time order: Zulu (14:00), Alpha (16:00), Beta (18:00)
+	// Check that the time strings appear in the correct order
+	foundZulu := false
+	foundAlpha := false
+	foundBeta := false
+
+	for i, line := range content {
+		if !foundZulu && (contains(line, "Zulu Show") || contains(line, "14:00")) {
+			foundZulu = true
+			// Alpha and Beta should not have been found yet
+			if foundAlpha || foundBeta {
+				t.Errorf("Found Zulu Show at position %d, but Alpha or Beta was already found", i)
+			}
+		}
+		if !foundAlpha && (contains(line, "Alpha Show") || contains(line, "16:00")) {
+			foundAlpha = true
+			// Zulu should have been found, Beta should not
+			if !foundZulu {
+				t.Errorf("Found Alpha Show at position %d before Zulu Show", i)
+			}
+			if foundBeta {
+				t.Errorf("Found Alpha Show at position %d after Beta Show", i)
+			}
+		}
+		if !foundBeta && (contains(line, "Beta Show") || contains(line, "18:00")) {
+			foundBeta = true
+			// Both Zulu and Alpha should have been found
+			if !foundZulu || !foundAlpha {
+				t.Errorf("Found Beta Show at position %d, but Zulu or Alpha was not found yet", i)
+			}
+		}
+	}
+
+	if !foundZulu || !foundAlpha || !foundBeta {
+		t.Errorf("Not all shows were found in content. Zulu: %v, Alpha: %v, Beta: %v", foundZulu, foundAlpha, foundBeta)
+	}
+}
+
+// TestBuildDayContentTruncation verifies truncation works with time-sorted episodes
+func TestBuildDayContentTruncation(t *testing.T) {
+	now := time.Date(2025, 10, 16, 12, 0, 0, 0, time.UTC)
+	baseTime := now.Truncate(24 * time.Hour)
+
+	config := Config{
+		NoColor: true,
+	}
+
+	// Create 4 consecutive episodes from the same show
+	dayItems := []CalendarItem{
+		{
+			Type:      "episode",
+			ShowTitle: "Test Show",
+			Title:     "Episode 1",
+			Season:    1,
+			Episode:   1,
+			AirTime:   baseTime.Add(14 * time.Hour),
+			HasFile:   false,
+		},
+		{
+			Type:      "episode",
+			ShowTitle: "Test Show",
+			Title:     "Episode 2",
+			Season:    1,
+			Episode:   2,
+			AirTime:   baseTime.Add(14*time.Hour + 30*time.Minute),
+			HasFile:   false,
+		},
+		{
+			Type:      "episode",
+			ShowTitle: "Test Show",
+			Title:     "Episode 3",
+			Season:    1,
+			Episode:   3,
+			AirTime:   baseTime.Add(15 * time.Hour),
+			HasFile:   false,
+		},
+		{
+			Type:      "episode",
+			ShowTitle: "Test Show",
+			Title:     "Episode 4",
+			Season:    1,
+			Episode:   4,
+			AirTime:   baseTime.Add(15*time.Hour + 30*time.Minute),
+			HasFile:   false,
+		},
+	}
+
+	colorFunc := func(s string) string { return "" }
+	content := buildDayContent(dayItems, now, config, colorFunc, 80)
+
+	// Should show 2 episodes + 1 truncation line = 3 lines
+	// (First 2 episodes shown, "+ 2 more episodes" for the rest)
+	foundTruncation := false
+	episodeCount := 0
+
+	for _, line := range content {
+		if contains(line, "+ 2 more episodes") {
+			foundTruncation = true
+		}
+		if contains(line, "Episode") {
+			episodeCount++
+		}
+	}
+
+	if !foundTruncation {
+		t.Error("Expected truncation message not found")
+	}
+}
+
+// TestBuildDayContentMixedTypes verifies movies and episodes are sorted by time
+func TestBuildDayContentMixedTypes(t *testing.T) {
+	now := time.Date(2025, 10, 16, 12, 0, 0, 0, time.UTC)
+	baseTime := now.Truncate(24 * time.Hour)
+
+	config := Config{
+		NoColor: true,
+	}
+
+	// Mix movies and episodes with different air times
+	dayItems := []CalendarItem{
+		{
+			Type:    "movie",
+			Title:   "Movie B",
+			AirTime: baseTime.Add(17 * time.Hour), // 17:00
+			HasFile: false,
+		},
+		{
+			Type:      "episode",
+			ShowTitle: "Show A",
+			Title:     "Episode 1",
+			Season:    1,
+			Episode:   1,
+			AirTime:   baseTime.Add(15 * time.Hour), // 15:00 - should be first
+			HasFile:   false,
+		},
+		{
+			Type:    "movie",
+			Title:   "Movie A",
+			AirTime: baseTime.Add(19 * time.Hour), // 19:00
+			HasFile: false,
+		},
+	}
+
+	colorFunc := func(s string) string { return "" }
+	content := buildDayContent(dayItems, now, config, colorFunc, 80)
+
+	// Should be in order: Episode (15:00), Movie B (17:00), Movie A (19:00)
+	foundEpisode := false
+	foundMovieB := false
+	foundMovieA := false
+
+	for i, line := range content {
+		if !foundEpisode && contains(line, "Show A") {
+			foundEpisode = true
+			if foundMovieB || foundMovieA {
+				t.Errorf("Found episode at position %d after a movie", i)
+			}
+		}
+		if !foundMovieB && contains(line, "Movie B") {
+			foundMovieB = true
+			if !foundEpisode {
+				t.Errorf("Found Movie B at position %d before episode", i)
+			}
+			if foundMovieA {
+				t.Errorf("Found Movie B at position %d after Movie A", i)
+			}
+		}
+		if !foundMovieA && contains(line, "Movie A") {
+			foundMovieA = true
+			if !foundEpisode || !foundMovieB {
+				t.Errorf("Found Movie A at position %d before episode or Movie B", i)
+			}
+		}
+	}
+
+	if !foundEpisode || !foundMovieB || !foundMovieA {
+		t.Errorf("Not all items found. Episode: %v, Movie B: %v, Movie A: %v", foundEpisode, foundMovieB, foundMovieA)
+	}
+}
+
+// Helper function to check if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
