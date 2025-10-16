@@ -8,6 +8,7 @@ INSTALL_DIR?=$(prefix)/bin
 BUILD_DIR=bin
 BINARY_STREAMSTOOL=media-streams
 BINARY_CALENDAR=media-calendar
+BINARY_REQUESTS=media-requests
 
 # Go parameters
 GOCMD=go
@@ -34,8 +35,9 @@ help:
 build:
 	@echo "Building binaries..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
-	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
+	$(GOBUILD) $(LDFLAGS) -tags mediastreams -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
+	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
+	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -44,11 +46,16 @@ build-all:
 
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
-			for SRC in media-streams media-calendar; do \
+			for SRC in media-streams media-calendar media-requests; do \
 				BIN=$${SRC}-$$GOOS-$$GOARCH; \
 				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
+				case $$SRC in \
+					media-streams) TAG=mediastreams ;; \
+					media-calendar) TAG=mediacalendar ;; \
+					media-requests) TAG=mediarequests ;; \
+				esac; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
-				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
+				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
 			done; \
 		done; \
 	done
@@ -60,6 +67,7 @@ install: build
 	@echo "Installing binaries to $(INSTALL_DIR)..."
 	@install -m 755 $(BUILD_DIR)/$(BINARY_STREAMSTOOL) $(INSTALL_DIR)/$(BINARY_STREAMSTOOL)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) $(INSTALL_DIR)/$(BINARY_CALENDAR)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_REQUESTS) $(INSTALL_DIR)/$(BINARY_REQUESTS)
 	@echo "Make sure $(INSTALL_DIR) is in your PATH."
 	@echo "Installation complete!"
 
@@ -70,7 +78,16 @@ clean:
 	@echo "Clean complete!"
 
 test:
-	$(GOTEST) -v ./...
+	@echo "Running media-requests tests..."
+	$(GOTEST) -tags mediarequests -v ./...
+	@echo ""
+	@echo "Running media-streams tests..."
+	$(GOTEST) -tags mediastreams -v ./...
+	@echo ""
+	@echo "Running media-calendar tests..."
+	$(GOTEST) -tags mediacalendar -v ./...
+	@echo ""
+	@echo "All tests complete!"
 
 tidy:
 	$(GOMOD) tidy

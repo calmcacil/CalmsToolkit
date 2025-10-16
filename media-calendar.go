@@ -1,3 +1,6 @@
+//go:build mediacalendar
+// +build mediacalendar
+
 package main
 
 import (
@@ -41,16 +44,16 @@ const (
 
 // Sonarr API structures
 type SonarrEpisode struct {
-	SeriesID       int       `json:"seriesId"`
-	EpisodeID      int       `json:"id"`
-	Title          string    `json:"title"`
-	AirDate        string    `json:"airDate"`
-	AirDateUtc     time.Time `json:"airDateUtc"`
-	SeasonNumber   int       `json:"seasonNumber"`
-	EpisodeNumber  int       `json:"episodeNumber"`
-	Monitored      bool      `json:"monitored"`
-	HasFile        bool      `json:"hasFile"`
-	Series         *Series   `json:"series"`
+	SeriesID      int       `json:"seriesId"`
+	EpisodeID     int       `json:"id"`
+	Title         string    `json:"title"`
+	AirDate       string    `json:"airDate"`
+	AirDateUtc    time.Time `json:"airDateUtc"`
+	SeasonNumber  int       `json:"seasonNumber"`
+	EpisodeNumber int       `json:"episodeNumber"`
+	Monitored     bool      `json:"monitored"`
+	HasFile       bool      `json:"hasFile"`
+	Series        *Series   `json:"series"`
 }
 
 type Series struct {
@@ -61,14 +64,14 @@ type Series struct {
 
 // Radarr API structures
 type RadarrMovie struct {
-	ID          int       `json:"id"`
-	Title       string    `json:"title"`
-	Year        int       `json:"year"`
-	ReleaseDate string    `json:"physicalRelease"`
-	DigitalDate string    `json:"digitalRelease"`
-	InCinemas   string    `json:"inCinemas"`
-	Monitored   bool      `json:"monitored"`
-	HasFile     bool      `json:"hasFile"`
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	Year        int    `json:"year"`
+	ReleaseDate string `json:"physicalRelease"`
+	DigitalDate string `json:"digitalRelease"`
+	InCinemas   string `json:"inCinemas"`
+	Monitored   bool   `json:"monitored"`
+	HasFile     bool   `json:"hasFile"`
 }
 
 // Queue structures (shared between Sonarr/Radarr)
@@ -78,10 +81,10 @@ type QueueResponse struct {
 }
 
 type QueueItem struct {
-	ID             int              `json:"id"`
-	Status         string           `json:"status"`
-	TrackedState   string           `json:"trackedDownloadState"`
-	StatusMessages []StatusMessage  `json:"statusMessages"`
+	ID             int             `json:"id"`
+	Status         string          `json:"status"`
+	TrackedState   string          `json:"trackedDownloadState"`
+	StatusMessages []StatusMessage `json:"statusMessages"`
 }
 
 type StatusMessage struct {
@@ -91,9 +94,9 @@ type StatusMessage struct {
 
 // Unified calendar item
 type CalendarItem struct {
-	Type           string    // "episode" or "movie"
-	Title          string    // Episode or movie title
-	ShowTitle      string    // For episodes: series name
+	Type           string // "episode" or "movie"
+	Title          string // Episode or movie title
+	ShowTitle      string // For episodes: series name
 	Year           int
 	Season         int
 	Episode        int
@@ -106,17 +109,18 @@ type CalendarItem struct {
 
 // Config holds the application configuration
 type Config struct {
-	SonarrURLs    []string
-	SonarrTokens  []string
-	RadarrURLs    []string
-	RadarrTokens  []string
-	Timeout       time.Duration
-	Days          int
-	NoColor       bool
-	JSONOutput    bool
-	WatchMode     bool
-	WatchSeconds  int
-	Debug         bool
+	SonarrURLs   []string
+	SonarrTokens []string
+	RadarrURLs   []string
+	RadarrTokens []string
+	Timeout      time.Duration
+	Days         int
+	DaysPast     int
+	NoColor      bool
+	JSONOutput   bool
+	WatchMode    bool
+	WatchSeconds int
+	Debug        bool
 }
 
 // QueueIssue represents a service with queue problems
@@ -128,16 +132,16 @@ type QueueIssue struct {
 
 // Summary holds JSON output structure
 type Summary struct {
-	StartDate    string         `json:"start_date"`
-	EndDate      string         `json:"end_date"`
-	TotalItems   int            `json:"total_items"`
-	Episodes     int            `json:"episodes"`
-	Movies       int            `json:"movies"`
-	Available    int            `json:"available"`
-	Missing      int            `json:"missing"`
-	Timestamp    time.Time      `json:"timestamp"`
-	QueueIssues  []QueueIssue   `json:"queue_issues,omitempty"`
-	Items        []CalendarItem `json:"items"`
+	StartDate   string         `json:"start_date"`
+	EndDate     string         `json:"end_date"`
+	TotalItems  int            `json:"total_items"`
+	Episodes    int            `json:"episodes"`
+	Movies      int            `json:"movies"`
+	Available   int            `json:"available"`
+	Missing     int            `json:"missing"`
+	Timestamp   time.Time      `json:"timestamp"`
+	QueueIssues []QueueIssue   `json:"queue_issues,omitempty"`
+	Items       []CalendarItem `json:"items"`
 }
 
 func main() {
@@ -149,6 +153,7 @@ func main() {
 		radarrTokens = flag.String("radarr-tokens", "", "Comma-separated Radarr API tokens")
 		timeout      = flag.Duration("timeout", 10*time.Second, "Connection timeout")
 		days         = flag.Int("days", 1, "Number of days to display (1 = today only)")
+		daysPast     = flag.Int("days-past", 0, "Number of days in the past to display (0 = no past days)")
 		noColor      = flag.Bool("no-color", false, "Disable colored output")
 		jsonOutput   = flag.Bool("json", false, "Output in JSON format")
 		watchMode    = flag.Bool("watch", false, "Continuously monitor calendar")
@@ -159,7 +164,7 @@ func main() {
 
 	// Load configuration
 	config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens,
-		*timeout, *days, *noColor, *jsonOutput, *watchMode, *watchSeconds, *debug)
+		*timeout, *days, *daysPast, *noColor, *jsonOutput, *watchMode, *watchSeconds, *debug)
 
 	// Validate configuration
 	if len(config.SonarrURLs) == 0 && len(config.RadarrURLs) == 0 {
@@ -188,11 +193,12 @@ func main() {
 }
 
 func loadConfig(sonarrURLsFlag, sonarrTokensFlag, radarrURLsFlag, radarrTokensFlag string,
-	timeout time.Duration, days int, noColor, jsonOutput, watchMode bool, watchSeconds int, debug bool) Config {
+	timeout time.Duration, days int, daysPast int, noColor, jsonOutput, watchMode bool, watchSeconds int, debug bool) Config {
 
 	config := Config{
 		Timeout:      timeout,
 		Days:         days,
+		DaysPast:     daysPast,
 		NoColor:      noColor || jsonOutput,
 		JSONOutput:   jsonOutput,
 		WatchMode:    watchMode,
@@ -218,21 +224,21 @@ func loadConfig(sonarrURLsFlag, sonarrTokensFlag, radarrURLsFlag, radarrTokensFl
 		// Fallback to singular SONARR_URL
 		config.SonarrURLs = []string{envURL}
 	}
-	
+
 	if envTokens := os.Getenv("SONARR_TOKENS"); envTokens != "" {
 		config.SonarrTokens = parseCommaSeparated(envTokens)
 	} else if envToken := os.Getenv("SONARR_API_TOKEN"); envToken != "" {
 		// Fallback to singular SONARR_API_TOKEN
 		config.SonarrTokens = []string{envToken}
 	}
-	
+
 	if envURLs := os.Getenv("RADARR_URLS"); envURLs != "" {
 		config.RadarrURLs = parseCommaSeparated(envURLs)
 	} else if envURL := os.Getenv("RADARR_URL"); envURL != "" {
 		// Fallback to singular RADARR_URL
 		config.RadarrURLs = []string{envURL}
 	}
-	
+
 	if envTokens := os.Getenv("RADARR_TOKENS"); envTokens != "" {
 		config.RadarrTokens = parseCommaSeparated(envTokens)
 	} else if envToken := os.Getenv("RADARR_API_TOKEN"); envToken != "" {
@@ -427,7 +433,14 @@ func fetchQueue(url, token string, debug bool) (*QueueResponse, error) {
 func aggregateCalendar(config Config) ([]CalendarItem, []QueueIssue, error) {
 	now := time.Now()
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	end := start.AddDate(0, 0, config.Days)
+
+	// Adjust start date if looking at past days
+	if config.DaysPast > 0 {
+		start = start.AddDate(0, 0, -config.DaysPast)
+	}
+
+	// End date is start + config.Days (total days to display including past)
+	end := start.AddDate(0, 0, config.Days+config.DaysPast)
 
 	items := make([]CalendarItem, 0)
 	queueIssues := make([]QueueIssue, 0)
@@ -598,7 +611,13 @@ func displayCalendar(config Config) error {
 func displayJSON(items []CalendarItem, queueIssues []QueueIssue, config Config) error {
 	now := time.Now()
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	end := start.AddDate(0, 0, config.Days)
+
+	// Adjust start date if looking at past days
+	if config.DaysPast > 0 {
+		start = start.AddDate(0, 0, -config.DaysPast)
+	}
+
+	end := start.AddDate(0, 0, config.Days+config.DaysPast)
 
 	episodes := 0
 	movies := 0
@@ -636,6 +655,13 @@ func displayJSON(items []CalendarItem, queueIssues []QueueIssue, config Config) 
 	return encoder.Encode(summary)
 }
 
+type calendarLayout struct {
+	numColumns     int
+	widthPerColumn int
+	totalDays      int
+	color          func(string) string
+}
+
 func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Config) error {
 	color := func(code string) string {
 		if config.NoColor {
@@ -667,6 +693,11 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Conf
 	now := time.Now()
 	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
+	// Adjust start date if looking at past days
+	if config.DaysPast > 0 {
+		start = start.AddDate(0, 0, -config.DaysPast)
+	}
+
 	// Get terminal width
 	termWidth := getTerminalWidth()
 
@@ -676,7 +707,8 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Conf
 	}
 
 	// Calculate how many columns (days) we can fit
-	numColumns, widthPerColumn := calculateColumnLayout(termWidth, config.Days)
+	totalDays := config.Days + config.DaysPast
+	numColumns, widthPerColumn := calculateColumnLayout(termWidth, totalDays)
 
 	// Group items by day
 	dayGroups := make(map[string][]CalendarItem)
@@ -686,7 +718,13 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Conf
 	}
 
 	// Render horizontal calendar
-	return renderHorizontalCalendar(dayGroups, config, now, start, numColumns, widthPerColumn, color)
+	layout := calendarLayout{
+		numColumns:     numColumns,
+		widthPerColumn: widthPerColumn,
+		totalDays:      totalDays,
+		color:          color,
+	}
+	return renderHorizontalCalendar(dayGroups, config, now, start, layout)
 }
 
 func getTerminalWidth() int {
@@ -698,23 +736,23 @@ func getTerminalWidth() int {
 }
 
 // calculateColumnLayout determines the optimal number of columns and width per column
-// based on the terminal width and desired number of days
-func calculateColumnLayout(termWidth, desiredDays int) (numColumns, widthPerColumn int) {
+// based on the terminal width and total number of days to display
+func calculateColumnLayout(termWidth, totalDays int) (numColumns, widthPerColumn int) {
 	// Start with all days if possible
-	numColumns = desiredDays
-	
+	numColumns = totalDays
+
 	// Calculate the available width per column
 	// tablewriter uses: | col1 | col2 | col3 |
 	// That's: 1 (left border) + (numCols * (1 space + content + 1 space + 1 border))
 	// Simplified: 1 + numCols * 3 + total_content_width
-	
+
 	// Work backwards: given terminal width, how much space per column?
 	tableBorderOverhead := 1 + (numColumns * 3)
 	availableContentWidth := termWidth - tableBorderOverhead
-	
+
 	if availableContentWidth > 0 {
 		widthPerColumn = availableContentWidth / numColumns
-		
+
 		// If each column would be too narrow, reduce number of columns
 		for widthPerColumn < minComfortableColumnWidth && numColumns > 1 {
 			numColumns--
@@ -725,12 +763,12 @@ func calculateColumnLayout(termWidth, desiredDays int) (numColumns, widthPerColu
 			}
 		}
 	}
-	
+
 	// Ensure at least 1 column
 	if numColumns < 1 {
 		numColumns = 1
 	}
-	
+
 	// Calculate final width per column for formatting decisions
 	finalBorderOverhead := 1 + (numColumns * 3)
 	finalContentWidth := termWidth - finalBorderOverhead
@@ -738,7 +776,7 @@ func calculateColumnLayout(termWidth, desiredDays int) (numColumns, widthPerColu
 	if finalContentWidth > 0 && numColumns > 0 {
 		widthPerColumn = finalContentWidth / numColumns
 	}
-	
+
 	return numColumns, widthPerColumn
 }
 
@@ -752,42 +790,40 @@ func truncateText(text string, maxLen int) string {
 	return text[:maxLen-3] + "..."
 }
 
-func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config, now time.Time, start time.Time, numColumns int, widthPerColumn int, color func(string) string) error {
-	totalDays := config.Days
-	
+func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config, now time.Time, start time.Time, layout calendarLayout) error {
 	// Collect all headers and all day columns
 	allHeaders := make([]string, 0)
 	allDayColumns := make([][]string, 0)
 	maxRows := 0
-	
-	for d := 0; d < totalDays; d++ {
+
+	for d := 0; d < layout.totalDays; d++ {
 		currentDay := start.AddDate(0, 0, d)
 		dayKey := currentDay.Format("2006-01-02")
 		dayItems := dayGroups[dayKey]
-		
+
 		// Add header
 		allHeaders = append(allHeaders, currentDay.Format("Mon 01/02"))
-		
+
 		// Build content for this day
-		content := buildDayContent(dayItems, now, config, color, widthPerColumn)
+		content := buildDayContent(dayItems, now, config, layout.color, layout.widthPerColumn)
 		allDayColumns = append(allDayColumns, content)
-		
+
 		if len(content) > maxRows {
 			maxRows = len(content)
 		}
 	}
-	
+
 	// If we need to wrap to multiple rows, we need to create sections
 	// But display them as one continuous table by not adding spacing
-	for sectionStart := 0; sectionStart < totalDays; sectionStart += numColumns {
-		sectionEnd := sectionStart + numColumns
-		if sectionEnd > totalDays {
-			sectionEnd = totalDays
+	for sectionStart := 0; sectionStart < layout.totalDays; sectionStart += layout.numColumns {
+		sectionEnd := sectionStart + layout.numColumns
+		if sectionEnd > layout.totalDays {
+			sectionEnd = layout.totalDays
 		}
-		
+
 		// Create a table for this section
 		table := tablewriter.NewWriter(os.Stdout)
-		
+
 		// Extract headers for this section
 		sectionHeaders := allHeaders[sectionStart:sectionEnd]
 		headerInterfaces := make([]interface{}, len(sectionHeaders))
@@ -795,7 +831,7 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 			headerInterfaces[i] = h
 		}
 		table.Header(headerInterfaces...)
-		
+
 		// Build rows for this section
 		sectionMaxRows := 0
 		for i := sectionStart; i < sectionEnd; i++ {
@@ -803,7 +839,7 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 				sectionMaxRows = len(allDayColumns[i])
 			}
 		}
-		
+
 		for row := 0; row < sectionMaxRows; row++ {
 			rowData := make([]interface{}, sectionEnd-sectionStart)
 			for col := 0; col < sectionEnd-sectionStart; col++ {
@@ -816,12 +852,11 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 			}
 			table.Append(rowData...)
 		}
-		
 		table.Render()
-		
+
 		// NO spacing between sections - they should appear attached
 	}
-	
+
 	return nil
 }
 
@@ -833,61 +868,66 @@ func buildDayContent(dayItems []CalendarItem, now time.Time, config Config, colo
 		return content
 	}
 
-	// Group episodes by show for truncation
-	showEpisodes := make(map[string][]CalendarItem)
-	var movieItems []CalendarItem
-
-	for _, item := range dayItems {
-		if item.Type == "episode" {
-			showEpisodes[item.ShowTitle] = append(showEpisodes[item.ShowTitle], item)
-		} else {
-			movieItems = append(movieItems, item)
+	// Sort all items by air time first, then by type (episodes before movies), then by season/episode
+	sort.Slice(dayItems, func(i, j int) bool {
+		// Primary sort: air time
+		if !dayItems[i].AirTime.Equal(dayItems[j].AirTime) {
+			return dayItems[i].AirTime.Before(dayItems[j].AirTime)
 		}
-	}
-
-	// Sort shows alphabetically
-	var showNames []string
-	for show := range showEpisodes {
-		showNames = append(showNames, show)
-	}
-	sort.Strings(showNames)
-
-	// Add episodes with truncation
-	for _, show := range showNames {
-		episodes := showEpisodes[show]
-
-		// Sort episodes by time, then season/episode
-		sort.Slice(episodes, func(i, j int) bool {
-			if episodes[i].AirTime.Equal(episodes[j].AirTime) {
-				if episodes[i].Season == episodes[j].Season {
-					return episodes[i].Episode < episodes[j].Episode
-				}
-				return episodes[i].Season < episodes[j].Season
+		// Secondary sort: episodes before movies
+		if dayItems[i].Type != dayItems[j].Type {
+			return dayItems[i].Type == "episode"
+		}
+		// Tertiary sort for episodes: season then episode number
+		if dayItems[i].Type == "episode" {
+			if dayItems[i].Season != dayItems[j].Season {
+				return dayItems[i].Season < dayItems[j].Season
 			}
-			return episodes[i].AirTime.Before(episodes[j].AirTime)
-		})
+			return dayItems[i].Episode < dayItems[j].Episode
+		}
+		// For movies, maintain stable order
+		return false
+	})
 
-		// If multiple episodes from same show, show first 2 then collapse
+	// Process items in chronological order with truncation for consecutive same-show episodes
+	i := 0
+	for i < len(dayItems) {
+		item := dayItems[i]
+
+		if item.Type == "movie" {
+			content = append(content, formatMovie(item, now, config, color, widthPerColumn))
+			i++
+			continue
+		}
+
+		// For episodes, check if there are consecutive episodes from the same show
+		showStart := i
+		showEnd := i + 1
+		for showEnd < len(dayItems) &&
+			dayItems[showEnd].Type == "episode" &&
+			dayItems[showEnd].ShowTitle == item.ShowTitle {
+			showEnd++
+		}
+		consecutiveCount := showEnd - showStart
+
+		// If multiple consecutive episodes from same show, show first 2 then collapse
 		maxDisplay := 2
-		if len(episodes) > maxDisplay {
+		if consecutiveCount > maxDisplay {
 			// Show first 2
-			for i := 0; i < maxDisplay; i++ {
-				content = append(content, formatEpisode(episodes[i], now, config, color, widthPerColumn))
+			for j := showStart; j < showStart+maxDisplay; j++ {
+				content = append(content, formatEpisode(dayItems[j], now, config, color, widthPerColumn))
 			}
 			// Add truncation
-			remaining := len(episodes) - maxDisplay
+			remaining := consecutiveCount - maxDisplay
 			content = append(content, color(ColorCyan)+fmt.Sprintf("  + %d more episodes", remaining)+color(ColorReset))
 		} else {
-			// Show all if only 1-2 episodes
-			for _, ep := range episodes {
-				content = append(content, formatEpisode(ep, now, config, color, widthPerColumn))
+			// Show all if only 1-2 consecutive episodes
+			for j := showStart; j < showEnd; j++ {
+				content = append(content, formatEpisode(dayItems[j], now, config, color, widthPerColumn))
 			}
 		}
-	}
 
-	// Add movies
-	for _, movie := range movieItems {
-		content = append(content, formatMovie(movie, now, config, color, widthPerColumn))
+		i = showEnd
 	}
 
 	return content
@@ -900,39 +940,45 @@ func formatEpisode(ep CalendarItem, now time.Time, config Config, color func(str
 	showTitle := ep.ShowTitle
 	episodeTitle := ep.Title
 
-	// Calculate available space for content
-	// Format: "HH:MM SHOWNAME - S##E## - EPISODE_TITLE"
-	// Fixed parts: time(5) + space(1) + " - S##E## - "(13) = 19 chars
-	// Remaining space for show + episode titles
-	fixedChars := 19
-	availableForTitles := widthPerColumn - fixedChars
-	
-	// Only truncate if we truly need to (not enough space)
-	if availableForTitles < len(showTitle)+len(episodeTitle) {
-		// Split available space: ~60% for show, ~40% for episode
-		maxShowLen := int(float64(availableForTitles) * 0.6)
-		maxEpisodeLen := availableForTitles - maxShowLen - 3 // -3 for spacing
-		
-		// Apply minimum sensible lengths
-		if maxShowLen < minShowTitleLength {
-			maxShowLen = minShowTitleLength
-		}
-		if maxEpisodeLen < minEpisodeTitleLength {
-			maxEpisodeLen = minEpisodeTitleLength
-		}
-		
-		if len(showTitle) > maxShowLen {
-			showTitle = showTitle[:maxShowLen-3] + "..."
-		}
-		
-		if len(episodeTitle) > maxEpisodeLen {
-			episodeTitle = episodeTitle[:maxEpisodeLen-3] + "..."
-		}
+	// Multi-line format:
+	// Line 1: "HH:MM SHOWNAME - S##E##"
+	// Line 2: "       EPISODE_TITLE"
+
+	// Fixed parts for line 1: time(5) + space(1) + " - S##E##"(10) = 16 chars
+	fixedCharsLine1 := 16
+	maxShowLen := widthPerColumn - fixedCharsLine1
+
+	// Apply minimum sensible length for show title
+	if maxShowLen < minShowTitleLength {
+		maxShowLen = minShowTitleLength
 	}
 
-	// Show name - S##E## - Episode Title
-	return fmt.Sprintf("%s %s%s - S%02dE%02d - %s%s",
-		timeStr, statusColor, showTitle, ep.Season, ep.Episode, episodeTitle, color(ColorReset))
+	// Truncate show title if needed
+	if len(showTitle) > maxShowLen {
+		showTitle = showTitle[:maxShowLen-3] + "..."
+	}
+
+	// Line 2 has leading spaces (7 chars: "       ") for alignment
+	indentSpaces := "       "
+	maxEpisodeLen := widthPerColumn - len(indentSpaces)
+
+	// Apply minimum sensible length for episode title
+	if maxEpisodeLen < minEpisodeTitleLength {
+		maxEpisodeLen = minEpisodeTitleLength
+	}
+
+	// Truncate episode title if needed
+	if len(episodeTitle) > maxEpisodeLen {
+		episodeTitle = episodeTitle[:maxEpisodeLen-3] + "..."
+	}
+
+	// Build multi-line format using \n
+	line1 := fmt.Sprintf("%s %s%s - S%02dE%02d%s",
+		timeStr, statusColor, showTitle, ep.Season, ep.Episode, color(ColorReset))
+	line2 := fmt.Sprintf("%s%s%s%s",
+		indentSpaces, statusColor, episodeTitle, color(ColorReset))
+
+	return line1 + "\n" + line2
 }
 
 func formatMovie(movie CalendarItem, now time.Time, config Config, color func(string) string, widthPerColumn int) string {
@@ -946,7 +992,7 @@ func formatMovie(movie CalendarItem, now time.Time, config Config, color func(st
 	// Fixed parts: time(5) + space(1) + " (####)"(7) = 13 chars
 	fixedChars := 13
 	maxTitleLen := widthPerColumn - fixedChars
-	
+
 	// Only truncate if necessary
 	if maxTitleLen < len(title) {
 		if maxTitleLen < minMovieTitleLength {
@@ -978,7 +1024,8 @@ func displayVertical(items []CalendarItem, config Config, now time.Time, start t
 	}
 
 	// Display each day
-	for d := 0; d < config.Days; d++ {
+	totalDaysToDisplay := config.Days + config.DaysPast
+	for d := 0; d < totalDaysToDisplay; d++ {
 		currentDay := start.AddDate(0, 0, d)
 		dayKey := currentDay.Format("2006-01-02")
 		dayItems := dayGroups[dayKey]
@@ -1025,9 +1072,12 @@ func displayVertical(items []CalendarItem, config Config, now time.Time, start t
 				statusColor := getStatusColor(ep, now, config.NoColor)
 				timeStr := ep.AirTime.Format("15:04")
 
-				fmt.Printf("  %s%s%s %s%s - S%02dE%02d - %s%s\n",
+				// Multi-line format for consistency with horizontal view
+				fmt.Printf("  %s%s%s %s%s - S%02dE%02d%s\n",
 					color(ColorBold), timeStr, color(ColorReset),
-					statusColor, show, ep.Season, ep.Episode, ep.Title, color(ColorReset))
+					statusColor, show, ep.Season, ep.Episode, color(ColorReset))
+				fmt.Printf("         %s%s%s\n",
+					statusColor, ep.Title, color(ColorReset))
 			}
 		}
 
