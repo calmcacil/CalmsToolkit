@@ -227,9 +227,24 @@ The tool interacts with the following Overseerr/Jellyseerr API endpoints:
 - `GET /api/v1/search` - Search for media
 - `GET /api/v1/tv/{id}` - Get TV show details (season count)
 - `POST /api/v1/request` - Create new request
-- `GET /api/v1/request` - Get pending requests
+- `GET /api/v1/request` - Get pending requests (with fallback support)
+- `GET /api/v1/request/count` - Count pending requests
 - `POST /api/v1/request/{id}/approve` - Approve request
 - `POST /api/v1/request/{id}/decline` - Decline request
+
+### Overseerr API Bug Workaround
+
+This tool includes automatic fallback logic for a known Overseerr API bug where the `filter=pending` query parameter sometimes returns zero results even when pending requests exist. When this occurs:
+
+1. The tool first attempts to fetch requests using `GET /api/v1/request?filter=pending`
+2. It checks the actual count via `GET /api/v1/request/count` endpoint
+3. If there's a mismatch (e.g., count shows 5 pending but filter returns 0):
+   - A warning message is displayed
+   - The tool automatically falls back to fetching ALL requests
+   - Client-side filtering extracts only pending requests (status === 1)
+   - Success message confirms the correct number of pending requests found
+
+This happens transparently with no user intervention required. The fallback ensures reliable operation regardless of API quirks, and includes proper pagination support for large request lists.
 
 ## Permissions
 
@@ -313,6 +328,15 @@ Your API key may be incorrect or expired. Generate a new one from Settings > Gen
 ### "search failed: status 404"
 
 The search endpoint couldn't be reached. Verify your server URL includes the protocol (http:// or https://).
+
+### Seeing "WARNING: Overseerr API bug detected!" messages
+
+This is normal and indicates the tool is working around a known Overseerr API issue. The warning appears when:
+- The API reports X pending requests exist
+- But the filtered endpoint returns 0 results
+- The tool automatically fetches all requests and filters them client-side
+
+No action is needed - this is handled automatically and your pending requests will be displayed correctly.
 
 ### Colorized Output Not Working
 

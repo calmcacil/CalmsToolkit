@@ -5,6 +5,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -766,5 +767,689 @@ func TestSearchMediaErrorDiagnostics(t *testing.T) {
 				t.Errorf("Error message = %q, should contain status code", errMsg)
 			}
 		})
+	}
+}
+
+// TestCheckUserPermissions verifies permission checking
+func TestCheckUserPermissions(t *testing.T) {
+	const (
+		MANAGE_REQUESTS = 16
+		ADMIN           = 2
+	)
+
+	tests := []struct {
+		name              string
+		mockAuthMe        AuthMe
+		mockStatusCode    int
+		expectError       bool
+		expectManagePerms bool
+		expectAdminPerms  bool
+	}{
+		{
+			name: "User with MANAGE_REQUESTS permission",
+			mockAuthMe: AuthMe{
+				ID:          1,
+				Email:       "admin@example.com",
+				Permissions: MANAGE_REQUESTS,
+			},
+			mockStatusCode:    http.StatusOK,
+			expectError:       false,
+			expectManagePerms: true,
+			expectAdminPerms:  false,
+		},
+		{
+			name: "User with ADMIN permission",
+			mockAuthMe: AuthMe{
+				ID:          1,
+				Email:       "admin@example.com",
+				Permissions: ADMIN,
+			},
+			mockStatusCode:    http.StatusOK,
+			expectError:       false,
+			expectManagePerms: false,
+			expectAdminPerms:  true,
+		},
+		{
+			name: "User with both MANAGE_REQUESTS and ADMIN",
+			mockAuthMe: AuthMe{
+				ID:          1,
+				Email:       "superadmin@example.com",
+				Permissions: MANAGE_REQUESTS | ADMIN,
+			},
+			mockStatusCode:    http.StatusOK,
+			expectError:       false,
+			expectManagePerms: true,
+			expectAdminPerms:  true,
+		},
+		{
+			name: "User with no permissions",
+			mockAuthMe: AuthMe{
+				ID:          1,
+				Email:       "user@example.com",
+				Permissions: 0,
+			},
+			mockStatusCode:    http.StatusOK,
+			expectError:       false,
+			expectManagePerms: false,
+			expectAdminPerms:  false,
+		},
+		{
+			name:           "Unauthorized",
+			mockAuthMe:     AuthMe{},
+			mockStatusCode: http.StatusUnauthorized,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/auth/me" {
+					t.Errorf("Expected /api/v1/auth/me, got %s", r.URL.Path)
+				}
+				w.WriteHeader(tt.mockStatusCode)
+				if tt.mockStatusCode == http.StatusOK {
+					json.NewEncoder(w).Encode(tt.mockAuthMe)
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				ServerURL: server.URL,
+				APIKey:    "test-key",
+				Timeout:   5 * time.Second,
+			}
+
+			authMe, err := checkUserPermissions(config)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if authMe.Permissions != tt.mockAuthMe.Permissions {
+					t.Errorf("Permissions = %d, want %d", authMe.Permissions, tt.mockAuthMe.Permissions)
+				}
+
+				hasManage := (authMe.Permissions & MANAGE_REQUESTS) != 0
+				if hasManage != tt.expectManagePerms {
+					t.Errorf("Has MANAGE_REQUESTS = %v, want %v", hasManage, tt.expectManagePerms)
+				}
+
+				hasAdmin := (authMe.Permissions & ADMIN) != 0
+				if hasAdmin != tt.expectAdminPerms {
+					t.Errorf("Has ADMIN = %v, want %v", hasAdmin, tt.expectAdminPerms)
+				}
+			}
+		})
+	}
+}
+
+// TestGetRequestCount verifies request count fetching
+func TestGetRequestCount(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockCount      RequestCount
+		mockStatusCode int
+		expectError    bool
+	}{
+		{
+			name: "Valid request count",
+			mockCount: RequestCount{
+				Pending:  5,
+				Approved: 10,
+				Total:    15,
+			},
+			mockStatusCode: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name: "Zero pending requests",
+			mockCount: RequestCount{
+				Pending:  0,
+				Approved: 8,
+				Total:    8,
+			},
+			mockStatusCode: http.StatusOK,
+			expectError:    false,
+		},
+		{
+			name:           "Server error",
+			mockCount:      RequestCount{},
+			mockStatusCode: http.StatusInternalServerError,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/v1/request/count" {
+					t.Errorf("Expected /api/v1/request/count, got %s", r.URL.Path)
+				}
+				w.WriteHeader(tt.mockStatusCode)
+				if tt.mockStatusCode == http.StatusOK {
+					json.NewEncoder(w).Encode(tt.mockCount)
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				ServerURL: server.URL,
+				APIKey:    "test-key",
+				Timeout:   5 * time.Second,
+			}
+
+			count, err := getRequestCount(config)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("Unexpected error: %v", err)
+				}
+				if count.Pending != tt.mockCount.Pending {
+					t.Errorf("Pending = %d, want %d", count.Pending, tt.mockCount.Pending)
+				}
+				if count.Approved != tt.mockCount.Approved {
+					t.Errorf("Approved = %d, want %d", count.Approved, tt.mockCount.Approved)
+				}
+				if count.Total != tt.mockCount.Total {
+					t.Errorf("Total = %d, want %d", count.Total, tt.mockCount.Total)
+				}
+			}
+		})
+	}
+}
+
+// TestGetPendingRequestsHappyPath verifies the normal case where filter=pending works
+func TestGetPendingRequestsHappyPath(t *testing.T) {
+	mockCount := RequestCount{
+		Pending:  3,
+		Approved: 5,
+		Total:    8,
+	}
+
+	mockRequests := RequestsResponse{
+		PageInfo: PageInfo{
+			Pages:    1,
+			PageSize: 50,
+			Results:  3,
+			Page:     1,
+		},
+		Results: []MediaRequest{
+			{
+				ID:     101,
+				Status: StatusPending,
+				Type:   "movie",
+				Media: MediaInfo{
+					TmdbID: 550,
+				},
+				RequestedBy: User{
+					ID:    1,
+					Email: "user1@example.com",
+				},
+			},
+			{
+				ID:     102,
+				Status: StatusPending,
+				Type:   "tv",
+				Media: MediaInfo{
+					TmdbID: 1396,
+				},
+				RequestedBy: User{
+					ID:    2,
+					Email: "user2@example.com",
+				},
+			},
+			{
+				ID:     103,
+				Status: StatusPending,
+				Type:   "movie",
+				Media: MediaInfo{
+					TmdbID: 27205,
+				},
+				RequestedBy: User{
+					ID:    1,
+					Email: "user1@example.com",
+				},
+			},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/request/count"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(mockCount)
+		case strings.Contains(r.URL.Path, "/request"):
+			// Verify the request uses filter=pending
+			if !strings.Contains(r.URL.RawQuery, "filter=pending") {
+				t.Errorf("Expected filter=pending in query, got %s", r.URL.RawQuery)
+			}
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(mockRequests)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	requests, err := getPendingRequests(config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(requests) != 3 {
+		t.Errorf("Got %d requests, want 3", len(requests))
+	}
+
+	// Verify all returned requests have pending status
+	for i, req := range requests {
+		if req.Status != StatusPending {
+			t.Errorf("Request %d has status %d, want %d (StatusPending)", i, req.Status, StatusPending)
+		}
+	}
+}
+
+// TestGetPendingRequestsNoPending verifies behavior when no pending requests exist
+func TestGetPendingRequestsNoPending(t *testing.T) {
+	mockCountResponse := RequestCount{
+		Pending:  0,
+		Approved: 10,
+		Total:    10,
+	}
+
+	mockRequestsResponse := RequestsResponse{
+		PageInfo: PageInfo{
+			Pages:    0,
+			PageSize: 50,
+			Results:  0,
+			Page:     1,
+		},
+		Results: []MediaRequest{},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/request/count") {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(mockCountResponse)
+		} else if strings.Contains(r.URL.Path, "/request") {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(mockRequestsResponse)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	requests, err := getPendingRequests(config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if len(requests) != 0 {
+		t.Errorf("Got %d requests, want 0", len(requests))
+	}
+}
+
+// TestGetPendingRequestsPagination verifies multi-page request fetching
+func TestGetPendingRequestsPagination(t *testing.T) {
+	requestCallCount := 0
+	totalResults := 125 // More than 50 to trigger pagination
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+
+		switch {
+		case strings.Contains(r.URL.Path, "/request/count"):
+			json.NewEncoder(w).Encode(RequestCount{
+				Pending:  totalResults,
+				Approved: 10,
+				Total:    totalResults + 10,
+			})
+
+		case strings.Contains(r.URL.Path, "/request"):
+			requestCallCount++
+
+			// Parse skip parameter
+			skip := r.URL.Query().Get("skip")
+			skipNum := 0
+			if skip != "" {
+				fmt.Sscanf(skip, "%d", &skipNum)
+			}
+
+			// Calculate what to return for this page
+			pageStart := skipNum
+			pageEnd := skipNum + 50
+			if pageEnd > totalResults {
+				pageEnd = totalResults
+			}
+
+			var results []MediaRequest
+			for i := pageStart; i < pageEnd; i++ {
+				results = append(results, MediaRequest{
+					ID:     i + 1,
+					Status: StatusPending,
+					Media:  MediaInfo{TmdbID: 1000 + i},
+				})
+			}
+
+			response := RequestsResponse{
+				PageInfo: PageInfo{
+					Pages:    3,
+					PageSize: 50,
+					Results:  totalResults,
+					Page:     (skipNum / 50) + 1,
+				},
+				Results: results,
+			}
+
+			json.NewEncoder(w).Encode(response)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	requests, err := getPendingRequests(config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Should make 3 calls: skip=0 (50 results), skip=50 (50 results), skip=100 (25 results)
+	if requestCallCount != 3 {
+		t.Errorf("Made %d API calls to /request, want 3", requestCallCount)
+	}
+
+	if len(requests) != totalResults {
+		t.Errorf("Got %d requests, want %d", len(requests), totalResults)
+	}
+
+	// Verify request IDs are sequential
+	for i, req := range requests {
+		expectedID := i + 1
+		if req.ID != expectedID {
+			t.Errorf("Request %d has ID %d, want %d", i, req.ID, expectedID)
+			break // Only show first mismatch
+		}
+	}
+}
+
+// TestGetPendingRequestsWithFallback verifies the fallback logic when filter=pending returns 0 results
+func TestGetPendingRequestsWithFallback(t *testing.T) {
+	callCount := 0
+	pendingCallCount := 0
+	allCallCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+
+		endpoint := r.URL.Path + "?" + r.URL.RawQuery
+
+		switch {
+		case r.URL.Path == "/api/v1/request/count":
+			json.NewEncoder(w).Encode(RequestCount{
+				Pending:  2,
+				Approved: 3,
+				Total:    5,
+			})
+
+		case r.URL.Query().Get("filter") == "pending":
+			pendingCallCount++
+			json.NewEncoder(w).Encode(RequestsResponse{
+				PageInfo: PageInfo{
+					Pages:    0,
+					PageSize: 50,
+					Results:  0,
+					Page:     1,
+				},
+				Results: []MediaRequest{},
+			})
+
+		case r.URL.Query().Get("filter") == "all":
+			allCallCount++
+			json.NewEncoder(w).Encode(RequestsResponse{
+				PageInfo: PageInfo{
+					Pages:    1,
+					PageSize: 50,
+					Results:  5,
+					Page:     1,
+				},
+				Results: []MediaRequest{
+					{ID: 1, Status: StatusPending, Media: MediaInfo{TmdbID: 100}},
+					{ID: 2, Status: StatusApproved, Media: MediaInfo{TmdbID: 101}},
+					{ID: 3, Status: StatusPending, Media: MediaInfo{TmdbID: 102}},
+					{ID: 4, Status: StatusApproved, Media: MediaInfo{TmdbID: 103}},
+					{ID: 5, Status: StatusDeclined, Media: MediaInfo{TmdbID: 104}},
+				},
+			})
+
+		default:
+			t.Errorf("Unexpected endpoint called: %s", endpoint)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	requests, err := getPendingRequests(config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if pendingCallCount != 1 {
+		t.Errorf("Made %d calls to filter=pending, want 1", pendingCallCount)
+	}
+
+	if allCallCount != 1 {
+		t.Errorf("Made %d calls to filter=all, want 1 (fallback should have triggered)", allCallCount)
+	}
+
+	if len(requests) != 2 {
+		t.Errorf("Got %d pending requests, want 2", len(requests))
+	}
+
+	for _, req := range requests {
+		if req.Status != StatusPending {
+			t.Errorf("Request %d has status %d, want %d (StatusPending)", req.ID, req.Status, StatusPending)
+		}
+	}
+
+	expectedPendingIDs := []int{1, 3}
+	for i, req := range requests {
+		if req.ID != expectedPendingIDs[i] {
+			t.Errorf("Request %d has ID %d, want %d", i, req.ID, expectedPendingIDs[i])
+		}
+	}
+}
+
+// TestGetPendingRequestsNoFallbackNeeded verifies fallback is not triggered when primary fetch works
+func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
+	pendingCallCount := 0
+	allCallCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/request/count":
+			json.NewEncoder(w).Encode(RequestCount{
+				Pending:  2,
+				Approved: 3,
+				Total:    5,
+			})
+
+		case r.URL.Query().Get("filter") == "pending":
+			pendingCallCount++
+			json.NewEncoder(w).Encode(RequestsResponse{
+				PageInfo: PageInfo{
+					Pages:    1,
+					PageSize: 50,
+					Results:  2,
+					Page:     1,
+				},
+				Results: []MediaRequest{
+					{ID: 1, Status: StatusPending, Media: MediaInfo{TmdbID: 100}},
+					{ID: 2, Status: StatusPending, Media: MediaInfo{TmdbID: 101}},
+				},
+			})
+
+		case r.URL.Query().Get("filter") == "all":
+			allCallCount++
+			t.Error("filter=all should not be called when filter=pending works correctly")
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	requests, err := getPendingRequests(config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if pendingCallCount != 1 {
+		t.Errorf("Made %d calls to filter=pending, want 1", pendingCallCount)
+	}
+
+	if allCallCount != 0 {
+		t.Errorf("Made %d calls to filter=all, want 0 (fallback should not trigger)", allCallCount)
+	}
+
+	if len(requests) != 2 {
+		t.Errorf("Got %d pending requests, want 2", len(requests))
+	}
+}
+
+// TestGetPendingRequestsFallbackPagination verifies fallback handles pagination correctly
+func TestGetPendingRequestsFallbackPagination(t *testing.T) {
+	allPageCount := 0
+	totalResults := 120 // More than 50 to ensure pagination
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/request/count":
+			json.NewEncoder(w).Encode(RequestCount{
+				Pending:  60, // Half will be pending
+				Approved: 60,
+				Total:    totalResults,
+			})
+
+		case r.URL.Query().Get("filter") == "pending":
+			// Simulate the bug: filter=pending returns 0 even though count shows 60
+			json.NewEncoder(w).Encode(RequestsResponse{
+				PageInfo: PageInfo{
+					Pages:    0,
+					PageSize: 50,
+					Results:  0,
+					Page:     1,
+				},
+				Results: []MediaRequest{},
+			})
+
+		case r.URL.Query().Get("filter") == "all":
+			allPageCount++
+			skip := r.URL.Query().Get("skip")
+			skipNum := 0
+			if skip != "" {
+				fmt.Sscanf(skip, "%d", &skipNum)
+			}
+
+			// Generate results for this page
+			pageStart := skipNum
+			pageEnd := skipNum + 50
+			if pageEnd > totalResults {
+				pageEnd = totalResults
+			}
+
+			var results []MediaRequest
+			for i := pageStart; i < pageEnd; i++ {
+				// Alternate between pending and approved
+				status := StatusApproved
+				if i%2 == 0 {
+					status = StatusPending
+				}
+				results = append(results, MediaRequest{
+					ID:     i + 1,
+					Status: status,
+					Media:  MediaInfo{TmdbID: 1000 + i},
+				})
+			}
+
+			response := RequestsResponse{
+				PageInfo: PageInfo{
+					Pages:    3,
+					PageSize: 50,
+					Results:  totalResults,
+					Page:     (skipNum / 50) + 1,
+				},
+				Results: results,
+			}
+
+			json.NewEncoder(w).Encode(response)
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	requests, err := getPendingRequests(config)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// Should make 3 calls to filter=all to get all 120 results
+	if allPageCount != 3 {
+		t.Errorf("Made %d calls to filter=all, want 3 (should paginate through all pages)", allPageCount)
+	}
+
+	// Should have 60 pending requests (every even-indexed item)
+	if len(requests) != 60 {
+		t.Errorf("Got %d pending requests, want 60", len(requests))
+	}
+
+	// Verify all returned requests are pending
+	for _, req := range requests {
+		if req.Status != StatusPending {
+			t.Errorf("Request %d has status %d, want %d (StatusPending)", req.ID, req.Status, StatusPending)
+			break
+		}
 	}
 }

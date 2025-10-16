@@ -6,12 +6,12 @@ Comprehensive test suites have been implemented for all three CLI binaries in th
 
 ## Test Statistics
 
-| Binary | Test File | Functions | Lines | Coverage |
-|--------|-----------|-----------|-------|----------|
-| media-requests | `media-requests_test.go` | 15 | 649 | 24.4% |
-| media-streams | `media-streams_test.go` | 12 | 538 | 39.4% |
-| media-calendar | `media-calendar_test.go` | 10 | 532 | 38.3% |
-| **Total** | | **37** | **1,719** | **~34%** |
+| Binary | Test File | Functions | Test Cases | Coverage |
+|--------|-----------|-----------|------------|----------|
+| media-requests | `media-requests_test.go` | 23 | ~60+ | 24.4% |
+| media-streams | `media-streams_test.go` | 12 | ~30+ | 39.4% |
+| media-calendar | `media-calendar_test.go` | 10 | ~25+ | 38.3% |
+| **Total** | | **45** | **~115+** | **~34%** |
 
 ## Running Tests
 
@@ -41,7 +41,7 @@ go test -tags mediacalendar -cover
 
 ## Test Coverage by Binary
 
-### media-requests (15 tests)
+### media-requests (23 tests)
 **Utility Functions:**
 - `TestGetYear` - Extract year from media dates (4 cases)
 - `TestGetStatusText` - Status text formatting (4 cases)
@@ -54,11 +54,25 @@ go test -tags mediacalendar -cover
 
 **API Operations:**
 - `TestSearchMedia` - TMDB search functionality (3 cases)
+- `TestSearchMediaWithSpaces` - Query encoding for searches (3 cases)
+- `TestSearchMediaErrorDiagnostics` - Error diagnostics (3 cases)
 - `TestGetTVDetails` - TV show details retrieval
 - `TestCreateRequest` - Request creation (3 cases)
-- `TestGetPendingRequests` - Pending request listing
+- `TestGetPendingRequests` - Pending request listing (basic)
 - `TestApproveRequest` - Request approval
 - `TestDeclineRequest` - Request decline
+
+**Permission & Count Operations:**
+- `TestCheckUserPermissions` - Permission validation (5 cases)
+- `TestGetRequestCount` - Request count retrieval (3 cases)
+
+**Pending Requests with Fallback Logic (Overseerr Bug #3949):**
+- `TestGetPendingRequestsHappyPath` - Normal filter=pending operation
+- `TestGetPendingRequestsNoPending` - Zero pending requests edge case
+- `TestGetPendingRequestsPagination` - Multi-page fetching (125 requests)
+- `TestGetPendingRequestsWithFallback` - Fallback triggers when count > 0 but filter=pending returns 0
+- `TestGetPendingRequestsNoFallbackNeeded` - Fallback doesn't trigger when unnecessary
+- `TestGetPendingRequestsFallbackPagination` - Fallback with pagination (125 requests, 3 pages)
 
 **Service Management:**
 - `TestTestConnection` - Connection testing (3 cases)
@@ -116,6 +130,33 @@ go test -tags mediacalendar -cover
 5. **Error Handling**: Comprehensive error case coverage
 
 ## Key Test Achievements
+
+### Overseerr Bug #3949 Fallback Implementation
+
+**Problem**: Overseerr API has a known bug where `/request/count` shows pending requests exist, but querying `/request?filter=pending` returns zero results.
+
+**Solution**: Implemented comprehensive fallback logic in `getPendingRequests()`:
+1. Fetch `/request/count` to get expected pending count
+2. Attempt primary fetch with `filter=pending`
+3. **Detect mismatch**: if count shows pending > 0 but results are empty
+4. **Activate fallback**: fetch `filter=all` with pagination
+5. **Client-side filter**: keep only requests with `status=1` (StatusPending)
+6. Return filtered results
+
+**Test Coverage**:
+- `TestGetPendingRequestsHappyPath` - Verifies normal operation when filter=pending works
+- `TestGetPendingRequestsWithFallback` - Verifies fallback triggers correctly and filters mixed-status results
+- `TestGetPendingRequestsNoFallbackNeeded` - Ensures fallback doesn't trigger unnecessarily
+- `TestGetPendingRequestsFallbackPagination` - Tests fallback with 125 requests across 3 pages (50/page)
+- `TestGetPendingRequestsPagination` - Tests normal pagination (125 requests, 3 pages)
+- `TestGetPendingRequestsNoPending` - Edge case with zero pending requests
+
+**Implementation Details**:
+- Fallback uses same `pageSize=50` as primary fetch
+- Proper pagination with `skip` parameter
+- Verbose logging shows when fallback activates
+- Color-coded warnings for user visibility
+- Status constants: `StatusPending=1`, `StatusApproved=2`, `StatusDeclined=3`
 
 ### Issues Fixed During Implementation
 
