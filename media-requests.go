@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // ANSI color codes
@@ -357,8 +359,7 @@ func runInteractiveMenu(config Config) {
 		clearScreen()
 		printMainMenu(config)
 
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(strings.ToLower(input))
+		input, _ := readKeystroke(config)
 
 		switch input {
 		case "n":
@@ -369,8 +370,8 @@ func runInteractiveMenu(config Config) {
 			fmt.Println("\nGoodbye!")
 			return
 		default:
-			fmt.Println("\nInvalid option. Press Enter to continue...")
-			reader.ReadString('\n')
+			fmt.Println("\nInvalid option. Press any key to continue...")
+			readKeystroke(config)
 		}
 	}
 }
@@ -417,15 +418,15 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	results, err := searchMedia(config, query)
 	if err != nil {
 		fmt.Printf("\n%sError searching: %v%s\n", color(ColorRed), err, color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
 	if len(results) == 0 {
 		fmt.Printf("\n%sNo results found.%s\n", color(ColorYellow), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -453,8 +454,8 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	selection, err := strconv.Atoi(selectionStr)
 	if err != nil || selection < 1 || selection > len(results) {
 		fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -465,14 +466,14 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 		status := selectedMedia.MediaInfo.Status
 		if status == MediaStatusAvailable || status == MediaStatusPartiallyAvailable {
 			fmt.Printf("\n%sThis media is already available!%s\n", color(ColorGreen), color(ColorReset))
-			fmt.Printf("\nPress Enter to continue...")
-			reader.ReadString('\n')
+			fmt.Printf("\nPress any key to continue...")
+			readKeystroke(config)
 			return
 		}
 		if len(selectedMedia.MediaInfo.Requests) > 0 {
 			fmt.Printf("\n%sThis media has already been requested.%s\n", color(ColorYellow), color(ColorReset))
-			fmt.Printf("\nPress Enter to continue...")
-			reader.ReadString('\n')
+			fmt.Printf("\nPress any key to continue...")
+			readKeystroke(config)
 			return
 		}
 	}
@@ -527,13 +528,12 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	}
 
 	fmt.Printf("\nSubmit request? (y/n): ")
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	confirm := readKeyOrDefault(config, "n")
 
-	if confirm != "y" && confirm != "yes" {
+	if confirm != "y" {
 		fmt.Printf("\n%sRequest cancelled.%s\n", color(ColorYellow), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -542,8 +542,8 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	request, err := createRequest(config, selectedMedia, seasons, overrides)
 	if err != nil {
 		fmt.Printf("\n%sError creating request: %v%s\n", color(ColorRed), err, color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -553,8 +553,8 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	statusText := getStatusText(request.Status)
 	fmt.Printf("Status: %s%s%s\n", color(ColorYellow), statusText, color(ColorReset))
 
-	fmt.Printf("\nPress Enter to continue...")
-	reader.ReadString('\n')
+	fmt.Printf("\nPress any key to continue...")
+	readKeystroke(config)
 }
 
 func handleViewRequests(config Config, reader *bufio.Reader) {
@@ -572,8 +572,8 @@ func handleViewRequests(config Config, reader *bufio.Reader) {
 	requests, err := getPendingRequests(config)
 	if err != nil {
 		fmt.Printf("\n%sError fetching requests: %v%s\n", color(ColorRed), err, color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -582,8 +582,8 @@ func handleViewRequests(config Config, reader *bufio.Reader) {
 
 	if len(requests) == 0 {
 		fmt.Printf("%sNo pending requests.%s\n", color(ColorGreen), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -602,8 +602,8 @@ func handleViewRequests(config Config, reader *bufio.Reader) {
 	selection, err := strconv.Atoi(selectionStr)
 	if err != nil || selection < 1 || selection > len(requests) {
 		fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return
 	}
 
@@ -631,8 +631,7 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 		color(ColorYellow), color(ColorReset))
 
 	fmt.Printf("Select action: ")
-	action, _ := reader.ReadString('\n')
-	action = strings.TrimSpace(strings.ToLower(action))
+	action := readKeyOrDefault(config, "b")
 
 	switch action {
 	case "a":
@@ -652,15 +651,14 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 				fmt.Printf("%s  Root folder set to: %s%s\n", color(ColorGray), overrides.RootFolder, color(ColorReset))
 			}
 		}
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 
 	case "d":
 		fmt.Printf("\n%sAre you sure you want to decline this request? (y/n):%s ", color(ColorRed), color(ColorReset))
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
+		confirm := readKeyOrDefault(config, "n")
 
-		if confirm == "y" || confirm == "yes" {
+		if confirm == "y" {
 			fmt.Printf("\n%sDeclining request...%s\n", color(ColorYellow), color(ColorReset))
 			if err := declineRequest(config, request.ID); err != nil {
 				fmt.Printf("\n%sError declining: %v%s\n", color(ColorRed), err, color(ColorReset))
@@ -670,16 +668,16 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 		} else {
 			fmt.Printf("\n%sCancelled.%s\n", color(ColorYellow), color(ColorReset))
 		}
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 
 	case "b", "":
 		return
 
 	default:
 		fmt.Printf("\n%sInvalid action.%s\n", color(ColorRed), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 	}
 }
 
@@ -820,8 +818,8 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 	details, err := getTVDetails(config, media.ID)
 	if err != nil {
 		fmt.Printf("\n%sError fetching TV show details: %v%s\n", color(ColorRed), err, color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return nil, err
 	}
 
@@ -840,8 +838,7 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 	fmt.Printf("%s[B]%s Back\n\n", color(ColorRed), color(ColorReset))
 
 	fmt.Printf("Select option: ")
-	option, _ := reader.ReadString('\n')
-	option = strings.TrimSpace(strings.ToLower(option))
+	option := readKeyOrDefault(config, "b")
 
 	switch option {
 	case "a":
@@ -863,8 +860,8 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 			season, err := strconv.Atoi(part)
 			if err != nil || season < 1 || season > details.NumberOfSeasons {
 				fmt.Printf("\n%sInvalid season number: %s%s\n", color(ColorRed), part, color(ColorReset))
-				fmt.Printf("\nPress Enter to continue...")
-				reader.ReadString('\n')
+				fmt.Printf("\nPress any key to continue...")
+				readKeystroke(config)
 				return nil, fmt.Errorf("invalid season number")
 			}
 			seasons = append(seasons, season)
@@ -881,8 +878,8 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 
 	default:
 		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return nil, fmt.Errorf("invalid option")
 	}
 }
@@ -912,8 +909,8 @@ func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.R
 			return code
 		}
 		fmt.Printf("\n%sError fetching %s servers: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return nil, err
 	}
 
@@ -991,8 +988,8 @@ func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.R
 	details, err := fetchServiceDetails(config, service, selected.ID)
 	if err != nil {
 		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return nil, err
 	}
 
@@ -1063,6 +1060,116 @@ func formatDate(dateStr string) string {
 		return dateStr
 	}
 	return t.Format("2006-01-02 15:04")
+}
+
+// readKeystroke reads a single keystroke from stdin without requiring Enter.
+// It puts the terminal in raw mode, reads one character, and restores the terminal.
+// Returns the lowercase character pressed or an error.
+func readKeystroke(config Config) (string, error) {
+	// Get the file descriptor for stdin
+	fd := int(os.Stdin.Fd())
+
+	// Check if stdin is a terminal
+	if !term.IsTerminal(fd) {
+		// Fallback to buffered read if not a terminal (e.g., piped input)
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(strings.ToLower(input)), nil
+	}
+
+	// Save the current terminal state
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		// If we can't set raw mode, fall back to buffered read
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(strings.ToLower(input)), nil
+	}
+
+	// Ensure we restore the terminal state no matter what
+	defer term.Restore(fd, oldState)
+
+	// Read a single byte
+	b := make([]byte, 1)
+	_, err = os.Stdin.Read(b)
+	if err != nil {
+		return "", err
+	}
+
+	// Echo the character so user sees what they pressed
+	if !config.NoColor {
+		fmt.Printf("%c\n", b[0])
+	} else {
+		fmt.Printf("%c\n", b[0])
+	}
+
+	// Convert to string and lowercase
+	char := strings.ToLower(string(b[0]))
+	return char, nil
+}
+
+// readKeyOrDefault reads a single keystroke and returns it, or returns the defaultKey if Enter is pressed.
+// For numeric input, it reads the full number by accepting multiple digits until Enter.
+func readKeyOrDefault(config Config, defaultKey string) string {
+	key, err := readKeystroke(config)
+	if err != nil {
+		return defaultKey
+	}
+
+	// If Enter was pressed (newline), return default
+	if key == "\n" || key == "\r" {
+		return defaultKey
+	}
+
+	return key
+}
+
+// readNumericInput reads numeric input (potentially multi-digit) with single-keystroke confirmation.
+// For single-digit selections (1-9), it returns immediately.
+// For multi-digit selections (10+), user types digits and presses Enter.
+func readNumericInput(config Config, maxValue int) (int, error) {
+	// If maxValue is single digit (1-9), use single keystroke
+	if maxValue <= 9 {
+		key, err := readKeystroke(config)
+		if err != nil {
+			return 0, err
+		}
+
+		// Handle special cases
+		if key == "\n" || key == "\r" || key == "" {
+			return 0, fmt.Errorf("no input")
+		}
+
+		// Try to parse as number
+		num, err := strconv.Atoi(key)
+		if err != nil {
+			return 0, fmt.Errorf("invalid number")
+		}
+
+		return num, nil
+	}
+
+	// For multi-digit, use buffered input
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if input == "" {
+		return 0, fmt.Errorf("no input")
+	}
+
+	num, err := strconv.Atoi(input)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number")
+	}
+
+	return num, nil
 }
 
 func clearScreen() {
@@ -1538,14 +1645,24 @@ func selectRootFolderForApproval(config Config, request MediaRequest, reader *bu
 
 	displayRequestDetail(config, request)
 
+	// Display current root folder if set
+	if request.RootFolder != "" {
+		fmt.Printf("\n%sCurrent Root Folder:%s %s%s%s\n",
+			color(ColorBold), color(ColorReset),
+			color(ColorCyan), request.RootFolder, color(ColorReset))
+	} else {
+		fmt.Printf("\n%sCurrent Root Folder:%s %sNot set (will use server default)%s\n",
+			color(ColorBold), color(ColorReset),
+			color(ColorGray), color(ColorReset))
+	}
+
 	fmt.Printf("\n%sWould you like to override the root folder for this request?%s\n", color(ColorBold), color(ColorReset))
 	fmt.Printf("%s[Y]%s Yes, select root folder\n", color(ColorGreen), color(ColorReset))
 	fmt.Printf("%s[N]%s No, use default (proceed with approval)\n", color(ColorYellow), color(ColorReset))
 	fmt.Printf("%s[B]%s Back (cancel approval)\n\n", color(ColorRed), color(ColorReset))
 
 	fmt.Printf("Select option: ")
-	option, _ := reader.ReadString('\n')
-	option = strings.TrimSpace(strings.ToLower(option))
+	option := readKeyOrDefault(config, "n")
 
 	switch option {
 	case "n", "":
@@ -1562,8 +1679,8 @@ func selectRootFolderForApproval(config Config, request MediaRequest, reader *bu
 
 	default:
 		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return nil, fmt.Errorf("invalid option")
 	}
 
@@ -1624,16 +1741,16 @@ func selectRootFolderForApproval(config Config, request MediaRequest, reader *bu
 	if err != nil {
 		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return nil, nil
 	}
 
 	if len(details.RootFolders) == 0 {
 		fmt.Printf("\n%sNo root folders configured for %s.%s\n", color(ColorYellow), selected.Name, color(ColorReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
-		fmt.Printf("\nPress Enter to continue...")
-		reader.ReadString('\n')
+		fmt.Printf("\nPress any key to continue...")
+		readKeystroke(config)
 		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
 	}
 

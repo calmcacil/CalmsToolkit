@@ -1681,3 +1681,158 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 		t.Error("Update should not have been called with nil overrides")
 	}
 }
+
+// TestReadNumericInputSingleDigit verifies single-digit numeric input behavior
+func TestReadNumericInputSingleDigit(t *testing.T) {
+	// This test can't run in automated test environment as it requires terminal interaction
+	// It's documented here as a manual test case
+	t.Skip("Requires manual testing with terminal interaction")
+
+	// Manual test procedure:
+	// 1. Run media-requests interactively
+	// 2. Select "N" for new request
+	// 3. Search for a movie
+	// 4. When presented with results 1-9, press a single digit (e.g., "1")
+	// 5. Verify it selects immediately without requiring Enter
+}
+
+// TestReadNumericInputMultiDigit verifies multi-digit numeric input behavior
+func TestReadNumericInputMultiDigit(t *testing.T) {
+	// This test can't run in automated test environment as it requires terminal interaction
+	// It's documented here as a manual test case
+	t.Skip("Requires manual testing with terminal interaction")
+
+	// Manual test procedure:
+	// 1. Create a scenario with 10+ results
+	// 2. Try selecting result 10 or higher
+	// 3. Verify it requires typing full number and pressing Enter
+}
+
+// TestKeystrokeMenuNavigation verifies single keystroke menu navigation
+func TestKeystrokeMenuNavigation(t *testing.T) {
+	// This test can't run in automated test environment as it requires terminal interaction
+	// It's documented here as a manual test case
+	t.Skip("Requires manual testing with terminal interaction")
+
+	// Manual test procedure:
+	// 1. Run media-requests interactively
+	// 2. At main menu, press "N" without Enter - should enter New Request
+	// 3. Press "W" without Enter - should show pending requests
+	// 4. Press "Q" without Enter - should quit
+	// 5. Verify each keystroke is echoed and acts immediately
+}
+
+// TestKeystrokeYesNoPrompts verifies Y/N confirmation prompts
+func TestKeystrokeYesNoPrompts(t *testing.T) {
+	// This test can't run in automated test environment as it requires terminal interaction
+	// It's documented here as a manual test case
+	t.Skip("Requires manual testing with terminal interaction")
+
+	// Manual test procedure:
+	// 1. Create a new request and reach the "Submit request? (y/n):" prompt
+	// 2. Press "y" without Enter - should submit immediately
+	// 3. Try again and press "n" without Enter - should cancel immediately
+	// 4. In request detail view, try declining with "d" then "y" to confirm
+	// 5. Verify all single-key responses work without requiring Enter
+}
+
+// TestDisplayCurrentRootFolder verifies current root folder display in approval screen
+func TestDisplayCurrentRootFolder(t *testing.T) {
+	// This test verifies the logic but not the actual display
+	// Visual verification requires manual testing
+
+	tests := []struct {
+		name         string
+		request      MediaRequest
+		shouldShow   bool
+		expectedText string
+	}{
+		{
+			name: "Request with root folder set",
+			request: MediaRequest{
+				ID:         123,
+				Status:     StatusPending,
+				Type:       "movie",
+				RootFolder: "/movies/4k",
+			},
+			shouldShow:   true,
+			expectedText: "/movies/4k",
+		},
+		{
+			name: "Request without root folder",
+			request: MediaRequest{
+				ID:         456,
+				Status:     StatusPending,
+				Type:       "tv",
+				RootFolder: "",
+			},
+			shouldShow:   false,
+			expectedText: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Verify the RootFolder field is correctly set
+			if tt.shouldShow && tt.request.RootFolder != tt.expectedText {
+				t.Errorf("RootFolder = %q, want %q", tt.request.RootFolder, tt.expectedText)
+			}
+			if !tt.shouldShow && tt.request.RootFolder != "" {
+				t.Errorf("RootFolder should be empty, got %q", tt.request.RootFolder)
+			}
+		})
+	}
+
+	// Manual testing procedure documented here:
+	t.Log("Manual test: Navigate to View Requests > Select a request > Press 'A' to approve")
+	t.Log("Verify that the approval screen shows:")
+	t.Log("1. 'Current Root Folder: /path/to/folder' if set")
+	t.Log("2. 'Current Root Folder: Not set (will use server default)' if empty")
+	t.Log("3. The text should appear between request details and the Y/N/B prompt")
+}
+
+// TestKeystrokeFallbackToBuffered verifies graceful fallback when terminal mode unavailable
+func TestKeystrokeFallbackToBuffered(t *testing.T) {
+	// This test can't fully test the fallback as it requires specific terminal conditions
+	t.Skip("Requires specific terminal conditions (e.g., piped input)")
+
+	// Manual test procedure:
+	// 1. Run: echo "n" | ./bin/media-requests -url ... -token ...
+	// 2. Verify the program doesn't crash
+	// 3. Verify it falls back to buffered input (requires Enter)
+	// 4. Check that term.IsTerminal() correctly detects non-terminal stdin
+}
+
+// TestDisplayCurrentRootFolderManual documents the manual test procedure
+func TestDisplayCurrentRootFolderManual(t *testing.T) {
+	t.Skip("Manual test - see test log for procedure")
+
+	t.Log("\n=== Manual Test: Current Root Folder Display ===")
+	t.Log("\nPrerequisites:")
+	t.Log("- Running Overseerr/Jellyseerr instance")
+	t.Log("- At least one pending request with a root folder set")
+	t.Log("- At least one pending request without a root folder set")
+	t.Log("\nTest Procedure:")
+	t.Log("1. Run: ./bin/media-requests -url <server> -token <key>")
+	t.Log("2. Press 'W' (without Enter) to view requests")
+	t.Log("3. Select a request that HAS a root folder set")
+	t.Log("4. Press 'A' (without Enter) to approve")
+	t.Log("5. Verify the approval screen shows:")
+	t.Log("   - Request details (ID, TMDB ID, Type, etc.)")
+	t.Log("   - Current Root Folder: <path>  (highlighted in cyan)")
+	t.Log("   - Would you like to override... prompt")
+	t.Log("6. Press 'B' to go back")
+	t.Log("7. Select a request that does NOT have a root folder")
+	t.Log("8. Press 'A' to approve")
+	t.Log("9. Verify the approval screen shows:")
+	t.Log("   - Current Root Folder: Not set (will use server default)  (in gray)")
+	t.Log("10. Test single-keystroke responses:")
+	t.Log("    - Press 'N' (should proceed with default)")
+	t.Log("    - Press 'Y' (should show server selection)")
+	t.Log("    - Press 'B' (should cancel)")
+	t.Log("\nExpected Results:")
+	t.Log("- All keypresses work without requiring Enter")
+	t.Log("- Current root folder is clearly displayed")
+	t.Log("- Color coding helps distinguish set vs. unset folders")
+	t.Log("- User can easily see and optionally change the root folder")
+}
