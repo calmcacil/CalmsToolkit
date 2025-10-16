@@ -1453,3 +1453,231 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 		}
 	}
 }
+
+// TestApproveRequestWithOverrides verifies approval with root folder override
+func TestApproveRequestWithOverrides(t *testing.T) {
+	tests := []struct {
+		name             string
+		requestID        int
+		overrides        *RequestOverrides
+		approveStatus    int
+		updateStatus     int
+		expectError      bool
+		expectUpdate     bool
+		expectedErrorMsg string
+	}{
+		{
+			name:          "Approve without overrides",
+			requestID:     123,
+			overrides:     nil,
+			approveStatus: http.StatusOK,
+			updateStatus:  http.StatusOK,
+			expectError:   false,
+			expectUpdate:  false,
+		},
+		{
+			name:      "Approve with empty root folder",
+			requestID: 123,
+			overrides: &RequestOverrides{
+				ServerID:   1,
+				ServerName: "Radarr",
+				RootFolder: "",
+			},
+			approveStatus: http.StatusOK,
+			updateStatus:  http.StatusOK,
+			expectError:   false,
+			expectUpdate:  false,
+		},
+		{
+			name:      "Approve with root folder override",
+			requestID: 123,
+			overrides: &RequestOverrides{
+				ServerID:   1,
+				ServerName: "Radarr",
+				RootFolder: "/movies/4k",
+			},
+			approveStatus: http.StatusOK,
+			updateStatus:  http.StatusOK,
+			expectError:   false,
+			expectUpdate:  true,
+		},
+		{
+			name:      "Approval fails",
+			requestID: 123,
+			overrides: &RequestOverrides{
+				ServerID:   1,
+				ServerName: "Radarr",
+				RootFolder: "/movies/4k",
+			},
+			approveStatus:    http.StatusInternalServerError,
+			updateStatus:     http.StatusOK,
+			expectError:      true,
+			expectUpdate:     false,
+			expectedErrorMsg: "approval failed",
+		},
+		{
+			name:      "Approval succeeds but update fails",
+			requestID: 123,
+			overrides: &RequestOverrides{
+				ServerID:   1,
+				ServerName: "Radarr",
+				RootFolder: "/movies/4k",
+			},
+			approveStatus:    http.StatusOK,
+			updateStatus:     http.StatusInternalServerError,
+			expectError:      true,
+			expectUpdate:     true,
+			expectedErrorMsg: "approved but root folder update failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			approveCalled := false
+			updateCalled := false
+			var updateBody map[string]interface{}
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "/approve"):
+					approveCalled = true
+					if r.Method != "POST" {
+						t.Errorf("Expected POST for approve, got %s", r.Method)
+					}
+					w.WriteHeader(tt.approveStatus)
+
+				case strings.Contains(r.URL.Path, "/request/"):
+					updateCalled = true
+					if r.Method != "PUT" {
+						t.Errorf("Expected PUT for update, got %s", r.Method)
+					}
+					// Decode body to verify rootFolder is set
+					json.NewDecoder(r.Body).Decode(&updateBody)
+					w.WriteHeader(tt.updateStatus)
+
+				default:
+					t.Errorf("Unexpected endpoint: %s", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				ServerURL: server.URL,
+				APIKey:    "test-key",
+				Timeout:   5 * time.Second,
+			}
+
+			err := approveRequestWithOverrides(config, tt.requestID, tt.overrides)
+
+			if !approveCalled {
+				t.Error("Approve endpoint was not called")
+			}
+
+			if tt.expectUpdate != updateCalled {
+				t.Errorf("Update called = %v, want %v", updateCalled, tt.expectUpdate)
+			}
+
+			if updateCalled {
+				if rootFolder, ok := updateBody["rootFolder"].(string); !ok || rootFolder != tt.overrides.RootFolder {
+					t.Errorf("Update body rootFolder = %v, want %v", updateBody["rootFolder"], tt.overrides.RootFolder)
+				}
+			}
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				} else if tt.expectedErrorMsg != "" && !strings.Contains(err.Error(), tt.expectedErrorMsg) {
+					t.Errorf("Error message = %q, should contain %q", err.Error(), tt.expectedErrorMsg)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestApproveRequestWithOverridesEndpoint verifies the correct API endpoints are called
+func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
+	requestID := 456
+	rootFolder := "/tv/4k"
+
+	approvePath := ""
+	updatePath := ""
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/approve") {
+			approvePath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		} else if r.Method == "PUT" {
+			updatePath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	overrides := &RequestOverrides{
+		ServerID:   1,
+		ServerName: "Sonarr",
+		RootFolder: rootFolder,
+	}
+
+	err := approveRequestWithOverrides(config, requestID, overrides)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	expectedApprovePath := fmt.Sprintf("/api/v1/request/%d/approve", requestID)
+	if approvePath != expectedApprovePath {
+		t.Errorf("Approve path = %q, want %q", approvePath, expectedApprovePath)
+	}
+
+	expectedUpdatePath := fmt.Sprintf("/api/v1/request/%d", requestID)
+	if updatePath != expectedUpdatePath {
+		t.Errorf("Update path = %q, want %q", updatePath, expectedUpdatePath)
+	}
+}
+
+// TestApproveRequestWithOverridesNilOverrides verifies nil overrides only calls approve
+func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
+	approveCalled := false
+	updateCalled := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/approve") {
+			approveCalled = true
+			w.WriteHeader(http.StatusOK)
+		} else if r.Method == "PUT" {
+			updateCalled = true
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		ServerURL: server.URL,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	}
+
+	err := approveRequestWithOverrides(config, 789, nil)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if !approveCalled {
+		t.Error("Approve should have been called")
+	}
+
+	if updateCalled {
+		t.Error("Update should not have been called with nil overrides")
+	}
+}

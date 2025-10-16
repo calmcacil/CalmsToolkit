@@ -43,7 +43,7 @@ export OVERSEERR_TOKEN="your-api-key"
 
 #### Documentation
 
-- **[README_MEDIA_REQUESTS.md](README_MEDIA_REQUESTS.md)** - Complete documentation and usage guide
+- **[README_MEDIA_REQUESTS.md](docs/README_MEDIA_REQUESTS.md)** - Complete documentation and usage guide
 - **[OVERSEERR_API_RESEARCH.md](docs/OVERSEERR_API_RESEARCH.md)** - API endpoint reference
 
 ### Media Streams Monitor (Unified)
