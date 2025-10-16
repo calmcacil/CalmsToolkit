@@ -1096,9 +1096,16 @@ func makeRequest(config Config, method, endpoint string, body interface{}) (*htt
 		reqBody = bytes.NewBuffer(jsonData)
 	}
 
-	url := config.ServerURL + "/api/v1" + endpoint
+	baseURL, err := url.Parse(config.ServerURL + "/api/v1")
+	if err != nil {
+		return nil, err
+	}
+	fullURL, err := baseURL.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
 
-	req, err := http.NewRequest(method, url, reqBody)
+	req, err := http.NewRequest(method, fullURL.String(), reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -1198,7 +1205,7 @@ func getPendingRequests(config Config) ([]MediaRequest, error) {
 	var pending []MediaRequest
 
 	for {
-		endpoint := fmt.Sprintf("/request?filter=all&take=%d&skip=%d", pageSize, skip)
+		endpoint := fmt.Sprintf("/request?filter=pending&take=%d&skip=%d", pageSize, skip)
 		resp, err := makeRequest(config, "GET", endpoint, nil)
 		if err != nil {
 			return nil, err
@@ -1217,11 +1224,7 @@ func getPendingRequests(config Config) ([]MediaRequest, error) {
 		}
 		resp.Body.Close()
 
-		for _, req := range reqResp.Results {
-			if req.Status == StatusPending {
-				pending = append(pending, req)
-			}
-		}
+		pending = append(pending, reqResp.Results...)
 
 		skip += pageSize
 		if skip >= reqResp.PageInfo.Results || len(reqResp.Results) == 0 {

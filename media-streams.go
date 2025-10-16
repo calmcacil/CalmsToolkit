@@ -256,10 +256,10 @@ func main() {
 
 		for {
 			fmt.Print(AnsiHomeCursor)
+			fmt.Print(AnsiClearToEnd)
 			if err := displayAllSessionsWithHistory(config, history); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
-			fmt.Print(AnsiClearToEnd)
 			time.Sleep(time.Duration(config.WatchSeconds) * time.Second)
 		}
 	}
