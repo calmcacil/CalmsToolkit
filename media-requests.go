@@ -1025,10 +1025,10 @@ func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.R
 }
 
 func getYear(result SearchResult) string {
-	if result.ReleaseDate != "" {
+	if result.ReleaseDate != "" && len(result.ReleaseDate) >= 4 {
 		return result.ReleaseDate[:4]
 	}
-	if result.FirstAirDate != "" {
+	if result.FirstAirDate != "" && len(result.FirstAirDate) >= 4 {
 		return result.FirstAirDate[:4]
 	}
 	return ""
@@ -1125,16 +1125,9 @@ func makeRequest(config Config, method, endpoint string, body interface{}) (*htt
 		reqBody = bytes.NewBuffer(jsonData)
 	}
 
-	baseURL, err := url.Parse(config.ServerURL + "/api/v1")
-	if err != nil {
-		return nil, err
-	}
-	fullURL, err := baseURL.Parse(endpoint)
-	if err != nil {
-		return nil, err
-	}
+	fullURL := config.ServerURL + "/api/v1" + endpoint
 
-	req, err := http.NewRequest(method, fullURL.String(), reqBody)
+	req, err := http.NewRequest(method, fullURL, reqBody)
 	if err != nil {
 		return nil, err
 	}
