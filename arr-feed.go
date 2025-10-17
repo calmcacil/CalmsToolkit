@@ -466,7 +466,7 @@ func fetchAllHistory(config Config, since time.Time) ([]HistoryEvent, error) {
 	}
 
 	sort.Slice(allEvents, func(i, j int) bool {
-		return allEvents[i].When.After(allEvents[j].When)
+		return allEvents[i].When.Before(allEvents[j].When)
 	})
 
 	return allEvents, nil
@@ -474,7 +474,7 @@ func fetchAllHistory(config Config, since time.Time) ([]HistoryEvent, error) {
 
 func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
-	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", url, sinceStr)
+	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true&includeCustomFormats=true", url, sinceStr)
 
 	client := &http.Client{Timeout: config.Timeout}
 	req, err := http.NewRequest("GET", endpoint, nil)
@@ -509,7 +509,7 @@ func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]Hi
 
 func fetchRadarrHistory(config Config, url, token string, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
-	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", url, sinceStr)
+	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true&includeCustomFormats=true", url, sinceStr)
 
 	client := &http.Client{Timeout: config.Timeout}
 	req, err := http.NewRequest("GET", endpoint, nil)
@@ -718,14 +718,14 @@ func filterEvents(events []HistoryEvent, config Config) []HistoryEvent {
 func renderTable(events []HistoryEvent, config Config) {
 	color := getColorFunc(config)
 
-	fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-20s | %-15s | %-20s%s\n",
+	fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s%s\n",
 		color(ColorBold),
 		"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats",
 		color(ColorReset))
 
 	fmt.Printf("%s%s%s\n",
 		color(ColorBold),
-		strings.Repeat("-", 140),
+		strings.Repeat("-", 160),
 		color(ColorReset))
 
 	if len(events) == 0 {
@@ -737,20 +737,20 @@ func renderTable(events []HistoryEvent, config Config) {
 		actionColor := getActionColor(event.Action)
 		timeStr := formatRelativeTime(event.When)
 		title := truncate(event.Title, 30)
-		episodeTitle := truncate(event.EpisodeTitle, 20)
+		episodeTitle := truncate(event.EpisodeTitle, 40)
 		quality := truncate(event.Quality, 15)
 		formats := truncate(strings.Join(event.Formats, ", "), 20)
 
-		fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-20s | %-15s | %-20s\n",
+		fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-40s | %-15s | %-20s\n",
 			timeStr,
 			color(actionColor),
-			event.Action,
+			center(event.Action, 10),
 			color(ColorReset),
-			title,
-			event.Episode,
-			episodeTitle,
-			quality,
-			formats)
+			center(title, 30),
+			center(event.Episode, 10),
+			center(episodeTitle, 40),
+			center(quality, 15),
+			center(formats, 20))
 	}
 
 	fmt.Printf("\n%sTotal events: %d%s\n", color(ColorBold), len(events), color(ColorReset))
@@ -801,4 +801,14 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func center(s string, width int) string {
+	if len(s) >= width {
+		return s[:width]
+	}
+	padding := width - len(s)
+	leftPad := padding / 2
+	rightPad := padding - leftPad
+	return strings.Repeat(" ", leftPad) + s + strings.Repeat(" ", rightPad)
 }
