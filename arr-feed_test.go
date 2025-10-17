@@ -641,8 +641,8 @@ func TestFetchAllHistory(t *testing.T) {
 		t.Errorf("got %d events, want 2", len(events))
 	}
 
-	if events[0].When.Before(events[1].When) {
-		t.Errorf("events not sorted in descending order by timestamp")
+	if events[0].When.After(events[1].When) {
+		t.Errorf("events not sorted in ascending order by timestamp")
 	}
 
 	foundSonarr := false
