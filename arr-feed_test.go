@@ -867,6 +867,7 @@ func TestLoadConfig(t *testing.T) {
 				true,
 				true,
 				false,
+				40,
 			)
 
 			if tt.validateConfig != nil {
