@@ -466,7 +466,7 @@ func fetchAllHistory(config Config, since time.Time) ([]HistoryEvent, error) {
 	}
 
 	sort.Slice(allEvents, func(i, j int) bool {
-		return allEvents[i].When.Before(allEvents[j].When)
+		return allEvents[i].When.After(allEvents[j].When)
 	})
 
 	return allEvents, nil
@@ -474,7 +474,7 @@ func fetchAllHistory(config Config, since time.Time) ([]HistoryEvent, error) {
 
 func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
-	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true&includeCustomFormats=true", url, sinceStr)
+	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", url, sinceStr)
 
 	client := &http.Client{Timeout: config.Timeout}
 	req, err := http.NewRequest("GET", endpoint, nil)
@@ -509,7 +509,7 @@ func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]Hi
 
 func fetchRadarrHistory(config Config, url, token string, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
-	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true&includeCustomFormats=true", url, sinceStr)
+	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", url, sinceStr)
 
 	client := &http.Client{Timeout: config.Timeout}
 	req, err := http.NewRequest("GET", endpoint, nil)
