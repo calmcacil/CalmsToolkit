@@ -71,6 +71,7 @@ type SonarrHistory struct {
 	SeriesID      int                    `json:"seriesId"`
 	SourceTitle   string                 `json:"sourceTitle"`
 	Quality       SonarrQuality          `json:"quality"`
+	CustomFormats []CustomFormat         `json:"customFormats,omitempty"`
 	QualityCutoff bool                   `json:"qualityCutoffNotMet"`
 	Date          string                 `json:"date"`
 	EventType     string                 `json:"eventType"`
@@ -120,6 +121,7 @@ type RadarrHistory struct {
 	MovieID       int                    `json:"movieId"`
 	SourceTitle   string                 `json:"sourceTitle"`
 	Quality       RadarrQuality          `json:"quality"`
+	CustomFormats []CustomFormat         `json:"customFormats,omitempty"`
 	QualityCutoff bool                   `json:"qualityCutoffNotMet"`
 	Date          string                 `json:"date"`
 	EventType     string                 `json:"eventType"`
@@ -509,8 +511,18 @@ func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]Hi
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Records []SonarrHistory `json:"records"`
+	}
 	var history []SonarrHistory
-	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Records != nil {
+		history = wrapper.Records
+	} else if err := json.Unmarshal(body, &history); err != nil {
 		return nil, err
 	}
 
@@ -544,8 +556,18 @@ func fetchRadarrHistory(config Config, url, token string, since time.Time) ([]Hi
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var wrapper struct {
+		Records []RadarrHistory `json:"records"`
+	}
 	var history []RadarrHistory
-	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+	if err := json.Unmarshal(body, &wrapper); err == nil && wrapper.Records != nil {
+		history = wrapper.Records
+	} else if err := json.Unmarshal(body, &history); err != nil {
 		return nil, err
 	}
 
@@ -579,9 +601,15 @@ func sonarrToHistoryEvent(sh SonarrHistory) HistoryEvent {
 		event.EpisodeTitle = sh.Episode.Title
 	}
 
-	if len(sh.Quality.CustomFormats) > 0 {
-		event.Formats = make([]string, len(sh.Quality.CustomFormats))
-		for i, f := range sh.Quality.CustomFormats {
+	var cf []CustomFormat
+	if len(sh.CustomFormats) > 0 {
+		cf = sh.CustomFormats
+	} else {
+		cf = sh.Quality.CustomFormats
+	}
+	if len(cf) > 0 {
+		event.Formats = make([]string, len(cf))
+		for i, f := range cf {
 			event.Formats[i] = f.Name
 		}
 	}
@@ -609,9 +637,15 @@ func radarrToHistoryEvent(rh RadarrHistory) HistoryEvent {
 		}
 	}
 
-	if len(rh.Quality.CustomFormats) > 0 {
-		event.Formats = make([]string, len(rh.Quality.CustomFormats))
-		for i, f := range rh.Quality.CustomFormats {
+	var cf []CustomFormat
+	if len(rh.CustomFormats) > 0 {
+		cf = rh.CustomFormats
+	} else {
+		cf = rh.Quality.CustomFormats
+	}
+	if len(cf) > 0 {
+		event.Formats = make([]string, len(cf))
+		for i, f := range cf {
 			event.Formats[i] = f.Name
 		}
 	}
