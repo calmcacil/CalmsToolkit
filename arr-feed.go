@@ -147,14 +147,6 @@ type RadarrMovie struct {
 	Year  int    `json:"year"`
 }
 
-type SonarrHistoryResponse struct {
-	Records []SonarrHistory `json:"records"`
-}
-
-type RadarrHistoryResponse struct {
-	Records []RadarrHistory `json:"records"`
-}
-
 func main() {
 	var (
 		sonarrURLs    = flag.String("sonarr-urls", "", "Sonarr URLs (comma-separated)")
@@ -189,7 +181,6 @@ func main() {
 	} else if config.MaxEvents > 100 {
 		config.MaxEvents = 100
 	}
-
 
 	if config.Watch {
 		runWatchMode(config)
@@ -518,13 +509,13 @@ func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]Hi
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var response SonarrHistoryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	var history []SonarrHistory
+	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
 		return nil, err
 	}
 
-	events := make([]HistoryEvent, 0, len(response.Records))
-	for _, h := range response.Records {
+	events := make([]HistoryEvent, 0, len(history))
+	for _, h := range history {
 		events = append(events, sonarrToHistoryEvent(h))
 	}
 
@@ -553,13 +544,13 @@ func fetchRadarrHistory(config Config, url, token string, since time.Time) ([]Hi
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var response RadarrHistoryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	var history []RadarrHistory
+	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
 		return nil, err
 	}
 
-	events := make([]HistoryEvent, 0, len(response.Records))
-	for _, h := range response.Records {
+	events := make([]HistoryEvent, 0, len(history))
+	for _, h := range history {
 		events = append(events, radarrToHistoryEvent(h))
 	}
 
