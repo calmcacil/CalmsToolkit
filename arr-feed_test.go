@@ -424,6 +424,18 @@ func TestFetchSonarrHistory(t *testing.T) {
 			},
 		},
 		{
+			name:          "wrapped records shape",
+			statusCode:    200,
+			responseBody:  `{"records":[{"id":3,"eventType":"grabbed","date":"2025-10-17T10:05:00Z","sourceTitle":"Wrapped.Show.S01E02","quality":{"quality":{"name":"HDTV-720p"},"customFormats":[]},"episodeId":2,"seriesId":1,"series":{"id":1,"title":"Wrapped Show"},"episode":{"id":2,"seasonNumber":1,"episodeNumber":2,"title":"Second"}}]}`,
+			expectedErr:   false,
+			expectedCount: 1,
+			validateEvents: func(t *testing.T, events []HistoryEvent) {
+				if events[0].Title != "Wrapped Show" {
+					t.Errorf("Title = %q, want %q", events[0].Title, "Wrapped Show")
+				}
+			},
+		},
+		{
 			name:         "401 unauthorized",
 			statusCode:   401,
 			responseBody: `{"error":"Unauthorized"}`,
@@ -528,6 +540,18 @@ func TestFetchRadarrHistory(t *testing.T) {
 				}
 				if events[0].Title != "Test Movie (2024)" {
 					t.Errorf("Title = %q, want %q", events[0].Title, "Test Movie (2024)")
+				}
+			},
+		},
+		{
+			name:          "wrapped records shape",
+			statusCode:    200,
+			responseBody:  `{"records":[{"id":5,"eventType":"downloadFolderImported","date":"2025-10-17T11:05:00Z","sourceTitle":"Wrapped.Movie.2024","quality":{"quality":{"name":"Bluray-1080p"},"customFormats":[{"id":2,"name":"IMAX"}]},"movieId":11,"movie":{"id":11,"title":"Wrapped Movie","year":2024}}]}`,
+			expectedErr:   false,
+			expectedCount: 1,
+			validateEvents: func(t *testing.T, events []HistoryEvent) {
+				if events[0].Title != "Wrapped Movie (2024)" {
+					t.Errorf("Title = %q, want %q", events[0].Title, "Wrapped Movie (2024)")
 				}
 			},
 		},
