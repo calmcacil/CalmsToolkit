@@ -49,6 +49,7 @@ type Config struct {
 	ShowFailed    bool
 	ShowDeleted   bool
 	ShowIgnored   bool
+	MaxEvents     int
 }
 
 type HistoryEvent struct {
@@ -146,6 +147,14 @@ type RadarrMovie struct {
 	Year  int    `json:"year"`
 }
 
+type SonarrHistoryResponse struct {
+	Records []SonarrHistory `json:"records"`
+}
+
+type RadarrHistoryResponse struct {
+	Records []RadarrHistory `json:"records"`
+}
+
 func main() {
 	var (
 		sonarrURLs    = flag.String("sonarr-urls", "", "Sonarr URLs (comma-separated)")
@@ -163,15 +172,24 @@ func main() {
 		showFailed    = flag.Bool("show-failed", true, "Show failed events")
 		showDeleted   = flag.Bool("show-deleted", true, "Show deleted events")
 		showIgnored   = flag.Bool("show-ignored", false, "Show ignored events")
+		maxEvents     = flag.Int("events", 40, "Maximum number of events to display (1-100)")
 	)
 	flag.Parse()
 
-	config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens, *pollInterval, *historyWindow, *timeout, *noColor, *jsonOutput, *watch, *showGrabbed, *showImported, *showFailed, *showDeleted, *showIgnored)
+	config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens, *pollInterval, *historyWindow, *timeout, *noColor, *jsonOutput, *watch, *showGrabbed, *showImported, *showFailed, *showDeleted, *showIgnored, *maxEvents)
 
 	if err := validateConfig(config); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Validate and clamp MaxEvents to acceptable range
+	if config.MaxEvents < 1 {
+		config.MaxEvents = 1
+	} else if config.MaxEvents > 100 {
+		config.MaxEvents = 100
+	}
+
 
 	if config.Watch {
 		runWatchMode(config)
@@ -180,7 +198,7 @@ func main() {
 	}
 }
 
-func loadConfig(sonarrURLs, sonarrTokens, radarrURLs, radarrTokens string, pollInterval, historyWindow, timeout time.Duration, noColor, jsonOutput, watch, showGrabbed, showImported, showFailed, showDeleted, showIgnored bool) Config {
+func loadConfig(sonarrURLs, sonarrTokens, radarrURLs, radarrTokens string, pollInterval, historyWindow, timeout time.Duration, noColor, jsonOutput, watch, showGrabbed, showImported, showFailed, showDeleted, showIgnored bool, maxEvents int) Config {
 	config := Config{
 		SonarrURLs:    []string{},
 		SonarrTokens:  []string{},
@@ -197,6 +215,7 @@ func loadConfig(sonarrURLs, sonarrTokens, radarrURLs, radarrTokens string, pollI
 		ShowFailed:    showFailed,
 		ShowDeleted:   showDeleted,
 		ShowIgnored:   showIgnored,
+		MaxEvents:     maxEvents,
 	}
 
 	envPath := "/opt/apps/compose/.env"
@@ -400,6 +419,11 @@ func runWatchMode(config Config) {
 
 			filteredEvents := filterEvents(eventCache, config)
 
+			// Limit to MaxEvents
+			if len(filteredEvents) > config.MaxEvents {
+				filteredEvents = filteredEvents[:config.MaxEvents]
+			}
+
 			if config.JSON {
 				renderJSON(filteredEvents)
 			} else {
@@ -494,13 +518,13 @@ func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]Hi
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var history []SonarrHistory
-	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+	var response SonarrHistoryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, err
 	}
 
-	events := make([]HistoryEvent, 0, len(history))
-	for _, h := range history {
+	events := make([]HistoryEvent, 0, len(response.Records))
+	for _, h := range response.Records {
 		events = append(events, sonarrToHistoryEvent(h))
 	}
 
@@ -529,13 +553,13 @@ func fetchRadarrHistory(config Config, url, token string, since time.Time) ([]Hi
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var history []RadarrHistory
-	if err := json.NewDecoder(resp.Body).Decode(&history); err != nil {
+	var response RadarrHistoryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 		return nil, err
 	}
 
-	events := make([]HistoryEvent, 0, len(history))
-	for _, h := range history {
+	events := make([]HistoryEvent, 0, len(response.Records))
+	for _, h := range response.Records {
 		events = append(events, radarrToHistoryEvent(h))
 	}
 
