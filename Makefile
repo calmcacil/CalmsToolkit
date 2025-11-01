@@ -10,6 +10,7 @@ BINARY_STREAMSTOOL=media-streams
 BINARY_CALENDAR=media-calendar
 BINARY_REQUESTS=media-requests
 BINARY_ARRFEED=arr-feed
+BINARY_QUEUEREMEDIATION=queue-remediation
 
 # Go parameters
 GOCMD=go
@@ -40,6 +41,7 @@ build:
 	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
 	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
 	$(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) arr-feed.go
+	$(GOBUILD) $(LDFLAGS) -tags queueremediation -o $(BUILD_DIR)/$(BINARY_QUEUEREMEDIATION) queue-remediation.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -48,14 +50,15 @@ build-all:
 
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
-			for SRC in media-streams media-calendar media-requests arr-feed; do \
-				BIN=$${SRC}-$$GOOS-$$GOARCH; \
-				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
-				case $$SRC in \
+			for SRC in media-streams media-calendar media-requests arr-feed queue-remediation; do \
+			BIN=$${SRC}-$$GOOS-$$GOARCH; \
+			if [ "$$GOOS" = "windows" ]; then EXT=".exe"; else EXT=""; fi; \
+			case $$SRC in \
 					media-streams) TAG=mediastreams ;; \
 					media-calendar) TAG=mediacalendar ;; \
 					media-requests) TAG=mediarequests ;; \
 					arr-feed) TAG=arrfeed ;; \
+					queue-remediation) TAG=queueremediation ;; \
 				esac; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
 				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
@@ -72,6 +75,7 @@ install: build
 	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) $(INSTALL_DIR)/$(BINARY_CALENDAR)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_REQUESTS) $(INSTALL_DIR)/$(BINARY_REQUESTS)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_ARRFEED) $(INSTALL_DIR)/$(BINARY_ARRFEED)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_QUEUEREMEDIATION) $(INSTALL_DIR)/$(BINARY_QUEUEREMEDIATION)
 	@echo "Make sure $(INSTALL_DIR) is in your PATH."
 	@echo "Installation complete!"
 
@@ -93,6 +97,9 @@ test:
 	@echo ""
 	@echo "Running arr-feed tests..."
 	$(GOTEST) -tags arrfeed -v ./...
+	@echo ""
+	@echo "Running queue-remediation tests..."
+	$(GOTEST) -tags queueremediation -v ./...
 	@echo ""
 	@echo "All tests complete!"
 

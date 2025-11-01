@@ -359,7 +359,11 @@ func runInteractiveMenu(config Config) {
 		clearScreen()
 		printMainMenu(config)
 
-		input, _ := readKeystroke(config)
+		input, err := readKeystroke(config)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
 
 		switch input {
 		case "n":
@@ -371,7 +375,10 @@ func runInteractiveMenu(config Config) {
 			return
 		default:
 			fmt.Println("\nInvalid option. Press any key to continue...")
-			readKeystroke(config)
+			if _, err := readKeystroke(config); err != nil {
+				fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -419,14 +426,20 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	if err != nil {
 		fmt.Printf("\n%sError searching: %v%s\n", color(ColorRed), err, color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
 	if len(results) == 0 {
 		fmt.Printf("\n%sNo results found.%s\n", color(ColorYellow), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -455,7 +468,10 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	if err != nil || selection < 1 || selection > len(results) {
 		fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -467,13 +483,19 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 		if status == MediaStatusAvailable || status == MediaStatusPartiallyAvailable {
 			fmt.Printf("\n%sThis media is already available!%s\n", color(ColorGreen), color(ColorReset))
 			fmt.Printf("\nPress any key to continue...")
-			readKeystroke(config)
+			if _, err := readKeystroke(config); err != nil {
+				fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+				return
+			}
 			return
 		}
 		if len(selectedMedia.MediaInfo.Requests) > 0 {
 			fmt.Printf("\n%sThis media has already been requested.%s\n", color(ColorYellow), color(ColorReset))
 			fmt.Printf("\nPress any key to continue...")
-			readKeystroke(config)
+			if _, err := readKeystroke(config); err != nil {
+				fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+				return
+			}
 			return
 		}
 	}
@@ -533,7 +555,10 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	if confirm != "y" {
 		fmt.Printf("\n%sRequest cancelled.%s\n", color(ColorYellow), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -543,7 +568,10 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	if err != nil {
 		fmt.Printf("\n%sError creating request: %v%s\n", color(ColorRed), err, color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -554,7 +582,10 @@ func handleNewRequest(config Config, reader *bufio.Reader) {
 	fmt.Printf("Status: %s%s%s\n", color(ColorYellow), statusText, color(ColorReset))
 
 	fmt.Printf("\nPress any key to continue...")
-	readKeystroke(config)
+	if _, err := readKeystroke(config); err != nil {
+		fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+		return
+	}
 }
 
 func handleViewRequests(config Config, reader *bufio.Reader) {
@@ -573,7 +604,10 @@ func handleViewRequests(config Config, reader *bufio.Reader) {
 	if err != nil {
 		fmt.Printf("\n%sError fetching requests: %v%s\n", color(ColorRed), err, color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -583,7 +617,10 @@ func handleViewRequests(config Config, reader *bufio.Reader) {
 	if len(requests) == 0 {
 		fmt.Printf("%sNo pending requests.%s\n", color(ColorGreen), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -603,7 +640,10 @@ func handleViewRequests(config Config, reader *bufio.Reader) {
 	if err != nil || selection < 1 || selection > len(requests) {
 		fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 		return
 	}
 
@@ -652,7 +692,10 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 			}
 		}
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 
 	case "d":
 		fmt.Printf("\n%sAre you sure you want to decline this request? (y/n):%s ", color(ColorRed), color(ColorReset))
@@ -669,7 +712,10 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 			fmt.Printf("\n%sCancelled.%s\n", color(ColorYellow), color(ColorReset))
 		}
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 
 	case "b", "":
 		return
@@ -677,7 +723,10 @@ func handleRequestDetail(config Config, request MediaRequest, reader *bufio.Read
 	default:
 		fmt.Printf("\n%sInvalid action.%s\n", color(ColorRed), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return
+		}
 	}
 }
 
@@ -819,7 +868,10 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 	if err != nil {
 		fmt.Printf("\n%sError fetching TV show details: %v%s\n", color(ColorRed), err, color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return nil, err
+		}
 		return nil, err
 	}
 
@@ -861,7 +913,10 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 			if err != nil || season < 1 || season > details.NumberOfSeasons {
 				fmt.Printf("\n%sInvalid season number: %s%s\n", color(ColorRed), part, color(ColorReset))
 				fmt.Printf("\nPress any key to continue...")
-				readKeystroke(config)
+				if _, err := readKeystroke(config); err != nil {
+					fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+					return nil, fmt.Errorf("invalid season number")
+				}
 				return nil, fmt.Errorf("invalid season number")
 			}
 			seasons = append(seasons, season)
@@ -879,7 +934,10 @@ func selectSeasons(config Config, media SearchResult, reader *bufio.Reader) (int
 	default:
 		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return nil, fmt.Errorf("invalid option")
+		}
 		return nil, fmt.Errorf("invalid option")
 	}
 }
@@ -910,7 +968,10 @@ func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.R
 		}
 		fmt.Printf("\n%sError fetching %s servers: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return nil, err
+		}
 		return nil, err
 	}
 
@@ -989,7 +1050,10 @@ func selectRootFolderOverride(config Config, media SearchResult, reader *bufio.R
 	if err != nil {
 		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return nil, err
+		}
 		return nil, err
 	}
 
@@ -1680,7 +1744,10 @@ func selectRootFolderForApproval(config Config, request MediaRequest, reader *bu
 	default:
 		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return nil, fmt.Errorf("invalid option")
+		}
 		return nil, fmt.Errorf("invalid option")
 	}
 
@@ -1742,7 +1809,10 @@ func selectRootFolderForApproval(config Config, request MediaRequest, reader *bu
 		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return nil, nil
+		}
 		return nil, nil
 	}
 
@@ -1750,7 +1820,10 @@ func selectRootFolderForApproval(config Config, request MediaRequest, reader *bu
 		fmt.Printf("\n%sNo root folders configured for %s.%s\n", color(ColorYellow), selected.Name, color(ColorReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
 		fmt.Printf("\nPress any key to continue...")
-		readKeystroke(config)
+		if _, err := readKeystroke(config); err != nil {
+			fmt.Fprintf(os.Stderr, "\nERROR: Failed to read input: %v\n", err)
+			return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
+		}
 		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
 	}
 

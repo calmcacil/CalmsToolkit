@@ -85,6 +85,57 @@ make build
 ./bin/media-streams -json | jq '.total_streams'
 ```
 
+### Queue Remediation
+
+An intelligent tool for automatically detecting and fixing stuck queue items in Sonarr and Radarr. Identifies problematic downloads (failed imports, quality mismatches, sample files) and applies appropriate remediation actions.
+
+#### Features
+
+- 🔍 **Smart Detection**: Automatically identifies stuck/blocked queue items
+- 🎯 **Targeted Actions**: Deletes failed items, triggers manual imports, or monitors active downloads
+- 🛡️ **Safe Mode**: Dry-run mode shows what would happen without making changes
+- 🔄 **Multi-Instance**: Supports multiple Sonarr and Radarr servers simultaneously
+- 📊 **REST API Support**: Optional REST API mode for precise manual import control
+- 🚨 **Blocklist Management**: Automatically blocklists problematic releases
+- 📝 **Detailed Logging**: Verbose and debug modes for troubleshooting
+- ⚡ **Fast**: Processes entire queue in seconds
+
+#### Quick Start
+
+```bash
+# Build the binary
+make build
+
+# Set up configuration
+export SONARR_URLS="http://localhost:8989"
+export SONARR_TOKENS="your-api-key"
+export RADARR_URLS="http://localhost:7878"
+export RADARR_TOKENS="your-api-key"
+
+# Dry-run mode (shows what would happen without making changes)
+./bin/queue-remediation -dry-run
+
+# Run with verbose logging
+./bin/queue-remediation -verbose
+
+# Use REST API for manual imports (more precise)
+./bin/queue-remediation -use-rest-api -verbose
+```
+
+#### Remediation Actions
+
+The tool intelligently classifies queue items and applies appropriate actions:
+
+- **DELETE + BLOCKLIST**: Quality/custom format mismatches, sample files, failed downloads
+- **MANUAL_IMPORT**: Completed downloads stuck in import-blocked state
+- **MONITOR**: Active downloads progressing normally (no action needed)
+
+#### Documentation
+
+- **[README_QUEUEFIX.md](docs/README_QUEUEFIX.md)** - Complete usage guide and troubleshooting
+- **[QUEUE_REMEDIATION_IMPLEMENTATION_GUIDE.md](docs/QUEUE_REMEDIATION_IMPLEMENTATION_GUIDE.md)** - Technical implementation details
+- **[SONARR_RADARR_QUEUE_API.md](docs/SONARR_RADARR_QUEUE_API.md)** - API reference
+
 ### Plex Streams Monitor
 
 A high-performance Go-based tool for monitoring active Plex streams with detailed information about users, transcoding status, bandwidth, and quality.
