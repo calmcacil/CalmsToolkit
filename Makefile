@@ -11,6 +11,7 @@ BINARY_CALENDAR=media-calendar
 BINARY_REQUESTS=media-requests
 BINARY_ARRFEED=arr-feed
 BINARY_QUEUEREMEDIATION=queue-remediation
+BINARY_CALMS_TOOLKIT=calms-toolkit
 
 # Go parameters
 GOCMD=go
@@ -28,10 +29,12 @@ all: clean build
 help:
 	@echo "Available targets:"
 	@echo "  make build         - Build for current platform"
+	@echo "  make build-tui     - Build TUI application"
 	@echo "  make build-all     - Build for all platforms"
 	@echo "  make install       - Install to $(INSTALL_DIR) (Linux/macOS)"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make test          - Run tests"
+	@echo "  make test-tui      - Run TUI tests"
 	@echo "  make tidy          - Tidy go.mod"
 
 build:
@@ -43,6 +46,12 @@ build:
 	$(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) arr-feed.go
 	$(GOBUILD) $(LDFLAGS) -tags queueremediation -o $(BUILD_DIR)/$(BINARY_QUEUEREMEDIATION) queue-remediation.go
 	@echo "Build complete: $(BUILD_DIR)/*"
+
+build-tui:
+	@echo "Building TUI application..."
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALMS_TOOLKIT) ./cmd/calms-toolkit
+	@echo "TUI build complete: $(BUILD_DIR)/$(BINARY_CALMS_TOOLKIT)"
 
 build-all:
 	@echo "Building for all platforms..."
@@ -102,6 +111,12 @@ test:
 	$(GOTEST) -tags queueremediation -v ./...
 	@echo ""
 	@echo "All tests complete!"
+
+test-tui:
+	@echo "Running TUI tests..."
+	$(GOTEST) -v ./pkg/colors/... ./internal/config/... ./internal/api/... ./internal/app/... ./cmd/calms-toolkit/...
+	@echo ""
+	@echo "TUI tests complete!"
 
 tidy:
 	$(GOMOD) tidy
