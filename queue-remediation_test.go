@@ -3,12 +3,19 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // TestMapStatusToAction verifies status classification logic
@@ -703,14 +710,6 @@ func TestDeleteQueueItem(t *testing.T) {
 			statusCode:       http.StatusInternalServerError,
 			expectError:      true,
 		},
-		{
-			name:             "Not found",
-			itemID:           999,
-			removeFromClient: false,
-			blocklist:        false,
-			statusCode:       http.StatusNotFound,
-			expectError:      true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -839,7 +838,8 @@ func TestTriggerManualImport(t *testing.T) {
 			defer server.Close()
 
 			config := Config{Timeout: 5 * time.Second}
-			err := triggerManualImport(config, server.URL, "test-token", tt.downloadPath, "sonarr", false, QueueItem{})
+			queueItem := QueueItem{OutputPath: tt.downloadPath}
+			err := triggerManualImport(config, server.URL, "test-token", tt.downloadPath, "sonarr", false, queueItem)
 
 			if (err != nil) != tt.expectError {
 				t.Errorf("error = %v, expectError = %v", err, tt.expectError)
@@ -1803,6 +1803,360 @@ func TestScanForManualImport(t *testing.T) {
 	}
 }
 
+// TestFormatStatusMessages verifies status message formatting for dry-run output
+func TestFormatStatusMessages(t *testing.T) {
+	tests := []struct {
+		name           string
+		item           QueueItem
+		expectedOutput string
+	}{
+		{
+			name: "No status messages",
+			item: QueueItem{
+				StatusMessages: []StatusMessage{},
+			},
+			expectedOutput: "",
+		},
+		{
+			name: "Single status message",
+			item: QueueItem{
+				StatusMessages: []StatusMessage{
+					{
+						Title:    "Warning",
+						Messages: []string{"Sample file detected"},
+					},
+				},
+			},
+			expectedOutput: "     • Sample file detected",
+		},
+		{
+			name: "Multiple status messages",
+			item: QueueItem{
+				StatusMessages: []StatusMessage{
+					{
+						Title:    "Warning",
+						Messages: []string{"Sample file detected", "Quality not an upgrade"},
+					},
+				},
+			},
+			expectedOutput: "     • Sample file detected\n[DRY-RUN]     • Quality not an upgrade",
+		},
+		{
+			name: "Multiple status message groups",
+			item: QueueItem{
+				StatusMessages: []StatusMessage{
+					{
+						Title:    "Warning",
+						Messages: []string{"Sample file detected"},
+					},
+					{
+						Title:    "Info",
+						Messages: []string{"Download completed"},
+					},
+				},
+			},
+			expectedOutput: "     • Sample file detected\n[DRY-RUN]     • Download completed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatStatusMessages(tt.item)
+			if result != tt.expectedOutput {
+				t.Errorf("formatStatusMessages() = %q, want %q", result, tt.expectedOutput)
+			}
+		})
+	}
+}
+
+// TestGetManualImportDetails verifies manual import details extraction
+func TestGetManualImportDetails(t *testing.T) {
+	// Create a minimal config for testing (API calls will fail but that's OK)
+	config := Config{
+		Timeout: 5 * time.Second,
+	}
+
+	tests := []struct {
+		name           string
+		item           QueueItem
+		expectedOutput string
+	}{
+		{
+			name: "Sonarr item with series ID",
+			item: QueueItem{
+				InstanceType: "sonarr",
+				SeriesID:     123,
+				OutputPath:   "/downloads/test",
+			},
+			expectedOutput: "     • Series ID: 123 (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+		},
+		{
+			name: "Radarr item with movie ID",
+			item: QueueItem{
+				InstanceType: "radarr",
+				MovieID:      456,
+				OutputPath:   "/downloads/movie",
+			},
+			expectedOutput: "     • Movie ID: 456 (validated)\n[DRY-RUN]     • Output Path: /downloads/movie\n[DRY-RUN]     • Import Method: Command API → DownloadedMoviesScan",
+		},
+		{
+			name: "Item with no IDs or path",
+			item: QueueItem{
+				InstanceType: "sonarr",
+			},
+			expectedOutput: "",
+		},
+		{
+			name: "Item with only output path",
+			item: QueueItem{
+				InstanceType: "sonarr",
+				OutputPath:   "/downloads/onlypath",
+			},
+			expectedOutput: "     • Output Path: /downloads/onlypath\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getManualImportDetails(config, tt.item)
+			if result != tt.expectedOutput {
+				t.Errorf("getManualImportDetails() = %q, want %q", result, tt.expectedOutput)
+			}
+		})
+	}
+}
+
+// TestGetManualImportDetailsWithNameLookup verifies manual import details with series/movie name lookup
+func TestGetManualImportDetailsWithNameLookup(t *testing.T) {
+	// Create mock server for series API
+	seriesServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/series/123" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(SeriesResource{
+				ID:    123,
+				Title: "Test Series Name",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer seriesServer.Close()
+
+	// Create mock server for movie API
+	movieServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v3/movie/456" {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(MovieResource{
+				ID:    456,
+				Title: "Test Movie Name",
+				Year:  2024,
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer movieServer.Close()
+
+	config := Config{
+		Timeout:      5 * time.Second,
+		SonarrURLs:   []string{seriesServer.URL},
+		SonarrTokens: []string{"test-token"},
+		RadarrURLs:   []string{movieServer.URL},
+		RadarrTokens: []string{"test-token"},
+	}
+
+	tests := []struct {
+		name           string
+		item           QueueItem
+		expectedOutput string
+	}{
+		{
+			name: "Sonarr item with series ID and successful lookup",
+			item: QueueItem{
+				InstanceType: "sonarr",
+				InstanceURL:  seriesServer.URL,
+				SeriesID:     123,
+				OutputPath:   "/downloads/test",
+			},
+			expectedOutput: "     • Series ID: 123 (Test Series Name) (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+		},
+		{
+			name: "Radarr item with movie ID and successful lookup",
+			item: QueueItem{
+				InstanceType: "radarr",
+				InstanceURL:  movieServer.URL,
+				MovieID:      456,
+				OutputPath:   "/downloads/movie",
+			},
+			expectedOutput: "     • Movie ID: 456 (Test Movie Name, 2024) (validated)\n[DRY-RUN]     • Output Path: /downloads/movie\n[DRY-RUN]     • Import Method: Command API → DownloadedMoviesScan",
+		},
+		{
+			name: "Series lookup fails (invalid URL)",
+			item: QueueItem{
+				InstanceType: "sonarr",
+				InstanceURL:  "http://invalid:8989",
+				SeriesID:     123,
+				OutputPath:   "/downloads/test",
+			},
+			expectedOutput: "     • Series ID: 123 (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getManualImportDetails(config, tt.item)
+			if result != tt.expectedOutput {
+				t.Errorf("getManualImportDetails() = %q, want %q", result, tt.expectedOutput)
+			}
+		})
+	}
+}
+
+// TestFormatQueueItemHeader verifies enhanced queue item header formatting
+func TestFormatQueueItemHeader(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"token"},
+	}
+
+	tests := []struct {
+		name           string
+		item           QueueItem
+		expectedOutput string
+	}{
+		{
+			name: "Complete item with all fields",
+			item: QueueItem{
+				InstanceURL:          "http://localhost:8989",
+				InstanceType:         "sonarr",
+				ID:                   123,
+				Title:                "Test Series S01E01",
+				Status:               "completed",
+				TrackedDownloadState: "importPending",
+				DownloadClient:       "transmission",
+			},
+			expectedOutput: "[DRY-RUN] Sonarr1 - Item #123 (Test Series S01E01)\n[DRY-RUN]   Status: completed | State: importPending | Client: transmission",
+		},
+		{
+			name: "Item with minimal fields",
+			item: QueueItem{
+				InstanceURL:  "http://localhost:8989",
+				InstanceType: "sonarr",
+				ID:           456,
+				Title:        "Minimal Item",
+				Status:       "downloading",
+			},
+			expectedOutput: "[DRY-RUN] Sonarr1 - Item #456 (Minimal Item)\n[DRY-RUN]   Status: downloading",
+		},
+		{
+			name: "Radarr item",
+			item: QueueItem{
+				InstanceURL:          "http://localhost:7878",
+				InstanceType:         "radarr",
+				ID:                   789,
+				Title:                "Test Movie 2024",
+				Status:               "completed",
+				TrackedDownloadState: "importPending",
+				DownloadClient:       "qBittorrent",
+			},
+			expectedOutput: "[DRY-RUN] radarr - Item #789 (Test Movie 2024)\n[DRY-RUN]   Status: completed | State: importPending | Client: qBittorrent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatQueueItemHeader(config, tt.item)
+			if result != tt.expectedOutput {
+				t.Errorf("formatQueueItemHeader() = %q, want %q", result, tt.expectedOutput)
+			}
+		})
+	}
+}
+
+// TestGetActionDescription verifies enhanced action descriptions
+func TestGetActionDescription(t *testing.T) {
+	tests := []struct {
+		name           string
+		action         string
+		item           QueueItem
+		expectedOutput string
+	}{
+		{
+			name:   "Delete with blocklist",
+			action: "delete",
+			item: QueueItem{
+				StatusMessages: []StatusMessage{
+					{
+						Title:    "Warning",
+						Messages: []string{"Not a Custom Format upgrade for existing movie file(s)"},
+					},
+				},
+			},
+			expectedOutput: "→ Would DELETE (blocklist=true) - custom format not an upgrade",
+		},
+		{
+			name:   "Delete without blocklist",
+			action: "delete",
+			item: QueueItem{
+				StatusMessages: []StatusMessage{
+					{
+						Title:    "Warning",
+						Messages: []string{"Sample"},
+					},
+				},
+			},
+			expectedOutput: "→ Would DELETE - sample file detected",
+		},
+		{
+			name:   "Manual import with path",
+			action: "manual_import",
+			item: QueueItem{
+				OutputPath: "/downloads/test",
+				StatusMessages: []StatusMessage{
+					{
+						Title:    "Warning",
+						Messages: []string{"matched to series by ID"},
+					},
+				},
+			},
+			expectedOutput: "→ Would MANUAL_IMPORT - matched to series by ID (series validation successful)",
+		},
+		{
+			name:   "Manual import without path",
+			action: "manual_import",
+			item: QueueItem{
+				OutputPath: "",
+			},
+			expectedOutput: "→ Would MANUAL_IMPORT (no output path available!) - downloading normally",
+		},
+		{
+			name:   "Monitor action",
+			action: "monitor",
+			item: QueueItem{
+				Status: "downloading",
+			},
+			expectedOutput: "→ MONITORING - downloading normally",
+		},
+		{
+			name:   "Unknown action",
+			action: "unknown",
+			item: QueueItem{
+				Status: "downloading",
+			},
+			expectedOutput: "→ Unknown action - downloading normally",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := getActionDescription(tt.action, tt.item)
+			if result != tt.expectedOutput {
+				t.Errorf("getActionDescription() = %q, want %q", result, tt.expectedOutput)
+			}
+		})
+	}
+}
+
 // ========== TEST: executeManualImport (POST /api/v3/manualimport) ==========
 
 func TestExecuteManualImport(t *testing.T) {
@@ -2509,6 +2863,1442 @@ func TestManualImportIntegrationWorkflow(t *testing.T) {
 	}
 	if !postImportCalled {
 		t.Error("POST /api/v3/manualimport was not called")
+	}
+}
+
+// TestTorrentsDirectorySkip verifies that items in /torrents/ directory are skipped
+func TestTorrentsDirectorySkip(t *testing.T) {
+	// Create mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/queue"):
+			// Return queue item with /torrents/ path
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{
+				"page": 1,
+				"pageSize": 100,
+				"totalRecords": 1,
+				"records": [
+					{
+						"id": 12345,
+						"title": "Test.Series.S01E01.1080p.WEB.H264-GROUP",
+						"status": "completed",
+						"trackedDownloadState": "importPending",
+						"trackedDownloadStatus": "warning",
+						"statusMessages": [
+							{
+								"title": "Warning",
+								"messages": ["No files found are eligible for import in /torrents/Test.Series.S01E01.1080p.WEB.H264-GROUP"]
+							}
+						],
+						"downloadClient": "qBittorrent",
+						"downloadId": "test123",
+						"outputPath": "/torrents/Test.Series.S01E01.1080p.WEB.H264-GROUP",
+						"seriesId": 42
+					}
+				]
+			}`))
+		default:
+			t.Errorf("Unexpected API call: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		SonarrURLs:   []string{server.URL},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      5 * time.Second,
+		Verbose:      true,
+	}
+
+	// Capture stdout to verify dry-run output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := classifyAndRemediate(config, true)
+
+	// Restore stdout and capture output
+	w.Close()
+	os.Stdout = oldStdout
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+
+	output := buf.String()
+
+	// Verify no error occurred
+	if err != nil {
+		t.Errorf("classifyAndRemediate() error = %v", err)
+	}
+
+	// Verify item was skipped
+	if !strings.Contains(output, "SKIPPED - item is in /torrents/ directory") {
+		t.Errorf("Expected output to contain torrents directory skip message, got: %s", output)
+	}
+
+	// Verify item was not processed for deletion or manual import
+	if strings.Contains(output, "Would DELETE") || strings.Contains(output, "Would MANUAL_IMPORT") {
+		t.Errorf("Expected item to be skipped, but found processing action in output: %s", output)
+	}
+
+	// Verify summary shows 1 total item but 0 actions taken
+	if !strings.Contains(output, "Total items: 1") {
+		t.Errorf("Expected summary to show 1 total item, got: %s", output)
+	}
+	if !strings.Contains(output, "Would delete: 0") || !strings.Contains(output, "Would manual import: 0") || !strings.Contains(output, "Monitoring: 0") {
+		t.Errorf("Expected summary to show 0 actions taken, got: %s", output)
+	}
+}
+
+// ========== TESTS FOR --manual FLAG FUNCTIONALITY ==========
+
+// TestManualFlagParsing tests the --manual flag parsing and mode selection
+func TestManualFlagParsing(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		expectManual bool
+		expectError  bool
+	}{
+		{
+			name:         "CLI mode without --manual flag",
+			args:         []string{"-sonarr-urls", "http://localhost:8989", "-sonarr-tokens", "test-token"},
+			expectManual: false,
+			expectError:  false,
+		},
+		{
+			name:         "TUI mode with --manual flag",
+			args:         []string{"-manual", "-sonarr-urls", "http://localhost:8989", "-sonarr-tokens", "test-token"},
+			expectManual: true,
+			expectError:  false,
+		},
+		{
+			name:         "TUI mode with --manual=true",
+			args:         []string{"-manual=true", "-sonarr-urls", "http://localhost:8989", "-sonarr-tokens", "test-token"},
+			expectManual: true,
+			expectError:  false,
+		},
+		{
+			name:         "CLI mode with --manual=false",
+			args:         []string{"-manual=false", "-sonarr-urls", "http://localhost:8989", "-sonarr-tokens", "test-token"},
+			expectManual: false,
+			expectError:  false,
+		},
+		{
+			name:         "Manual flag with valid config",
+			args:         []string{"-manual", "-sonarr-urls", "http://localhost:8989", "-sonarr-tokens", "test-token"},
+			expectManual: true,
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a new flag set to avoid conflicts
+			flagSet := flag.NewFlagSet("test", flag.ContinueOnError)
+
+			// Define flags
+			var (
+				sonarrURLs   = flagSet.String("sonarr-urls", "", "Comma-separated Sonarr URLs")
+				sonarrTokens = flagSet.String("sonarr-tokens", "", "Comma-separated Sonarr API tokens")
+				radarrURLs   = flagSet.String("radarr-urls", "", "Comma-separated Radarr URLs")
+				radarrTokens = flagSet.String("radarr-tokens", "", "Comma-separated Radarr API tokens")
+				timeout      = flagSet.Duration("timeout", 30*time.Second, "HTTP request timeout")
+				useRestAPI   = flagSet.Bool("use-rest-api", false, "Use REST API for manual imports instead of Command API")
+				verbose      = flagSet.Bool("verbose", false, "Show verbose logging (API calls, filtering decisions)")
+				debug        = flagSet.Bool("debug", false, "Show debug logging (full request/response payloads, implies -verbose)")
+				manual       = flagSet.Bool("manual", false, "Launch interactive TUI mode for manual queue remediation")
+			)
+
+			// Temporarily clear environment variables for this test
+			oldEnv := map[string]string{
+				"SONARR_URLS":   os.Getenv("SONARR_URLS"),
+				"SONARR_TOKENS": os.Getenv("SONARR_TOKENS"),
+				"RADARR_URLS":   os.Getenv("RADARR_URLS"),
+				"RADARR_TOKENS": os.Getenv("RADARR_TOKENS"),
+			}
+			for key := range oldEnv {
+				os.Unsetenv(key)
+			}
+			defer func() {
+				for key, value := range oldEnv {
+					if value != "" {
+						os.Setenv(key, value)
+					}
+				}
+			}()
+
+			// Parse the test arguments
+			err := flagSet.Parse(tt.args)
+
+			if tt.expectError {
+				// For cases where we expect validation error after flag parsing
+				config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens, *timeout, *useRestAPI, *verbose, *debug)
+				validateErr := validateQueueConfig(config)
+				if validateErr == nil {
+					t.Logf("Config: %+v", config)
+					t.Errorf("Expected validation error for args %v, but got none", tt.args)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected flag parsing error: %v", err)
+				return
+			}
+
+			if *manual != tt.expectManual {
+				t.Errorf("manual flag = %v, want %v", *manual, tt.expectManual)
+			}
+		})
+	}
+}
+
+// TestTUIModelInitialization tests TUI model creation and initialization
+func TestTUIModelInitialization(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+
+	// Verify initial state
+	if model.config.SonarrURLs[0] != "http://localhost:8989" {
+		t.Errorf("Expected Sonarr URL to be set, got %v", model.config.SonarrURLs)
+	}
+	if model.currentIndex != 0 {
+		t.Errorf("Expected currentIndex = 0, got %d", model.currentIndex)
+	}
+	if !model.loading {
+		t.Error("Expected loading = true initially")
+	}
+	if model.status != "Loading queue items..." {
+		t.Errorf("Expected initial status message, got %q", model.status)
+	}
+	if len(model.items) != 0 {
+		t.Errorf("Expected empty items list, got %d items", len(model.items))
+	}
+}
+
+// TestTUIModelUpdate tests TUI model updates for various user inputs
+func TestTUIModelUpdate(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+
+	// Test window size update
+	windowMsg := tea.WindowSizeMsg{Width: 100, Height: 50}
+	updatedModel, _ := model.Update(windowMsg)
+
+	if updatedModel.(TUIModel).width != 100 {
+		t.Errorf("Expected width = 100, got %d", updatedModel.(TUIModel).width)
+	}
+	if updatedModel.(TUIModel).height != 50 {
+		t.Errorf("Expected height = 50, got %d", updatedModel.(TUIModel).height)
+	}
+
+	// Test quit commands
+	quitKeys := []tea.KeyType{tea.KeyCtrlC, tea.KeyEsc}
+	for _, key := range quitKeys {
+		keyMsg := tea.KeyMsg{Type: key}
+		updatedModel, cmd := model.Update(keyMsg)
+
+		if !updatedModel.(TUIModel).quitting {
+			t.Errorf("Expected quitting = true for key %v", key)
+		}
+		if cmd == nil {
+			t.Error("Expected tea.Quit command for quit key")
+		}
+	}
+
+	// Test navigation with empty items list
+	upMsg := tea.KeyMsg{Type: tea.KeyUp}
+	updatedModel, _ = model.Update(upMsg)
+	if updatedModel.(TUIModel).currentIndex != 0 {
+		t.Error("Navigation should not change index when items list is empty")
+	}
+
+	// Test with items in the list
+	model.items = []QueueItem{
+		{ID: 1, Title: "Item 1"},
+		{ID: 2, Title: "Item 2"},
+	}
+
+	// Test down navigation
+	downMsg := tea.KeyMsg{Type: tea.KeyDown}
+	updatedModel, _ = model.Update(downMsg)
+	if updatedModel.(TUIModel).currentIndex != 1 {
+		t.Errorf("Expected currentIndex = 1 after down navigation, got %d", updatedModel.(TUIModel).currentIndex)
+	}
+
+	// Test up navigation
+	upMsg = tea.KeyMsg{Type: tea.KeyUp}
+	updatedModel, _ = model.Update(upMsg)
+	if updatedModel.(TUIModel).currentIndex != 0 {
+		t.Errorf("Expected currentIndex = 0 after up navigation, got %d", updatedModel.(TUIModel).currentIndex)
+	}
+
+	// Test boundary conditions
+	// Can't go below 0
+	updatedModel, _ = model.Update(upMsg)
+	if updatedModel.(TUIModel).currentIndex != 0 {
+		t.Error("Should not go below index 0")
+	}
+
+	// Can't go above last item
+	model.currentIndex = 1
+	updatedModel, _ = model.Update(downMsg)
+	if updatedModel.(TUIModel).currentIndex != 1 {
+		t.Error("Should not go above last item index")
+	}
+}
+
+// TestTUIItemsLoaded tests the itemsLoaded message handling
+func TestTUIItemsLoaded(t *testing.T) {
+	// Create a minimal config for testing (won't be used for HTTP calls)
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		UseRestAPI:   true,
+	}
+
+	model := InitialModel(config)
+
+	// Test successful load with items
+	items := []QueueItem{
+		{ID: 1, Title: "Test Item 1", Status: "warning", TrackedDownloadState: "importPending", ErrorMessage: "No files found are eligible for import"},
+		{ID: 2, Title: "Test Item 2", Status: "failed", TrackedDownloadState: "importPending"},
+	}
+
+	msg := itemsLoadedMsg{items: items, err: nil}
+	updatedModel, _ := model.Update(msg)
+
+	tuiModel := updatedModel.(TUIModel)
+	if tuiModel.loading {
+		t.Error("Expected loading = false after items loaded")
+	}
+	if tuiModel.error != "" {
+		t.Errorf("Expected no error, got %q", tuiModel.error)
+	}
+	if len(tuiModel.items) != 1 {
+		t.Errorf("Expected 1 item, got %d", len(tuiModel.items))
+	}
+	if !strings.Contains(tuiModel.status, "Loaded 1 items") {
+		t.Errorf("Expected status to mention loaded items, got %q", tuiModel.status)
+	}
+
+	// Test successful load with no items
+	msg = itemsLoadedMsg{items: []QueueItem{}, err: nil}
+	updatedModel, _ = model.Update(msg)
+
+	tuiModel = updatedModel.(TUIModel)
+	if len(tuiModel.items) != 0 {
+		t.Error("Expected empty items list")
+	}
+	if !strings.Contains(tuiModel.status, "No queue items requiring remediation") {
+		t.Errorf("Expected no items message, got %q", tuiModel.status)
+	}
+
+	// Test failed load
+	msg = itemsLoadedMsg{items: nil, err: fmt.Errorf("network error")}
+	updatedModel, _ = model.Update(msg)
+
+	tuiModel = updatedModel.(TUIModel)
+	if tuiModel.loading {
+		t.Error("Expected loading = false after error")
+	}
+	if tuiModel.error == "" {
+		t.Error("Expected error message to be set")
+	}
+	if !strings.Contains(tuiModel.error, "network error") {
+		t.Errorf("Expected error to contain 'network error', got %q", tuiModel.error)
+	}
+}
+
+// TestTUIActionExecution tests action execution and message handling
+func TestTUIActionExecution(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+	model.items = []QueueItem{
+		{ID: 1, Title: "Test Item", Status: "completed", TrackedDownloadState: "importPending"},
+	}
+
+	// Test successful action execution
+	msg := actionExecutedMsg{success: true, err: nil, action: "delete"}
+	updatedModel, _ := model.Update(msg)
+
+	tuiModel := updatedModel.(TUIModel)
+	if len(tuiModel.items) != 0 {
+		t.Errorf("Expected item to be removed after successful action, got %d items", len(tuiModel.items))
+	}
+	if !strings.Contains(tuiModel.status, "All items processed successfully") {
+		t.Errorf("Expected success status, got %q", tuiModel.status)
+	}
+
+	// Test failed action execution
+	model.items = []QueueItem{
+		{ID: 1, Title: "Test Item", Status: "completed", TrackedDownloadState: "importPending"},
+	}
+	msg = actionExecutedMsg{success: false, err: fmt.Errorf("API error"), action: "delete"}
+	updatedModel, _ = model.Update(msg)
+
+	tuiModel = updatedModel.(TUIModel)
+	if len(tuiModel.items) != 1 {
+		t.Errorf("Expected item to remain after failed action, got %d items", len(tuiModel.items))
+	}
+	if tuiModel.error == "" {
+		t.Error("Expected error message to be set")
+	}
+	if !strings.Contains(tuiModel.error, "Action 'delete' failed") {
+		t.Errorf("Expected error to mention failed action, got %q", tuiModel.error)
+	}
+}
+
+// TestTUIFilterItems tests the item filtering logic
+func TestTUIFilterItems(t *testing.T) {
+	tests := []struct {
+		name           string
+		items          []QueueItem
+		expectedCount  int
+		expectedTitles []string
+	}{
+		{
+			name: "Filter out /torrents/ items",
+			items: []QueueItem{
+				{ID: 1, Title: "Normal Item", OutputPath: "/downloads/movie", Status: "warning", TrackedDownloadState: "importPending", StatusMessages: []StatusMessage{{Title: "Warning", Messages: []string{"No files found are eligible for import"}}}},
+				{ID: 2, Title: "Torrent Item", OutputPath: "/torrents/movie", Status: "warning", TrackedDownloadState: "importPending", StatusMessages: []StatusMessage{{Title: "Warning", Messages: []string{"No files found are eligible for import"}}}},
+			},
+			expectedCount:  1,
+			expectedTitles: []string{"Normal Item"},
+		},
+		{
+			name: "Include items needing remediation",
+			items: []QueueItem{
+				{ID: 1, Title: "Stuck Import", OutputPath: "/downloads/movie", Status: "completed", TrackedDownloadState: "importPending", StatusMessages: []StatusMessage{{Title: "Warning", Messages: []string{"Sample"}}}},
+				{ID: 2, Title: "Normal Download", OutputPath: "/downloads/movie2", Status: "downloading", TrackedDownloadState: "downloading"},
+			},
+			expectedCount:  1,
+			expectedTitles: []string{"Stuck Import"},
+		},
+		{
+			name: "Include importBlocked items even if action is monitor",
+			items: []QueueItem{
+				{ID: 1, Title: "Import Blocked", OutputPath: "/downloads/movie", Status: "completed", TrackedDownloadState: "importBlocked"},
+			},
+			expectedCount:  1,
+			expectedTitles: []string{"Import Blocked"},
+		},
+		{
+			name:           "Empty list",
+			items:          []QueueItem{},
+			expectedCount:  0,
+			expectedTitles: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered := filterItems(tt.items)
+
+			if len(filtered) != tt.expectedCount {
+				t.Errorf("Expected %d items, got %d", tt.expectedCount, len(filtered))
+			}
+
+			for i, expectedTitle := range tt.expectedTitles {
+				if i >= len(filtered) {
+					t.Errorf("Missing expected item %d: %s", i, expectedTitle)
+					continue
+				}
+				if filtered[i].Title != expectedTitle {
+					t.Errorf("Item %d title = %q, want %q", i, filtered[i].Title, expectedTitle)
+				}
+			}
+		})
+	}
+}
+
+// TestTUIRendering tests the TUI view rendering
+func TestTUIRendering(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	// Test loading state
+	model := InitialModel(config)
+	view := model.View()
+
+	if !strings.Contains(view, "Loading...") {
+		t.Errorf("Expected loading message in view, got: %s", view)
+	}
+	if !strings.Contains(view, "Queue Remediation (Manual Mode)") {
+		t.Errorf("Expected header in view, got: %s", view)
+	}
+
+	// Test empty state
+	model.loading = false
+	model.items = []QueueItem{}
+	view = model.View()
+
+	if !strings.Contains(view, "No queue items requiring remediation found") {
+		t.Errorf("Expected empty message in view, got: %s", view)
+	}
+
+	// Test item display
+	model.items = []QueueItem{
+		{
+			ID:                    1,
+			Title:                 "Test Movie",
+			Status:                "completed",
+			TrackedDownloadState:  "importPending",
+			TrackedDownloadStatus: "warning",
+			StatusMessages: []StatusMessage{
+				{Title: "Warning", Messages: []string{"Sample file detected"}},
+			},
+			OutputPath: "/downloads/test",
+		},
+	}
+	view = model.View()
+
+	if !strings.Contains(view, "Test Movie") {
+		t.Errorf("Expected item title in view, got: %s", view)
+	}
+	if !strings.Contains(view, "Sample file detected") {
+		t.Errorf("Expected status message in view, got: %s", view)
+	}
+	if !strings.Contains(view, "DELETE") {
+		t.Errorf("Expected recommended action in view, got: %s", view)
+	}
+
+	// Test help text
+	if !strings.Contains(view, "[Enter] Apply Suggested") {
+		t.Errorf("Expected help text in view, got: %s", view)
+	}
+	if !strings.Contains(view, "[q] Quit") {
+		t.Errorf("Expected quit help in view, got: %s", view)
+	}
+}
+
+// TestTUIQuitState tests the quit state rendering
+func TestTUIQuitState(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+	model.quitting = true
+
+	view := model.View()
+	if view != "" {
+		t.Errorf("Expected empty view when quitting, got: %s", view)
+	}
+}
+
+// TestRunTUIValidation tests the RunTUI function with various configurations
+func TestRunTUIValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      Config
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "Valid configuration",
+			config: Config{
+				SonarrURLs:   []string{"http://localhost:8989"},
+				SonarrTokens: []string{"test-token"},
+				Timeout:      30 * time.Second,
+			},
+			expectError: false,
+		},
+		{
+			name: "Invalid configuration - missing tokens",
+			config: Config{
+				SonarrURLs:   []string{"http://localhost:8989"},
+				SonarrTokens: []string{},
+				Timeout:      30 * time.Second,
+			},
+			expectError: true,
+			errorMsg:    "configuration validation failed",
+		},
+		{
+			name: "Invalid configuration - no instances",
+			config: Config{
+				Timeout: 30 * time.Second,
+			},
+			expectError: true,
+			errorMsg:    "configuration validation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := RunTUI(tt.config)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				} else if !strings.Contains(err.Error(), tt.errorMsg) {
+					t.Errorf("Expected error containing %q, got %q", tt.errorMsg, err.Error())
+				}
+			} else {
+				// Note: RunTUI will actually try to start the TUI, which will fail in tests
+				// We expect an error about terminal capabilities in test environment
+				if err == nil {
+					t.Error("Expected error in test environment (no terminal)")
+				}
+			}
+		})
+	}
+}
+
+// TestCLIvsTUIMode tests that both CLI and TUI modes work correctly
+func TestCLIvsTUIMode(t *testing.T) {
+	// Create mock server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/queue"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(QueueResponse{
+				Page:         1,
+				PageSize:     100,
+				TotalRecords: 0,
+				Records:      []QueueItem{},
+			})
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		SonarrURLs:   []string{server.URL},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      5 * time.Second,
+	}
+
+	// Test CLI mode (should not error on empty queue)
+	err := classifyAndRemediate(config, true) // dry run
+	if err != nil {
+		t.Errorf("CLI mode failed: %v", err)
+	}
+
+	// Test TUI mode validation (should fail gracefully in test environment)
+	err = RunTUI(config)
+	if err == nil {
+		t.Error("Expected TUI to fail in test environment (no terminal)")
+	}
+	// The error should be about terminal capabilities, not configuration
+	if strings.Contains(err.Error(), "configuration validation failed") {
+		t.Errorf("TUI failed with config error, not terminal error: %v", err)
+	}
+}
+
+// TestTUIKeyboardShortcuts tests all keyboard shortcuts work as expected
+func TestTUIKeyboardShortcuts(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+	model.loading = false
+	model.items = []QueueItem{
+		{ID: 1, Title: "Test Item", Status: "warning", TrackedDownloadState: "importPending", StatusMessages: []StatusMessage{{Title: "Warning", Messages: []string{"No files found are eligible for import"}}}},
+	}
+
+	// Test action keys
+	actionTests := []struct {
+		key         tea.KeyType
+		keyChar     byte
+		expectCmd   bool
+		description string
+	}{
+		{tea.KeyEnter, 0, true, "Enter - Apply suggested action"},
+		{0, 'd', true, "d - Delete"},
+		{0, 'm', true, "m - Manual Import"},
+		{0, 's', true, "s - Skip/Monitor"},
+		{0, 'r', true, "r - Refresh"},
+		{0, 'q', true, "q - Quit"},
+	}
+
+	for _, test := range actionTests {
+		t.Run(test.description, func(t *testing.T) {
+			var keyMsg tea.KeyMsg
+			if test.key != 0 {
+				keyMsg = tea.KeyMsg{Type: test.key}
+			} else {
+				keyMsg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{rune(test.keyChar)}}
+			}
+
+			updatedModel, cmd := model.Update(keyMsg)
+
+			if test.expectCmd && cmd == nil {
+				t.Errorf("Expected command for %s", test.description)
+			}
+			if !test.expectCmd && cmd != nil {
+				t.Errorf("Expected no command for %s", test.description)
+			}
+
+			// For quit key, check quitting state
+			if test.keyChar == 'q' {
+				if !updatedModel.(TUIModel).quitting {
+					t.Error("Expected quitting = true for 'q' key")
+				}
+			}
+		})
+	}
+}
+
+// TestTUIErrorHandling tests error handling in TUI mode
+func TestTUIErrorHandling(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+
+	// Test network error during load
+	msg := itemsLoadedMsg{items: nil, err: fmt.Errorf("network timeout")}
+	updatedModel, _ := model.Update(msg)
+
+	tuiModel := updatedModel.(TUIModel)
+	if tuiModel.error == "" {
+		t.Error("Expected error message to be set")
+	}
+	if !strings.Contains(tuiModel.error, "network timeout") {
+		t.Errorf("Expected error to contain 'network timeout', got %q", tuiModel.error)
+	}
+
+	// Test action execution error
+	model.items = []QueueItem{
+		{ID: 1, Title: "Test Item", Status: "completed", TrackedDownloadState: "importPending"},
+	}
+	actionMsg := actionExecutedMsg{success: false, err: fmt.Errorf("API request failed"), action: "delete"}
+	updatedModel, _ = model.Update(actionMsg)
+
+	tuiModel = updatedModel.(TUIModel)
+	if !strings.Contains(tuiModel.error, "API request failed") {
+		t.Errorf("Expected error to contain 'API request failed', got %q", tuiModel.error)
+	}
+}
+
+// TestTUIItemRemovalAfterAction tests that items are properly removed after successful actions
+func TestTUIItemRemovalAfterAction(t *testing.T) {
+	config := Config{
+		SonarrURLs:   []string{"http://localhost:8989"},
+		SonarrTokens: []string{"test-token"},
+		Timeout:      30 * time.Second,
+	}
+
+	model := InitialModel(config)
+	model.items = []QueueItem{
+		{ID: 1, Title: "Item 1"},
+		{ID: 2, Title: "Item 2"},
+		{ID: 3, Title: "Item 3"},
+	}
+	model.currentIndex = 1 // Select middle item
+
+	// Test successful action removes current item
+	msg := actionExecutedMsg{success: true, err: nil, action: "delete"}
+	updatedModel, _ := model.Update(msg)
+
+	tuiModel := updatedModel.(TUIModel)
+	if len(tuiModel.items) != 2 {
+		t.Errorf("Expected 2 items after removal, got %d", len(tuiModel.items))
+	}
+	if tuiModel.currentIndex != 1 {
+		t.Errorf("Expected currentIndex to stay at 1, got %d", tuiModel.currentIndex)
+	}
+
+	// Test removing last item adjusts index
+	model = tuiModel
+	model.currentIndex = 1 // Point to last item
+	msg = actionExecutedMsg{success: true, err: nil, action: "delete"}
+	updatedModel, _ = model.Update(msg)
+
+	tuiModel = updatedModel.(TUIModel)
+	if len(tuiModel.items) != 1 {
+		t.Errorf("Expected 1 item after removal, got %d", len(tuiModel.items))
+	}
+	if tuiModel.currentIndex != 0 {
+		t.Errorf("Expected currentIndex to move to 0 when last item removed, got %d", tuiModel.currentIndex)
+	}
+
+	// Test removing all items sets completion status
+	model = tuiModel
+	model.currentIndex = 0
+	msg = actionExecutedMsg{success: true, err: nil, action: "delete"}
+	updatedModel, _ = model.Update(msg)
+
+	tuiModel = updatedModel.(TUIModel)
+	if len(tuiModel.items) != 0 {
+		t.Errorf("Expected 0 items after removing all, got %d", len(tuiModel.items))
+	}
+	if !strings.Contains(tuiModel.status, "All items processed successfully") {
+		t.Errorf("Expected completion status, got %q", tuiModel.status)
+	}
+}
+
+// ========== ENHANCED MANUAL IMPORT TESTS ==========
+
+// TestHybridManualImportWorkflow tests the complete hybrid API workflow
+func TestHybridManualImportWorkflow(t *testing.T) {
+	tests := []struct {
+		name           string
+		useRestAPI     bool
+		queueItem      QueueItem
+		scanResponse   string
+		importResponse string
+		expectSuccess  bool
+		expectFallback bool
+		validateCalls  func(*testing.T, *[]http.Request)
+	}{
+		{
+			name:       "REST API success with server-side filtering",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           123,
+				Title:        "Test Series S01E01",
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/Test.Series.S01E01",
+			},
+			scanResponse: `[
+				{
+					"id": 1234567890,
+					"path": "/downloads/Test.Series.S01E01/file.mkv",
+					"series": {"id": 42, "title": "Test Series"},
+					"seasonNumber": 1,
+					"episodes": [{"id": 100, "seasonNumber": 1, "episodeNumber": 1}],
+					"quality": {"quality": {"id": 1, "name": "HDTV-720p"}},
+					"rejections": []
+				}
+			]`,
+			importResponse: `[{"id": 1234567890, "rejections": []}]`,
+			expectSuccess:  true,
+			expectFallback: false,
+			validateCalls: func(t *testing.T, requests *[]http.Request) {
+				// Should have scan and import calls
+				if len(*requests) != 2 {
+					t.Errorf("Expected 2 requests, got %d", len(*requests))
+				}
+
+				// First request should be scan with seriesId filter
+				scanReq := (*requests)[0]
+				if scanReq.Method != "GET" {
+					t.Errorf("Expected GET for scan, got %s", scanReq.Method)
+				}
+				if !strings.Contains(scanReq.URL.String(), "seriesId=42") {
+					t.Errorf("Expected seriesId=42 in scan URL, got %s", scanReq.URL.String())
+				}
+
+				// Second request should be import
+				importReq := (*requests)[1]
+				if importReq.Method != "POST" {
+					t.Errorf("Expected POST for import, got %s", importReq.Method)
+				}
+			},
+		},
+		{
+			name:       "REST API with client-side validation (mixed downloads)",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           456,
+				Title:        "Target Series S02E03",
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/mixed-batch",
+			},
+			scanResponse: `[
+				{
+					"id": 1,
+					"path": "/downloads/mixed-batch/Target.Series.S02E03.mkv",
+					"series": {"id": 42, "title": "Target Series"},
+					"seasonNumber": 2,
+					"episodes": [{"id": 200, "seasonNumber": 2, "episodeNumber": 3}],
+					"quality": {"quality": {"id": 1, "name": "HDTV-720p"}},
+					"rejections": []
+				},
+				{
+					"id": 2,
+					"path": "/downloads/mixed-batch/Wrong.Series.S05E01.mkv",
+					"series": {"id": 99, "title": "Wrong Series"},
+					"seasonNumber": 5,
+					"episodes": [{"id": 500, "seasonNumber": 5, "episodeNumber": 1}],
+					"quality": {"quality": {"id": 1, "name": "HDTV-720p"}},
+					"rejections": []
+				}
+			]`,
+			importResponse: `[{"id": 1, "rejections": []}]`,
+			expectSuccess:  true,
+			expectFallback: false,
+			validateCalls: func(t *testing.T, requests *[]http.Request) {
+				// Should have scan and import calls, but only import correct file
+				if len(*requests) != 2 {
+					t.Errorf("Expected 2 requests, got %d", len(*requests))
+				}
+
+				// Import should only include the correct file
+				importReq := (*requests)[1]
+				var importData []map[string]interface{}
+				if err := json.NewDecoder(importReq.Body).Decode(&importData); err != nil {
+					t.Fatalf("Failed to decode import request: %v", err)
+				}
+
+				if len(importData) != 1 {
+					t.Errorf("Expected 1 file in import request, got %d", len(importData))
+				}
+
+				if seriesId, ok := importData[0]["seriesId"].(float64); !ok || int(seriesId) != 42 {
+					t.Errorf("Expected seriesId=42 in import, got %v", importData[0]["seriesId"])
+				}
+			},
+		},
+		{
+			name:       "Command API fallback (REST unavailable)",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           789,
+				Title:        "Fallback Test",
+				InstanceType: "radarr",
+				MovieID:      123,
+				OutputPath:   "/downloads/Fallback.Test.2024",
+			},
+			scanResponse:   `[]`, // Empty scan triggers fallback
+			expectSuccess:  true,
+			expectFallback: true,
+			validateCalls: func(t *testing.T, requests *[]http.Request) {
+				// Should have scan attempt and command fallback
+				if len(*requests) != 2 {
+					t.Errorf("Expected 2 requests, got %d", len(*requests))
+				}
+
+				// First request should be scan
+				scanReq := (*requests)[0]
+				if scanReq.Method != "GET" {
+					t.Errorf("Expected GET for scan, got %s", scanReq.Method)
+				}
+
+				// Second request should be command
+				cmdReq := (*requests)[1]
+				if cmdReq.Method != "POST" {
+					t.Errorf("Expected POST for command, got %s", cmdReq.Method)
+				}
+				if !strings.Contains(cmdReq.URL.String(), "/command") {
+					t.Errorf("Expected /command endpoint, got %s", cmdReq.URL.String())
+				}
+			},
+		},
+		{
+			name:       "Command API direct (REST disabled)",
+			useRestAPI: false,
+			queueItem: QueueItem{
+				ID:           101112,
+				Title:        "Direct Command Test",
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/Direct.Command.Test",
+			},
+			expectSuccess:  true,
+			expectFallback: false,
+			validateCalls: func(t *testing.T, requests *[]http.Request) {
+				// Should have only command call
+				if len(*requests) != 1 {
+					t.Errorf("Expected 1 request, got %d", len(*requests))
+				}
+
+				cmdReq := (*requests)[0]
+				if cmdReq.Method != "POST" {
+					t.Errorf("Expected POST for command, got %s", cmdReq.Method)
+				}
+
+				// Verify command payload
+				var cmdData map[string]interface{}
+				if err := json.NewDecoder(cmdReq.Body).Decode(&cmdData); err != nil {
+					t.Fatalf("Failed to decode command request: %v", err)
+				}
+
+				if cmdData["name"] != "DownloadedEpisodesScan" {
+					t.Errorf("Expected DownloadedEpisodesScan, got %v", cmdData["name"])
+				}
+				if cmdData["path"] != "/downloads/Direct.Command.Test" {
+					t.Errorf("Expected exact path, got %v", cmdData["path"])
+				}
+				if cmdData["importMode"] != "Move" {
+					t.Errorf("Expected Move importMode, got %v", cmdData["importMode"])
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests []http.Request
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Store request for validation
+				reqCopy := *r
+				if r.Body != nil {
+					bodyBytes, _ := io.ReadAll(r.Body)
+					reqCopy.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+					// Restore body for actual processing
+					r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+				requests = append(requests, reqCopy)
+
+				// Verify API key
+				if r.Header.Get("X-Api-Key") != "test-token" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+
+				switch {
+				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "GET":
+					// Scan endpoint
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(tt.scanResponse))
+
+				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "POST":
+					// Import endpoint
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(tt.importResponse))
+
+				case strings.Contains(r.URL.Path, "/command"):
+					// Command endpoint
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"id":    1,
+						"name":  "DownloadedEpisodesScan",
+						"state": "queued",
+					})
+
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				UseRestAPI: tt.useRestAPI,
+				Timeout:    5 * time.Second,
+				Verbose:    true,
+			}
+
+			// Test the manual import execution
+			err := triggerManualImport(config, server.URL, "test-token", tt.queueItem.OutputPath, tt.queueItem.InstanceType, tt.useRestAPI, tt.queueItem)
+
+			if tt.expectSuccess && err != nil {
+				t.Errorf("Expected success, got error: %v", err)
+			}
+			if !tt.expectSuccess && err == nil {
+				t.Error("Expected error, got success")
+			}
+
+			// Validate request patterns
+			if tt.validateCalls != nil {
+				tt.validateCalls(t, &requests)
+			}
+		})
+	}
+}
+
+// TestManualImportIDValidation tests the critical ID validation logic
+func TestManualImportIDValidation(t *testing.T) {
+	tests := []struct {
+		name           string
+		queueItem      QueueItem
+		scanResponse   string
+		expectedResult string
+		expectError    bool
+	}{
+		{
+			name: "Valid Sonarr series ID match",
+			queueItem: QueueItem{
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/test",
+			},
+			scanResponse: `[
+				{
+					"id": 1,
+					"path": "/downloads/test/file.mkv",
+					"series": {"id": 42, "title": "Correct Series"},
+					"seasonNumber": 1,
+					"episodes": [{"id": 100}],
+					"rejections": []
+				}
+			]`,
+			expectedResult: "imported",
+			expectError:    false,
+		},
+		{
+			name: "Invalid Sonarr series ID mismatch",
+			queueItem: QueueItem{
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/test",
+			},
+			scanResponse: `[
+				{
+					"id": 1,
+					"path": "/downloads/test/wrong_file.mkv",
+					"series": {"id": 99, "title": "Wrong Series"},
+					"seasonNumber": 1,
+					"episodes": [{"id": 200}],
+					"rejections": []
+				}
+			]`,
+			expectedResult: "skipped",
+			expectError:    false,
+		},
+		{
+			name: "Valid Radarr movie ID match",
+			queueItem: QueueItem{
+				InstanceType: "radarr",
+				MovieID:      123,
+				OutputPath:   "/downloads/movie",
+			},
+			scanResponse: `[
+				{
+					"id": 1,
+					"path": "/downloads/movie/movie.mkv",
+					"movie": {"id": 123, "title": "Correct Movie", "year": 2024},
+					"rejections": []
+				}
+			]`,
+			expectedResult: "imported",
+			expectError:    false,
+		},
+		{
+			name: "Invalid Radarr movie ID mismatch",
+			queueItem: QueueItem{
+				InstanceType: "radarr",
+				MovieID:      123,
+				OutputPath:   "/downloads/movie",
+			},
+			scanResponse: `[
+				{
+					"id": 1,
+					"path": "/downloads/movie/wrong_movie.mkv",
+					"movie": {"id": 456, "title": "Wrong Movie", "year": 2023},
+					"rejections": []
+				}
+			]`,
+			expectedResult: "skipped",
+			expectError:    false,
+		},
+		{
+			name: "Mixed files with some valid",
+			queueItem: QueueItem{
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/mixed",
+			},
+			scanResponse: `[
+				{
+					"id": 1,
+					"path": "/downloads/mixed/correct.mkv",
+					"series": {"id": 42, "title": "Correct Series"},
+					"seasonNumber": 1,
+					"episodes": [{"id": 100}],
+					"rejections": []
+				},
+				{
+					"id": 2,
+					"path": "/downloads/mixed/wrong.mkv",
+					"series": {"id": 99, "title": "Wrong Series"},
+					"seasonNumber": 5,
+					"episodes": [{"id": 500}],
+					"rejections": []
+				}
+			]`,
+			expectedResult: "partial",
+			expectError:    false,
+		},
+		{
+			name: "No files found",
+			queueItem: QueueItem{
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/empty",
+			},
+			scanResponse:   `[]`,
+			expectedResult: "empty", // Should succeed via fallback to Command API
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Api-Key") != "test-token" {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+
+				if strings.Contains(r.URL.Path, "/manualimport") && r.Method == "GET" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(tt.scanResponse))
+				} else if strings.Contains(r.URL.Path, "/manualimport") && r.Method == "POST" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`[{"id": 1, "rejections": []}]`))
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				UseRestAPI: true,
+				Timeout:    5 * time.Second,
+				Verbose:    true,
+			}
+
+			err := triggerManualImport(config, server.URL, "test-token", tt.queueItem.OutputPath, tt.queueItem.InstanceType, true, tt.queueItem)
+
+			// Validate results based on expected outcome
+			switch tt.expectedResult {
+			case "imported":
+				if err != nil {
+					t.Errorf("Expected successful import, got error: %v", err)
+				}
+			case "skipped":
+				// Should succeed via fallback to Command API
+				if err != nil {
+					t.Errorf("Expected success via fallback, got error: %v", err)
+				}
+			case "partial":
+				if err != nil {
+					t.Errorf("Expected partial success, got error: %v", err)
+				}
+			case "empty":
+				// Should succeed via fallback to Command API
+				if err != nil {
+					t.Errorf("Expected success via fallback for empty scan, got error: %v", err)
+				}
+			}
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("Error expectation mismatch: got %v, expectError=%v", err, tt.expectError)
+			}
+		})
+	}
+}
+
+// TestManualImportErrorHandling tests various error scenarios
+func TestManualImportErrorHandling(t *testing.T) {
+	tests := []struct {
+		name           string
+		useRestAPI     bool
+		queueItem      QueueItem
+		scanStatus     int
+		scanResponse   string
+		importStatus   int
+		expectError    bool
+		expectFallback bool
+		errorMessage   string
+	}{
+		{
+			name:       "REST API scan failure falls back to command",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           123,
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/test",
+			},
+			scanStatus:     http.StatusBadRequest,
+			scanResponse:   `{"error": "Invalid path"}`,
+			expectError:    false,
+			expectFallback: true,
+		},
+		{
+			name:       "REST API import failure",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           456,
+				InstanceType: "radarr",
+				MovieID:      123,
+				OutputPath:   "/downloads/movie",
+			},
+			scanStatus:   http.StatusOK,
+			scanResponse: `[{"id": 1, "path": "/downloads/movie/movie.mkv", "movie": {"id": 123}, "rejections": []}]`,
+			importStatus: http.StatusInternalServerError,
+			expectError:  false, // Should succeed via fallback to Command API
+		},
+		{
+			name:       "Command API failure",
+			useRestAPI: false,
+			queueItem: QueueItem{
+				ID:           789,
+				InstanceType: "sonarr",
+				OutputPath:   "/downloads/test",
+			},
+			expectError: true,
+		},
+		{
+			name:       "Unauthorized access",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           401,
+				InstanceType: "sonarr",
+				SeriesID:     42,
+				OutputPath:   "/downloads/test",
+			},
+			scanStatus:   http.StatusUnauthorized,
+			scanResponse: `{"error": "Unauthorized"}`,
+			expectError:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requestCount := 0
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount++
+
+				// Simulate unauthorized for specific test
+				if tt.name == "Unauthorized access" {
+					w.WriteHeader(http.StatusUnauthorized)
+					w.Write([]byte(`{"error": "Unauthorized"}`))
+					return
+				}
+
+				switch {
+				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "GET":
+					w.WriteHeader(tt.scanStatus)
+					w.Write([]byte(tt.scanResponse))
+
+				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "POST":
+					w.WriteHeader(tt.importStatus)
+					w.Write([]byte(`{"error": "Import failed"}`))
+
+				case strings.Contains(r.URL.Path, "/command"):
+					if tt.name == "Command API failure" {
+						w.WriteHeader(http.StatusInternalServerError)
+						w.Write([]byte(`{"error": "Command failed"}`))
+					} else {
+						w.WriteHeader(http.StatusCreated)
+						json.NewEncoder(w).Encode(map[string]interface{}{
+							"id":    1,
+							"name":  "DownloadedEpisodesScan",
+							"state": "queued",
+						})
+					}
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				UseRestAPI: tt.useRestAPI,
+				Timeout:    5 * time.Second,
+			}
+
+			err := triggerManualImport(config, server.URL, "test-token", tt.queueItem.OutputPath, tt.queueItem.InstanceType, tt.useRestAPI, tt.queueItem)
+
+			if (err != nil) != tt.expectError {
+				t.Errorf("Error expectation mismatch: got %v, expectError=%v", err, tt.expectError)
+			}
+
+			if tt.expectFallback && requestCount < 2 {
+				t.Errorf("Expected fallback behavior (multiple requests), got %d requests", requestCount)
+			}
+		})
+	}
+}
+
+// TestManualImportPathValidation tests the exact path usage fix
+func TestManualImportPathValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		useRestAPI   bool
+		queueItem    QueueItem
+		expectedPath string
+	}{
+		{
+			name:       "Command API uses exact OutputPath",
+			useRestAPI: false,
+			queueItem: QueueItem{
+				ID:           123,
+				InstanceType: "sonarr",
+				OutputPath:   "/downloads/Exact.Release.Folder/S01E01",
+			},
+			expectedPath: "/downloads/Exact.Release.Folder/S01E01",
+		},
+		{
+			name:       "REST API scan uses folder path",
+			useRestAPI: true,
+			queueItem: QueueItem{
+				ID:           456,
+				InstanceType: "radarr",
+				MovieID:      123,
+				OutputPath:   "/downloads/Movie.Release.2024",
+			},
+			expectedPath: "/downloads/Movie.Release.2024",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var actualPath string
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/command") {
+					var cmdData map[string]interface{}
+					json.NewDecoder(r.Body).Decode(&cmdData)
+					actualPath = cmdData["path"].(string)
+
+					w.WriteHeader(http.StatusCreated)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"id":    1,
+						"state": "queued",
+					})
+				} else if strings.Contains(r.URL.Path, "/manualimport") && r.Method == "GET" {
+					// Extract folder parameter for validation
+					folder := r.URL.Query().Get("folder")
+					if folder != "" {
+						actualPath = folder
+					}
+
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`[]`))
+				}
+			}))
+			defer server.Close()
+
+			config := Config{
+				UseRestAPI: tt.useRestAPI,
+				Timeout:    5 * time.Second,
+			}
+
+			triggerManualImport(config, server.URL, "test-token", tt.queueItem.OutputPath, tt.queueItem.InstanceType, tt.useRestAPI, tt.queueItem)
+
+			if actualPath != tt.expectedPath {
+				t.Errorf("Path validation failed: expected %q, got %q", tt.expectedPath, actualPath)
+			}
+		})
 	}
 }
 

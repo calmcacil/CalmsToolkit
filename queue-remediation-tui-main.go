@@ -1,4 +1,4 @@
-//go:build queueremediation
+//go:build queueremediation && manual
 
 package main
 
@@ -17,11 +17,9 @@ func main() {
 		radarrURLs   = flag.String("radarr-urls", "", "Comma-separated Radarr URLs")
 		radarrTokens = flag.String("radarr-tokens", "", "Comma-separated Radarr API tokens")
 		timeout      = flag.Duration("timeout", 30*time.Second, "HTTP request timeout")
-		dryRun       = flag.Bool("dry-run", false, "Show what would be done without making changes")
-		useRestAPI   = flag.Bool("use-rest-api", false, "Use enhanced REST API for manual imports with ID validation (recommended)")
+		useRestAPI   = flag.Bool("use-rest-api", false, "Use REST API for manual imports instead of Command API")
 		verbose      = flag.Bool("verbose", false, "Show verbose logging (API calls, filtering decisions)")
 		debug        = flag.Bool("debug", false, "Show debug logging (full request/response payloads, implies -verbose)")
-		manual       = flag.Bool("manual", false, "Launch interactive TUI mode for manual queue remediation")
 	)
 	flag.Parse()
 
@@ -41,16 +39,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Choose mode based on --manual flag
-	if *manual {
-		if err := RunTUI(config); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
-	} else {
-		if err := classifyAndRemediate(config, *dryRun); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
+	if err := RunTUI(config); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+		os.Exit(1)
 	}
 }

@@ -41,7 +41,7 @@ build:
 	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
 	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
 	$(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) arr-feed.go
-	$(GOBUILD) $(LDFLAGS) -tags queueremediation -o $(BUILD_DIR)/$(BINARY_QUEUEREMEDIATION) queue-remediation.go
+	$(GOBUILD) $(LDFLAGS) -tags queueremediation -o $(BUILD_DIR)/$(BINARY_QUEUEREMEDIATION) queue-remediation.go queue-remediation-shared.go queue-remediation-tui.go
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -54,14 +54,14 @@ build-all:
 			BIN=$${SRC}-$$GOOS-$$GOARCH; \
 			if [ "$$GOOS" = "windows" ]; then EXT=".exe"; else EXT=""; fi; \
 			case $$SRC in \
-					media-streams) TAG=mediastreams ;; \
-					media-calendar) TAG=mediacalendar ;; \
-					media-requests) TAG=mediarequests ;; \
-					arr-feed) TAG=arrfeed ;; \
-					queue-remediation) TAG=queueremediation ;; \
+					media-streams) TAG=mediastreams; EXTRA_FILES="" ;; \
+					media-calendar) TAG=mediacalendar; EXTRA_FILES="" ;; \
+					media-requests) TAG=mediarequests; EXTRA_FILES="" ;; \
+					arr-feed) TAG=arrfeed; EXTRA_FILES="" ;; \
+					queue-remediation) TAG=queueremediation; EXTRA_FILES="queue-remediation-shared.go queue-remediation-tui.go" ;; \
 				esac; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
-				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
+				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go $$EXTRA_FILES || exit 1; \
 			done; \
 		done; \
 	done

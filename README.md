@@ -87,15 +87,16 @@ make build
 
 ### Queue Remediation
 
-An intelligent tool for automatically detecting and fixing stuck queue items in Sonarr and Radarr. Identifies problematic downloads (failed imports, quality mismatches, sample files) and applies appropriate remediation actions.
+An intelligent tool for automatically detecting and fixing stuck queue items in Sonarr and Radarr. Identifies problematic downloads (failed imports, quality mismatches, sample files) and applies appropriate remediation actions using a hybrid API approach.
 
 #### Features
 
 - 🔍 **Smart Detection**: Automatically identifies stuck/blocked queue items
 - 🎯 **Targeted Actions**: Deletes failed items, triggers manual imports, or monitors active downloads
+- 🖥️ **Interactive TUI**: New terminal UI mode for manual review and action selection
 - 🛡️ **Safe Mode**: Dry-run mode shows what would happen without making changes
 - 🔄 **Multi-Instance**: Supports multiple Sonarr and Radarr servers simultaneously
-- 📊 **REST API Support**: Optional REST API mode for precise manual import control
+- 🔧 **Hybrid API Approach**: Enhanced REST API with Command API fallback for reliable manual imports
 - 🚨 **Blocklist Management**: Automatically blocklists problematic releases
 - 📝 **Detailed Logging**: Verbose and debug modes for troubleshooting
 - ⚡ **Fast**: Processes entire queue in seconds
@@ -118,17 +119,48 @@ export RADARR_TOKENS="your-api-key"
 # Run with verbose logging
 ./bin/queue-remediation -verbose
 
-# Use REST API for manual imports (more precise)
+# Use enhanced REST API for manual imports (recommended)
 ./bin/queue-remediation -use-rest-api -verbose
+
+# Interactive TUI mode for manual review
+./bin/queue-remediation -manual
 ```
+
+#### Manual Import Process
+
+The queue remediation tool uses a hybrid approach for manual imports:
+
+### Primary: Enhanced REST API
+1. **Scan**: `/api/v3/manualimport?seriesId={id}` or `/api/v3/manualimport?movieId={id}` to identify files
+2. **Filter**: Only process files matching queue item's series/movie ID
+3. **Import**: `/api/v3/manualimport` POST with required IDs and validation
+
+### Fallback: Fixed Command API
+- Uses exact `OutputPath` from queue item (not parent directories)
+- Includes `importMode` parameter for better control
+- Asynchronous execution with proper error handling
 
 #### Remediation Actions
 
 The tool intelligently classifies queue items and applies appropriate actions:
 
 - **DELETE + BLOCKLIST**: Quality/custom format mismatches, sample files, failed downloads
-- **MANUAL_IMPORT**: Completed downloads stuck in import-blocked state
+- **MANUAL_IMPORT**: Completed downloads stuck in import-blocked state (with ID validation)
 - **MONITOR**: Active downloads progressing normally (no action needed)
+
+#### TUI Mode Controls
+
+When using `-manual` flag, the interactive terminal UI provides:
+
+- **↑/↓**: Navigate between queue items
+- **Enter**: Apply suggested action for current item
+- **d**: Delete item (with blocklist)
+- **m**: Trigger manual import
+- **s**: Skip/Monitor item (no action)
+- **r**: Refresh queue data
+- **q**: Quit TUI
+
+The TUI shows detailed item information, suggested actions, and real-time feedback for all operations.
 
 #### Documentation
 

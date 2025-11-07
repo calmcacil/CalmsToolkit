@@ -317,18 +317,17 @@ Result: Cleared from queue, Sonarr searches for better release
 - `trackedDownloadState` is `importBlocked`
 - Status message: "matched to series by ID" (but didn't auto-import)
 
-**What Happens (Command API Mode - Default):**
-1. POSTs `DownloadedEpisodesScan` or `DownloadedMoviesScan` command
-2. Sonarr/Radarr scans the download folder in background
-3. Attempts to match and import files
-4. Queue item cleared on successful import
+**What Happens (Enhanced REST API Mode - with `-use-rest-api`):**
+1. **Server-Side Filtering**: `GET /api/v3/manualimport?seriesId={id}` or `?movieId={id}`
+2. **Client-Side Validation**: Verifies each file belongs to correct series/movie
+3. **Precise Import**: `POST /api/v3/manualimport` with validated files only
+4. **Detailed Reporting**: Success/failure status per file
 
-**What Happens (REST API Mode - with `-use-rest-api`):**
-1. Scans download folder: `GET /api/v3/manualimport?folder={path}`
-2. Filters out rejected files
-3. Builds import requests with explicit series/movie IDs
-4. Executes import: `POST /api/v3/manualimport`
-5. Reports success/failure per file
+**What Happens (Command API Fallback - default or when REST fails):**
+1. **Exact Path Usage**: Uses precise `OutputPath` from queue item
+2. **Background Scan**: POSTs `DownloadedEpisodesScan`/`DownloadedMoviesScan` command
+3. **Import Mode**: Includes `importMode: Move` for proper file handling
+4. **Asynchronous**: Sonarr/Radarr processes scan in background
 
 **Example:**
 ```
@@ -370,7 +369,7 @@ Result: No action, download continues
 | `-radarr-tokens` | string | `""` | Comma-separated Radarr API tokens (must match URL count) |
 | `-timeout` | duration | `30s` | HTTP request timeout (e.g., `10s`, `1m`, `90s`) |
 | `-dry-run` | bool | `false` | Show what would be done without making changes |
-| `-use-rest-api` | bool | `false` | Use REST API for manual imports (more precise) |
+| `-use-rest-api` | bool | `false` | Use enhanced REST API for manual imports with ID validation (recommended) |
 | `-verbose` | bool | `false` | Show verbose logging (API calls, filtering decisions) |
 | `-debug` | bool | `false` | Show debug logging (full payloads, implies `-verbose`) |
 
@@ -550,19 +549,19 @@ However, **always run dry-run first** to verify the tool's decisions match your 
 
 ### Q: What's the difference between Command API and REST API mode?
 
-**Command API (default):**
-- Fires a background scan command
+**Command API (default/fallback):**
+- Uses exact `OutputPath` from queue item
+- Fires background scan with `importMode: Move`
 - Sonarr/Radarr handles all matching and importing
-- Less precise but simpler
-- Fire-and-forget approach
+- Fire-and-forget approach with minimal overhead
 
-**REST API (with `-use-rest-api`):**
-- Scans folder explicitly
-- Builds import requests with series/movie IDs
-- More precise, better error reporting
-- Falls back to Command API if needed
+**Enhanced REST API (with `-use-rest-api`):**
+- Server-side filtering with `seriesId`/`movieId` parameters
+- Client-side validation prevents wrong file imports
+- Precise import with detailed success/failure reporting
+- Falls back to Command API if scan fails
 
-**Recommendation:** Use REST API if you have many stuck imports.
+**Recommendation:** Use enhanced REST API (`-use-rest-api`) for better success rates and data safety.
 
 ### Q: Can I run this on multiple machines?
 
