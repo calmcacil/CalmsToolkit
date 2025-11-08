@@ -120,7 +120,7 @@ type ImportRejection struct {
 	Type   string `json:"type"`
 }
 
-// ManualImportRequest represents a manual import request
+// ManualImportRequest represents a manual import request for individual files
 type ManualImportRequest struct {
 	Path         string       `json:"path"`
 	SeriesID     int          `json:"seriesId,omitempty"`
@@ -132,6 +132,14 @@ type ManualImportRequest struct {
 	ReleaseGroup string       `json:"releaseGroup,omitempty"`
 	DownloadID   string       `json:"downloadId,omitempty"`
 	IndexerFlags int          `json:"indexerFlags,omitempty"`
+	ImportMode   string       `json:"importMode,omitempty"`
+}
+
+// ManualImportCommand represents the command structure for manual import via Command API
+type ManualImportCommand struct {
+	Name       string                `json:"name"`
+	Files      []ManualImportRequest `json:"files"`
+	ImportMode string                `json:"importMode"`
 }
 
 // Config represents the application configuration
@@ -454,6 +462,7 @@ func triggerManualImport(config Config, url string, token string, downloadPath s
 	if useRestAPI {
 		if config.Verbose {
 			log.Printf("[INFO] Using REST API for manual import (queue item #%d: %s)", queueItem.ID, queueItem.Title)
+			log.Printf("[VERBOSE] API Call 1/3: Scanning for files (GET /api/v3/manualimport with seriesId=%d or movieId=%d)", queueItem.SeriesID, queueItem.MovieID)
 		}
 
 		scannedItems, err := scanForManualImport(config, url, token, downloadPath, queueItem, instanceType)
@@ -463,7 +472,45 @@ func triggerManualImport(config Config, url string, token string, downloadPath s
 			}
 			fmt.Fprintf(os.Stderr, "[WARN] REST API scan failed, falling back to Command API: %v\n", err)
 		} else {
+			// Log scan results
+			if config.Verbose {
+				rejectedCount := 0
+				for _, item := range scannedItems {
+					if len(item.Rejections) > 0 {
+						rejectedCount++
+					}
+				}
+				log.Printf("[VERBOSE] Scan completed: found %d total files (%d rejected, %d potentially importable)",
+					len(scannedItems), rejectedCount, len(scannedItems)-rejectedCount)
+
+				// Show first few files found for debugging
+				if config.Debug && len(scannedItems) > 0 {
+					log.Printf("[DEBUG] Files found in scan:")
+					for i, item := range scannedItems {
+						if i >= 5 {
+							log.Printf("[DEBUG]   ... and %d more files", len(scannedItems)-5)
+							break
+						}
+						status := "OK"
+						if len(item.Rejections) > 0 {
+							status = fmt.Sprintf("REJECTED: %s", formatRejections(item.Rejections))
+						}
+						log.Printf("[DEBUG]   %s [%s]", item.Name, status)
+					}
+				}
+			}
+
 			importRequests := buildManualImportRequests(config, scannedItems, queueItem, instanceType)
+
+			// Log filtering results
+			if config.Verbose {
+				log.Printf("[VERBOSE] After filtering: %d files ready for import (out of %d scanned)",
+					len(importRequests), len(scannedItems))
+				if len(importRequests) > 0 {
+					log.Printf("[VERBOSE] API Call 2/3: Executing import (POST /api/v3/command with %d files)", len(importRequests))
+				}
+			}
+
 			if len(importRequests) > 0 {
 				if err := executeManualImport(config, url, token, importRequests); err != nil {
 					if config.Verbose {
@@ -471,12 +518,17 @@ func triggerManualImport(config Config, url string, token string, downloadPath s
 					}
 					fmt.Fprintf(os.Stderr, "[WARN] REST API import failed, falling back to Command API: %v\n", err)
 				} else {
+					// Import completed successfully
+					if config.Verbose {
+						log.Printf("[VERBOSE] REST API import completed successfully for %d files", len(importRequests))
+					}
 					return nil
 				}
 			} else {
 				if config.Verbose {
-					log.Printf("[VERBOSE] No importable files found in scan results, falling back to Command API")
+					log.Printf("[VERBOSE] No importable files found in scan results (all %d files filtered out), falling back to Command API", len(scannedItems))
 				}
+				fmt.Fprintf(os.Stderr, "[WARN] No importable files found via REST API scan, falling back to Command API\n")
 			}
 		}
 	} else {
@@ -513,7 +565,9 @@ func triggerManualImport(config Config, url string, token string, downloadPath s
 	endpoint := fmt.Sprintf("%s/api/v3/command", url)
 
 	if config.Verbose {
-		log.Printf("[VERBOSE] Command API: POST %s (command=%s, path=%s, importMode=Move)", sanitizeURL(endpoint), commandName, queueItem.OutputPath)
+		log.Printf("[VERBOSE] Falling back to Command API for manual import")
+		log.Printf("[VERBOSE] API Endpoint: POST %s", sanitizeURL(endpoint))
+		log.Printf("[VERBOSE] Command: %s, Path: %s, ImportMode: Move", commandName, queueItem.OutputPath)
 	}
 
 	req, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonData)))
@@ -557,24 +611,30 @@ func scanForManualImport(config Config, url, token, folderPath string, queueItem
 
 	var endpoint string
 
-	// CRITICAL FIX: Use server-side filtering when possible to reduce data transfer and prevent wrong matches
+	// CRITICAL FIX: Sonarr/Radarr API requires BOTH folder AND seriesId/movieId parameters
+	// Using only seriesId/movieId returns 0 results (API limitation/bug)
 	if instanceType == "sonarr" && queueItem.SeriesID > 0 {
-		// Server-side filtering for Sonarr (most efficient)
-		endpoint = fmt.Sprintf("%s/api/v3/manualimport?seriesId=%d&filterExistingFiles=true", url, queueItem.SeriesID)
+		// Server-side filtering for Sonarr - MUST include folder parameter
+		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&seriesId=%d&filterExistingFiles=true",
+			url, neturl.QueryEscape(folderPath), queueItem.SeriesID)
 		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import with server-side SeriesID filter: %d", queueItem.SeriesID)
+			log.Printf("[VERBOSE] Scanning for manual import with folder + SeriesID filter: folder=%s, seriesId=%d", folderPath, queueItem.SeriesID)
+			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
 	} else if instanceType == "radarr" && queueItem.MovieID > 0 {
-		// Server-side filtering for Radarr (may have limitations)
-		endpoint = fmt.Sprintf("%s/api/v3/manualimport?movieId=%d&filterExistingFiles=true", url, queueItem.MovieID)
+		// Server-side filtering for Radarr - MUST include folder parameter
+		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&movieId=%d&filterExistingFiles=true",
+			url, neturl.QueryEscape(folderPath), queueItem.MovieID)
 		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import with server-side MovieID filter: %d", queueItem.MovieID)
+			log.Printf("[VERBOSE] Scanning for manual import with folder + MovieID filter: folder=%s, movieId=%d", folderPath, queueItem.MovieID)
+			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
 	} else {
 		// Fallback to folder-based scan (requires client-side filtering)
 		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&filterExistingFiles=true", url, neturl.QueryEscape(folderPath))
 		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import by folder (no ID available for filtering)")
+			log.Printf("[VERBOSE] Scanning for manual import by folder only (no ID available for filtering)")
+			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
 	}
 
@@ -629,27 +689,38 @@ func scanForManualImport(config Config, url, token, folderPath string, queueItem
 	return items, nil
 }
 
-// executeManualImport executes manual import requests via REST API
+// executeManualImport executes manual import requests via Command API
+// CRITICAL FIX: Sonarr expects POST /api/v3/command with ManualImport command structure
 func executeManualImport(config Config, url, token string, importRequests []ManualImportRequest) error {
 	client := &http.Client{
 		Timeout: config.Timeout,
 	}
 
-	jsonData, err := json.Marshal(importRequests)
+	// CRITICAL FIX: Wrap requests in ManualImport command structure
+	command := ManualImportCommand{
+		Name:       "ManualImport",
+		Files:      importRequests,
+		ImportMode: "auto", // auto, move, or copy
+	}
+
+	jsonData, err := json.Marshal(command)
 	if err != nil {
 		return err
 	}
 
-	endpoint := fmt.Sprintf("%s/api/v3/manualimport", url)
+	// CRITICAL FIX: Use /api/v3/command endpoint, not /api/v3/manualimport
+	endpoint := fmt.Sprintf("%s/api/v3/command", url)
 
 	if config.Verbose {
 		log.Printf("[VERBOSE] Executing manual import: POST %s (%d files)", sanitizeURL(endpoint), len(importRequests))
+		log.Printf("[VERBOSE] API Endpoint: POST %s", sanitizeURL(endpoint))
+		log.Printf("[VERBOSE] Command: ManualImport, ImportMode: auto")
 	}
 
 	if config.Debug {
 		var prettyJSON bytes.Buffer
 		if err := json.Indent(&prettyJSON, jsonData, "", "  "); err == nil {
-			log.Printf("[DEBUG] Import request payload:\n%s", prettyJSON.String())
+			log.Printf("[DEBUG] Manual import command payload:\n%s", prettyJSON.String())
 		}
 	}
 
@@ -673,60 +744,35 @@ func executeManualImport(config Config, url, token string, importRequests []Manu
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.Printf("[ERROR] Import failed: status %d - %s", resp.StatusCode, string(bodyBytes))
-		return fmt.Errorf("failed to execute manual import: status %d - %s", resp.StatusCode, string(bodyBytes))
+		log.Printf("[ERROR] Import command failed: status %d - %s", resp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("failed to execute manual import command: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	if config.Verbose {
-		log.Printf("[VERBOSE] Import response: status %d", resp.StatusCode)
+		log.Printf("[VERBOSE] Import command response: status %d", resp.StatusCode)
 	}
 
 	if config.Debug {
-		log.Printf("[DEBUG] Import response body: %s", string(bodyBytes))
+		log.Printf("[DEBUG] Import command response body: %s", string(bodyBytes))
 	}
 
-	// Parse response to detect partial failures
-	var results []ManualImportResource
-	if err := json.Unmarshal(bodyBytes, &results); err != nil {
-		log.Printf("[WARN] Manual import succeeded but couldn't parse response: %v", err)
-		log.Printf("[INFO] Successfully imported %d file(s) via REST API", len(importRequests))
+	// Command API returns a command object, not the import results directly
+	// Parse response to get command ID for tracking
+	var commandResponse map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &commandResponse); err != nil {
+		log.Printf("[WARN] Manual import command succeeded but couldn't parse response: %v", err)
+		log.Printf("[INFO] Successfully submitted manual import command for %d file(s)", len(importRequests))
 		return nil
 	}
 
-	// Analyze results for rejections
-	successCount := 0
-	failedCount := 0
-	var failedFiles []string
-
-	for _, result := range results {
-		if len(result.Rejections) > 0 {
-			failedCount++
-			failedFiles = append(failedFiles, result.Path)
-			if config.Verbose {
-				log.Printf("[VERBOSE] Import failed for %s: %s", result.Name, formatRejections(result.Rejections))
-			}
-		} else {
-			successCount++
-		}
-	}
-
-	totalCount := len(results)
-
-	// Log summary based on results
-	if failedCount == 0 {
-		log.Printf("[INFO] Successfully imported %d/%d files via REST API", successCount, totalCount)
-	} else if successCount == 0 {
-		// All files failed - return error
-		log.Printf("[ERROR] Failed to import all %d files", failedCount)
-		return fmt.Errorf("all %d files failed import validation", failedCount)
-	} else {
-		// Partial failure
-		log.Printf("[WARN] Partial import: %d/%d files succeeded, %d failed", successCount, totalCount, failedCount)
+	// Log command ID if available for tracking
+	if commandID, ok := commandResponse["id"].(float64); ok {
 		if config.Verbose {
-			for _, file := range failedFiles {
-				log.Printf("[VERBOSE]   Failed: %s", file)
-			}
+			log.Printf("[VERBOSE] Manual import command submitted with ID: %.0f", commandID)
 		}
+		log.Printf("[INFO] Successfully submitted manual import command (ID: %.0f) for %d file(s)", commandID, len(importRequests))
+	} else {
+		log.Printf("[INFO] Successfully submitted manual import command for %d file(s)", len(importRequests))
 	}
 
 	return nil
@@ -789,6 +835,7 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 				ReleaseGroup: item.ReleaseGroup,
 				DownloadID:   queueItem.DownloadId,
 				IndexerFlags: item.IndexerFlags,
+				ImportMode:   "auto", // Set default import mode
 			}
 
 			if item.SeasonNumber != nil {
@@ -800,8 +847,12 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 			}
 
 			if config.Verbose {
-				log.Printf("[VERBOSE] Accepted file %s: Series=%s, Season=%v, Episodes=%d, Quality=%s",
-					item.Path, item.Series.Title, item.SeasonNumber, len(item.Episodes), item.Quality.Quality.Name)
+				downloadIDInfo := "none"
+				if queueItem.DownloadId != "" {
+					downloadIDInfo = queueItem.DownloadId
+				}
+				log.Printf("[VERBOSE] Accepted file %s: Series=%s, Season=%v, Episodes=%d, Quality=%s, DownloadID=%s",
+					item.Path, item.Series.Title, item.SeasonNumber, len(item.Episodes), item.Quality.Quality.Name, downloadIDInfo)
 			}
 
 			requests = append(requests, req)
@@ -833,11 +884,16 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 				ReleaseGroup: item.ReleaseGroup,
 				DownloadID:   queueItem.DownloadId,
 				IndexerFlags: item.IndexerFlags,
+				ImportMode:   "auto", // Set default import mode
 			}
 
 			if config.Verbose {
-				log.Printf("[VERBOSE] Accepted file %s: Movie=%s (%d), Quality=%s",
-					item.Path, item.Movie.Title, item.Movie.Year, item.Quality.Quality.Name)
+				downloadIDInfo := "none"
+				if queueItem.DownloadId != "" {
+					downloadIDInfo = queueItem.DownloadId
+				}
+				log.Printf("[VERBOSE] Accepted file %s: Movie=%s (%d), Quality=%s, DownloadID=%s",
+					item.Path, item.Movie.Title, item.Movie.Year, item.Quality.Quality.Name, downloadIDInfo)
 			}
 
 			requests = append(requests, req)
@@ -1321,4 +1377,57 @@ func classifyAndRemediate(config Config, dryRun bool) error {
 	}
 
 	return nil
+}
+
+// TUI logger interface for dependency injection from TUI code
+type tuiLoggerInterface interface {
+	logDebug(msg string)
+	logVerbose(msg string)
+	logInfo(msg string)
+	logWarn(msg string)
+	logError(msg string)
+}
+
+// deleteQueueItemWithLogging wraps deleteQueueItem with TUI logging
+func deleteQueueItemWithLogging(config Config, logger tuiLoggerInterface, instanceURL, token string, queueID int, removeFromClient, blocklist bool) error {
+	logger.logDebug(fmt.Sprintf("Calling deleteQueueItem for queue ID %d", queueID))
+	logger.logVerbose(fmt.Sprintf("Deleting queue item %d (removeFromClient=%v, blocklist=%v)", queueID, removeFromClient, blocklist))
+
+	err := deleteQueueItem(config, instanceURL, token, queueID, removeFromClient, blocklist)
+
+	if err != nil {
+		logger.logError(fmt.Sprintf("Failed to delete queue item %d: %v", queueID, err))
+	} else {
+		logger.logInfo(fmt.Sprintf("Successfully deleted queue item %d", queueID))
+	}
+
+	return err
+}
+
+// triggerManualImportWithLogging wraps triggerManualImport with TUI logging and returns API call count
+func triggerManualImportWithLogging(config Config, logger tuiLoggerInterface, instanceURL, token, outputPath, instanceType string, useRestAPI bool, item QueueItem) (int, error) {
+	logger.logDebug(fmt.Sprintf("Calling triggerManualImport for path: %s", outputPath))
+	logger.logVerbose(fmt.Sprintf("Instance: %s (%s)", instanceURL, instanceType))
+	logger.logVerbose(fmt.Sprintf("Using REST API: %v", useRestAPI))
+
+	// Estimate API call count based on whether we're using REST API
+	// REST API: scan (1) + execute (1) = 2-3 calls
+	// Command API: command endpoint (1) = 1 call
+	estimatedCalls := 1
+	if useRestAPI {
+		estimatedCalls = 3
+		logger.logDebug("Will attempt REST API first (scan + build + execute)")
+	} else {
+		logger.logDebug("Using Command API directly")
+	}
+
+	err := triggerManualImport(config, instanceURL, token, outputPath, instanceType, useRestAPI, item)
+
+	if err != nil {
+		logger.logError(fmt.Sprintf("Manual import failed: %v", err))
+	} else {
+		logger.logInfo("Manual import completed successfully")
+	}
+
+	return estimatedCalls, err
 }

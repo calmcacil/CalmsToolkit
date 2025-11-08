@@ -12,15 +12,18 @@ import (
 
 // TUIModel represents the state of the TUI application
 type TUIModel struct {
-	config       Config
-	items        []QueueItem
-	currentIndex int
-	loading      bool
-	error        string
-	status       string
-	width        int
-	height       int
-	quitting     bool
+	config        Config
+	items         []QueueItem
+	currentIndex  int
+	loading       bool
+	error         string
+	status        string
+	width         int
+	height        int
+	quitting      bool
+	debugMessages []string
+	showDebug     bool
+	debugScroll   int
 }
 
 // TUI messages for state updates
@@ -30,9 +33,16 @@ type itemsLoadedMsg struct {
 }
 
 type actionExecutedMsg struct {
-	success bool
-	err     error
-	action  string
+	success      bool
+	err          error
+	action       string
+	debugLog     []string
+	verboseLog   []string
+	apiCallCount int
+}
+
+type debugLogMsg struct {
+	message string
 }
 
 // Styles for the TUI components
@@ -89,18 +99,36 @@ var (
 			Foreground(lipgloss.Color("#95A5A6")).
 			Padding(0, 1).
 			MarginTop(1)
+
+	debugStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#E67E22")).
+			Background(lipgloss.Color("#1C1C1C")).
+			Padding(0, 1)
+
+	verboseStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#3498DB")).
+			Padding(0, 1)
+
+	debugHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("#FAFAFA")).
+				Background(lipgloss.Color("#E67E22")).
+				Padding(0, 1)
 )
 
 // InitialModel creates the initial TUI model
 func InitialModel(config Config) TUIModel {
 	return TUIModel{
-		config:       config,
-		items:        []QueueItem{},
-		currentIndex: 0,
-		loading:      true,
-		status:       "Loading queue items...",
-		width:        80,
-		height:       24,
+		config:        config,
+		items:         []QueueItem{},
+		currentIndex:  0,
+		loading:       true,
+		status:        "Loading queue items...",
+		width:         80,
+		height:        24,
+		debugMessages: []string{},
+		showDebug:     config.Verbose || config.Debug,
+		debugScroll:   0,
 	}
 }
 
@@ -128,11 +156,27 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentIndex++
 			}
 
+		case tea.KeyPgUp:
+			// Scroll debug log up
+			if m.showDebug && m.debugScroll > 0 {
+				m.debugScroll--
+			}
+
+		case tea.KeyPgDown:
+			// Scroll debug log down
+			if m.showDebug && len(m.debugMessages) > 10 {
+				maxScroll := len(m.debugMessages) - 10
+				if m.debugScroll < maxScroll {
+					m.debugScroll++
+				}
+			}
+
 		case tea.KeyEnter:
 			if len(m.items) > 0 {
 				m.loading = true
 				m.status = "Executing suggested action..."
 				m.error = ""
+				m.debugMessages = []string{} // Clear previous debug logs
 				return m, executeSuggestedAction(m.config, m.items[m.currentIndex])
 			}
 
@@ -144,6 +188,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.loading = true
 						m.status = "Deleting queue item..."
 						m.error = ""
+						m.debugMessages = []string{} // Clear previous debug logs
 						return m, executeAction(m.config, m.items[m.currentIndex], "delete")
 					}
 				case 'm':
@@ -151,6 +196,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.loading = true
 						m.status = "Executing manual import..."
 						m.error = ""
+						m.debugMessages = []string{} // Clear previous debug logs
 						return m, executeAction(m.config, m.items[m.currentIndex], "manual_import")
 					}
 				case 's':
@@ -158,6 +204,7 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.loading = true
 						m.status = "Skipping item..."
 						m.error = ""
+						m.debugMessages = []string{} // Clear previous debug logs
 						return m, executeAction(m.config, m.items[m.currentIndex], "monitor")
 					}
 				case 'r':
@@ -168,6 +215,14 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case 'q':
 					m.quitting = true
 					return m, tea.Quit
+				case 'D':
+					// Toggle debug view
+					m.showDebug = !m.showDebug
+					if m.showDebug {
+						m.status = "Debug view enabled"
+					} else {
+						m.status = "Debug view disabled"
+					}
 				}
 			}
 		}
@@ -191,10 +246,27 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionExecutedMsg:
 		m.loading = false
+
+		// Append debug and verbose logs to debugMessages
+		if len(msg.debugLog) > 0 || len(msg.verboseLog) > 0 {
+			m.debugMessages = append(m.debugMessages, msg.verboseLog...)
+			m.debugMessages = append(m.debugMessages, msg.debugLog...)
+			// Keep only last 500 messages to prevent memory issues
+			if len(m.debugMessages) > 500 {
+				m.debugMessages = m.debugMessages[len(m.debugMessages)-500:]
+			}
+		}
+
 		if msg.err != nil {
 			m.error = fmt.Sprintf("Action '%s' failed: %v", msg.action, msg.err)
+			if msg.apiCallCount > 0 {
+				m.error += fmt.Sprintf(" (%d API calls made)", msg.apiCallCount)
+			}
 		} else {
 			m.status = fmt.Sprintf("Successfully executed: %s", msg.action)
+			if msg.apiCallCount > 0 {
+				m.status += fmt.Sprintf(" (%d API calls)", msg.apiCallCount)
+			}
 			// Remove the item from the list after successful action
 			if m.currentIndex < len(m.items) {
 				m.items = append(m.items[:m.currentIndex], m.items[m.currentIndex+1:]...)
@@ -205,6 +277,12 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.items) == 0 {
 				m.status = "All items processed successfully"
 			}
+		}
+
+	case debugLogMsg:
+		m.debugMessages = append(m.debugMessages, msg.message)
+		if len(m.debugMessages) > 500 {
+			m.debugMessages = m.debugMessages[len(m.debugMessages)-500:]
 		}
 	}
 
@@ -297,12 +375,58 @@ func (m TUIModel) View() string {
 		content.WriteString("\n")
 	}
 
+	// Debug/Verbose output section (if enabled and has messages)
+	if m.showDebug && len(m.debugMessages) > 0 {
+		content.WriteString("\n")
+		content.WriteString(debugHeaderStyle.Render("Debug Output (PgUp/PgDn to scroll)"))
+		content.WriteString("\n")
+
+		// Calculate how many lines we can show
+		maxLines := 10
+		startIdx := m.debugScroll
+		endIdx := startIdx + maxLines
+		if endIdx > len(m.debugMessages) {
+			endIdx = len(m.debugMessages)
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			msg := m.debugMessages[i]
+			// Color code based on message type
+			if strings.Contains(msg, "[DEBUG]") {
+				content.WriteString(debugStyle.Render(msg))
+			} else if strings.Contains(msg, "[VERBOSE]") {
+				content.WriteString(verboseStyle.Render(msg))
+			} else if strings.Contains(msg, "[ERROR]") {
+				content.WriteString(errorStyle.Render(msg))
+			} else if strings.Contains(msg, "[WARN]") {
+				content.WriteString(warningStyle.Render(msg))
+			} else {
+				content.WriteString(infoStyle.Render(msg))
+			}
+			content.WriteString("\n")
+		}
+
+		if len(m.debugMessages) > maxLines {
+			scrollInfo := fmt.Sprintf("Showing %d-%d of %d messages", startIdx+1, endIdx, len(m.debugMessages))
+			content.WriteString(helpStyle.Render(scrollInfo))
+			content.WriteString("\n")
+		}
+	}
+
 	// Action panel
 	content.WriteString(actionStyle.Render("Actions:"))
 	content.WriteString("\n")
 	content.WriteString(helpStyle.Render("[Enter] Apply Suggested  [d] Delete  [m] Manual Import"))
 	content.WriteString("\n")
-	content.WriteString(helpStyle.Render("[s] Skip/Monitor  [r] Refresh  [q] Quit"))
+	debugToggle := "[D] Toggle Debug"
+	if m.config.Verbose || m.config.Debug {
+		if m.showDebug {
+			debugToggle = "[D] Hide Debug ✓"
+		} else {
+			debugToggle = "[D] Show Debug"
+		}
+	}
+	content.WriteString(helpStyle.Render(fmt.Sprintf("[s] Skip/Monitor  [r] Refresh  %s  [q] Quit", debugToggle)))
 
 	return content.String()
 }
@@ -345,26 +469,67 @@ func executeSuggestedAction(config Config, item QueueItem) tea.Cmd {
 func executeAction(config Config, item QueueItem, action string) tea.Cmd {
 	return func() tea.Msg {
 		var err error
+		var debugLog []string
+		var verboseLog []string
+		apiCallCount := 0
+
+		// Create a custom logger that captures output
+		logger := &tuiLogger{
+			debugLog:   &debugLog,
+			verboseLog: &verboseLog,
+			config:     config,
+		}
 
 		token, tokenErr := getTokenForInstance(config, item.InstanceURL, item.InstanceType)
 		if tokenErr != nil {
-			return actionExecutedMsg{success: false, err: tokenErr, action: action}
+			return actionExecutedMsg{
+				success:      false,
+				err:          tokenErr,
+				action:       action,
+				debugLog:     debugLog,
+				verboseLog:   verboseLog,
+				apiCallCount: apiCallCount,
+			}
 		}
 
 		switch action {
 		case "delete":
 			_, shouldBlocklist, _ := mapStatusToAction(item)
-			err = deleteQueueItem(config, item.InstanceURL, token, item.ID, true, shouldBlocklist)
+			logger.logVerbose(fmt.Sprintf("Deleting queue item #%d: %s (blocklist=%v)", item.ID, item.Title, shouldBlocklist))
+			apiCallCount++
+			err = deleteQueueItemWithLogging(config, logger, item.InstanceURL, token, item.ID, true, shouldBlocklist)
 
 		case "manual_import":
-			err = triggerManualImport(config, item.InstanceURL, token, item.OutputPath, item.InstanceType, config.UseRestAPI, item)
+			logger.logVerbose(fmt.Sprintf("Triggering manual import for queue item #%d: %s", item.ID, item.Title))
+			logger.logVerbose(fmt.Sprintf("Output path: %s", item.OutputPath))
+			logger.logVerbose(fmt.Sprintf("Instance type: %s", item.InstanceType))
+			logger.logVerbose(fmt.Sprintf("Use REST API: %v", config.UseRestAPI))
+
+			if item.SeriesID > 0 {
+				logger.logVerbose(fmt.Sprintf("Series ID: %d", item.SeriesID))
+			}
+			if item.MovieID > 0 {
+				logger.logVerbose(fmt.Sprintf("Movie ID: %d", item.MovieID))
+			}
+
+			count, importErr := triggerManualImportWithLogging(config, logger, item.InstanceURL, token, item.OutputPath, item.InstanceType, config.UseRestAPI, item)
+			apiCallCount = count
+			err = importErr
 
 		case "monitor":
 			// For monitor/skip, we just remove it from the list
+			logger.logVerbose(fmt.Sprintf("Monitoring queue item #%d: %s (no action taken)", item.ID, item.Title))
 			err = nil
 		}
 
-		return actionExecutedMsg{success: err == nil, err: err, action: action}
+		return actionExecutedMsg{
+			success:      err == nil,
+			err:          err,
+			action:       action,
+			debugLog:     debugLog,
+			verboseLog:   verboseLog,
+			apiCallCount: apiCallCount,
+		}
 	}
 }
 
@@ -384,4 +549,40 @@ func RunTUI(config Config) error {
 	}
 
 	return nil
+}
+
+// tuiLogger captures log messages for display in TUI
+type tuiLogger struct {
+	debugLog   *[]string
+	verboseLog *[]string
+	config     Config
+}
+
+func (l *tuiLogger) logDebug(msg string) {
+	if l.config.Debug {
+		formatted := fmt.Sprintf("[DEBUG] %s", msg)
+		*l.debugLog = append(*l.debugLog, formatted)
+	}
+}
+
+func (l *tuiLogger) logVerbose(msg string) {
+	if l.config.Verbose || l.config.Debug {
+		formatted := fmt.Sprintf("[VERBOSE] %s", msg)
+		*l.verboseLog = append(*l.verboseLog, formatted)
+	}
+}
+
+func (l *tuiLogger) logInfo(msg string) {
+	formatted := fmt.Sprintf("[INFO] %s", msg)
+	*l.verboseLog = append(*l.verboseLog, formatted)
+}
+
+func (l *tuiLogger) logWarn(msg string) {
+	formatted := fmt.Sprintf("[WARN] %s", msg)
+	*l.verboseLog = append(*l.verboseLog, formatted)
+}
+
+func (l *tuiLogger) logError(msg string) {
+	formatted := fmt.Sprintf("[ERROR] %s", msg)
+	*l.verboseLog = append(*l.verboseLog, formatted)
 }
