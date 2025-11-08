@@ -87,36 +87,37 @@ make build
 
 ### Queue Remediation
 
-An intelligent tool for automatically detecting and fixing stuck queue items in Sonarr and Radarr. Identifies problematic downloads (failed imports, quality mismatches, sample files) and applies appropriate remediation actions using a hybrid API approach.
+An intelligent tool for automatically detecting and fixing stuck queue items in Sonarr and Radarr. Identifies problematic downloads (failed imports, quality mismatches, sample files) and applies appropriate remediation actions using a corrected API implementation based on live Sonarr testing.
 
 #### Features
 
-- 🔍 **Smart Detection**: Automatically identifies stuck/blocked queue items
+- 🔍 **Smart Detection**: Automatically identifies stuck/blocked queue items using advanced status message parsing
 - 🎯 **Targeted Actions**: Deletes failed items, triggers manual imports, or monitors active downloads
-- 🖥️ **Interactive TUI**: New terminal UI mode for manual review and action selection
+- 🖥️ **Interactive TUI**: Full-featured terminal UI mode for manual review and action selection
 - 🛡️ **Safe Mode**: Dry-run mode shows what would happen without making changes
 - 🔄 **Multi-Instance**: Supports multiple Sonarr and Radarr servers simultaneously
-- 🔧 **Hybrid API Approach**: Enhanced REST API with Command API fallback for reliable manual imports
+- 🔧 **Corrected API Implementation**: Fixed to match Sonarr's actual API behavior with proper Command structure
 - 🚨 **Blocklist Management**: Automatically blocklists problematic releases
-- 📝 **Detailed Logging**: Verbose and debug modes for troubleshooting
-- ⚡ **Fast**: Processes entire queue in seconds
+- 📝 **Detailed Logging**: Verbose and debug modes with comprehensive API call tracking
+- ⚡ **Fast**: Processes entire queue in seconds with parallel instance handling
+- 🔗 **DownloadId Support**: Properly maps download IDs from queue items to import requests
 
 #### Quick Start
 
 ```bash
-# Build the binary
+# Build binary
 make build
 
-# Set up configuration
-export SONARR_URLS="http://localhost:8989"
-export SONARR_TOKENS="your-api-key"
+# Set up configuration (multiple instances supported)
+export SONARR_URLS="http://localhost:8989,http://sonarr2:8989"
+export SONARR_TOKENS="token1,token2"
 export RADARR_URLS="http://localhost:7878"
 export RADARR_TOKENS="your-api-key"
 
 # Dry-run mode (shows what would happen without making changes)
 ./bin/queue-remediation -dry-run
 
-# Run with verbose logging
+# Run with verbose logging to see API call details
 ./bin/queue-remediation -verbose
 
 # Use enhanced REST API for manual imports (recommended)
@@ -124,21 +125,44 @@ export RADARR_TOKENS="your-api-key"
 
 # Interactive TUI mode for manual review
 ./bin/queue-remediation -manual
+
+# Debug mode for troubleshooting (shows full API payloads)
+./bin/queue-remediation -debug -verbose
 ```
 
 #### Manual Import Process
 
-The queue remediation tool uses a hybrid approach for manual imports:
+The queue remediation tool uses a corrected hybrid approach based on live Sonarr API analysis:
 
-### Primary: Enhanced REST API
-1. **Scan**: `/api/v3/manualimport?seriesId={id}` or `/api/v3/manualimport?movieId={id}` to identify files
-2. **Filter**: Only process files matching queue item's series/movie ID
-3. **Import**: `/api/v3/manualimport` POST with required IDs and validation
+### Primary: Enhanced REST API (Fixed)
+1. **Scan**: `/api/v3/manualimport?folder={path}&seriesId={id}` or `/api/v3/manualimport?folder={path}&movieId={id}` 
+2. **Filter**: Only process files matching queue item's series/movie ID with proper validation
+3. **Import**: `/api/v3/command` POST with `ManualImport` command structure (corrected endpoint)
 
-### Fallback: Fixed Command API
-- Uses exact `OutputPath` from queue item (not parent directories)
-- Includes `importMode` parameter for better control
-- Asynchronous execution with proper error handling
+### Fallback: Command API (Enhanced)
+- Uses `ManualImportCommand` wrapper with proper `name`, `files`, and `importMode` fields
+- Includes `downloadId` parameter mapping from queue items
+- Asynchronous execution with command ID tracking
+
+#### API Structure Fixes
+
+Based on live testing of Sonarr's web interface, the tool now correctly implements:
+
+```json
+{
+  "name": "ManualImport",
+  "files": [
+    {
+      "path": "/path/to/file.mkv",
+      "seriesId": 123,
+      "movieId": 456,
+      "downloadId": "queue-download-id",
+      "importMode": "auto"
+    }
+  ],
+  "importMode": "auto"
+}
+```
 
 #### Remediation Actions
 
@@ -154,19 +178,29 @@ When using `-manual` flag, the interactive terminal UI provides:
 
 - **↑/↓**: Navigate between queue items
 - **Enter**: Apply suggested action for current item
-- **d**: Delete item (with blocklist)
+- **d**: Delete item (with blocklist option)
 - **m**: Trigger manual import
 - **s**: Skip/Monitor item (no action)
-- **r**: Refresh queue data
+- **r**: Refresh queue data from all instances
 - **q**: Quit TUI
 
-The TUI shows detailed item information, suggested actions, and real-time feedback for all operations.
+The TUI shows detailed item information, suggested actions, API call progress, and real-time feedback for all operations.
+
+#### Recent Improvements
+
+- **✅ Fixed API Endpoint**: Changed from incorrect `/api/v3/manualimport` to correct `/api/v3/command`
+- **✅ Correct Command Structure**: Implemented proper `ManualImportCommand` wrapper matching Sonarr's API
+- **✅ DownloadId Support**: Added proper mapping from queue items to import requests
+- **✅ Radarr Fixes**: Corrected MovieID usage and removed episode-specific fields for movies
+- **✅ Enhanced Logging**: Added comprehensive API call tracking and debug output
+- **✅ Full Test Coverage**: 800+ lines of tests validating all API fixes
 
 #### Documentation
 
 - **[README_QUEUEFIX.md](docs/README_QUEUEFIX.md)** - Complete usage guide and troubleshooting
 - **[QUEUE_REMEDIATION_IMPLEMENTATION_GUIDE.md](docs/QUEUE_REMEDIATION_IMPLEMENTATION_GUIDE.md)** - Technical implementation details
 - **[SONARR_RADARR_QUEUE_API.md](docs/SONARR_RADARR_QUEUE_API.md)** - API reference
+- **[MANUAL_IMPORT_API_RESEARCH.md](docs/MANUAL_IMPORT_API_RESEARCH.md)** - Live API testing results and fixes
 
 ### Plex Streams Monitor
 
