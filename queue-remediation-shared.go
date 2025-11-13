@@ -611,29 +611,24 @@ func scanForManualImport(config Config, url, token, folderPath string, queueItem
 
 	var endpoint string
 
-	// CRITICAL FIX: Sonarr/Radarr API requires BOTH folder AND seriesId/movieId parameters
-	// Using only seriesId/movieId returns 0 results (API limitation/bug)
-	if instanceType == "sonarr" && queueItem.SeriesID > 0 {
-		// Server-side filtering for Sonarr - MUST include folder parameter
-		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&seriesId=%d&filterExistingFiles=true",
-			url, neturl.QueryEscape(folderPath), queueItem.SeriesID)
+	// CRITICAL FIX: Use downloadId as primary parameter per HAR investigation
+	// Web UI uses downloadId to track downloads - this is what makes scan work correctly
+	// Reference: /docs/HAR_INVESTIGATION.md lines 100-220 (real-world Sonarr web UI behavior)
+	if queueItem.DownloadId != "" {
+		// Primary path: Use downloadId (matches Sonarr web UI exactly)
+		// This is the correct approach confirmed by HAR analysis of actual web UI traffic
+		endpoint = fmt.Sprintf("%s/api/v3/manualimport?downloadId=%s&filterExistingFiles=false",
+			url, neturl.QueryEscape(queueItem.DownloadId))
 		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import with folder + SeriesID filter: folder=%s, seriesId=%d", folderPath, queueItem.SeriesID)
-			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
-		}
-	} else if instanceType == "radarr" && queueItem.MovieID > 0 {
-		// Server-side filtering for Radarr - MUST include folder parameter
-		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&movieId=%d&filterExistingFiles=true",
-			url, neturl.QueryEscape(folderPath), queueItem.MovieID)
-		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import with folder + MovieID filter: folder=%s, movieId=%d", folderPath, queueItem.MovieID)
+			log.Printf("[VERBOSE] Scanning for manual import with downloadId: %s", queueItem.DownloadId)
 			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
 	} else {
-		// Fallback to folder-based scan (requires client-side filtering)
-		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&filterExistingFiles=true", url, neturl.QueryEscape(folderPath))
+		// Fallback: Use folder if downloadId unavailable (edge case for non-standard downloads)
+		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&filterExistingFiles=false",
+			url, neturl.QueryEscape(folderPath))
 		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import by folder only (no ID available for filtering)")
+			log.Printf("[VERBOSE] Scanning for manual import by folder (downloadId unavailable): folder=%s", folderPath)
 			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
 	}

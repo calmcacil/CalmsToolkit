@@ -62,3 +62,6 @@ coverage.html
 *.jpeg
 *.gif
 WarpPreview*
+
+# HAR files (contain sensitive API keys and system paths)
+*.har

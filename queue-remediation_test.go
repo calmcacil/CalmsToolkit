@@ -4058,7 +4058,7 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 					t.Errorf("Expected 2 requests (scan + command), got %d", len(*requests))
 				}
 
-				// First request: GET scan with server-side filtering
+				// First request: GET scan with downloadId parameter
 				scanReq := (*requests)[0]
 				if scanReq.Method != "GET" {
 					t.Errorf("Expected GET for scan, got %s", scanReq.Method)
@@ -4066,8 +4066,8 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 				if !strings.Contains(scanReq.URL.String(), "/api/v3/manualimport") {
 					t.Errorf("Expected scan endpoint, got %s", scanReq.URL.String())
 				}
-				if !strings.Contains(scanReq.URL.String(), "seriesId=42") {
-					t.Errorf("Expected seriesId=42 in scan URL, got %s", scanReq.URL.String())
+				if !strings.Contains(scanReq.URL.String(), "downloadId=test123") {
+					t.Errorf("Expected downloadId=test123 in scan URL, got %s", scanReq.URL.String())
 				}
 
 				// Second request: POST command with ManualImport structure
@@ -4280,11 +4280,12 @@ func TestScanForManualImportServerSideFiltering(t *testing.T) {
 		validateRequest func(*testing.T, *http.Request)
 	}{
 		{
-			name:         "Sonarr with seriesId server-side filtering",
+			name:         "Sonarr with downloadId parameter",
 			folderPath:   "/downloads/Test.Series.S01E01",
 			instanceType: "sonarr",
 			queueItem: QueueItem{
-				SeriesID: 42,
+				SeriesID:   42,
+				DownloadId: "sonarr-test-download-42",
 			},
 			statusCode: http.StatusOK,
 			responseBody: `[
@@ -4299,24 +4300,26 @@ func TestScanForManualImportServerSideFiltering(t *testing.T) {
 			]`,
 			expectError: false,
 			validateRequest: func(t *testing.T, r *http.Request) {
-				// CRITICAL FIX: Must include both folder AND seriesId parameters
-				if !strings.Contains(r.URL.String(), "folder=") {
-					t.Error("Missing folder parameter")
+				// Should use downloadId as primary parameter (per HAR investigation)
+				if !strings.Contains(r.URL.String(), "downloadId=sonarr-test-download-42") {
+					t.Error("Missing downloadId parameter")
 				}
-				if !strings.Contains(r.URL.String(), "seriesId=42") {
-					t.Error("Missing seriesId=42 parameter")
+				if !strings.Contains(r.URL.String(), "filterExistingFiles=false") {
+					t.Error("Missing filterExistingFiles=false parameter")
 				}
-				if !strings.Contains(r.URL.String(), "filterExistingFiles=true") {
-					t.Error("Missing filterExistingFiles=true parameter")
+				// Should NOT have folder when downloadId is present
+				if strings.Contains(r.URL.String(), "folder=") {
+					t.Error("Should not have folder parameter when downloadId is present")
 				}
 			},
 		},
 		{
-			name:         "Radarr with movieId server-side filtering",
+			name:         "Radarr with downloadId parameter",
 			folderPath:   "/downloads/Test.Movie.2024",
 			instanceType: "radarr",
 			queueItem: QueueItem{
-				MovieID: 123,
+				MovieID:    123,
+				DownloadId: "radarr-test-download-123",
 			},
 			statusCode: http.StatusOK,
 			responseBody: `[
@@ -4329,55 +4332,58 @@ func TestScanForManualImportServerSideFiltering(t *testing.T) {
 			]`,
 			expectError: false,
 			validateRequest: func(t *testing.T, r *http.Request) {
-				// CRITICAL FIX: Must include both folder AND movieId parameters
-				if !strings.Contains(r.URL.String(), "folder=") {
-					t.Error("Missing folder parameter")
+				// Should use downloadId as primary parameter (per HAR investigation)
+				if !strings.Contains(r.URL.String(), "downloadId=radarr-test-download-123") {
+					t.Error("Missing downloadId parameter")
 				}
-				if !strings.Contains(r.URL.String(), "movieId=123") {
-					t.Error("Missing movieId=123 parameter")
+				if !strings.Contains(r.URL.String(), "filterExistingFiles=false") {
+					t.Error("Missing filterExistingFiles=false parameter")
 				}
-				if !strings.Contains(r.URL.String(), "filterExistingFiles=true") {
-					t.Error("Missing filterExistingFiles=true parameter")
+				// Should NOT have folder when downloadId is present
+				if strings.Contains(r.URL.String(), "folder=") {
+					t.Error("Should not have folder parameter when downloadId is present")
 				}
 			},
 		},
 		{
-			name:         "Fallback to folder-only scan (no ID available)",
+			name:         "Fallback to folder-only scan (no downloadId available)",
 			folderPath:   "/downloads/unknown",
 			instanceType: "sonarr",
 			queueItem: QueueItem{
-				SeriesID: 0, // No ID available
+				SeriesID:   0,  // No ID available
+				DownloadId: "", // No downloadId - should fall back to folder
 			},
 			statusCode:   http.StatusOK,
 			responseBody: `[]`,
 			expectError:  false,
 			validateRequest: func(t *testing.T, r *http.Request) {
-				// Should only have folder parameter when no ID available
+				// Should only have folder parameter when no downloadId available
 				if !strings.Contains(r.URL.String(), "folder=") {
 					t.Error("Missing folder parameter")
 				}
-				if strings.Contains(r.URL.String(), "seriesId=") {
-					t.Error("Should not have seriesId when no ID available")
+				if strings.Contains(r.URL.String(), "downloadId=") {
+					t.Error("Should not have downloadId when none available")
 				}
-				if !strings.Contains(r.URL.String(), "filterExistingFiles=true") {
-					t.Error("Missing filterExistingFiles=true parameter")
+				if !strings.Contains(r.URL.String(), "filterExistingFiles=false") {
+					t.Error("Missing filterExistingFiles=false parameter")
 				}
 			},
 		},
 		{
-			name:         "URL encoding of folder path",
+			name:         "URL encoding of downloadId",
 			folderPath:   "/downloads/Series Name With Spaces.S01E01",
 			instanceType: "sonarr",
 			queueItem: QueueItem{
-				SeriesID: 42,
+				SeriesID:   42,
+				DownloadId: "download-id-with spaces & special=chars",
 			},
 			statusCode:   http.StatusOK,
 			responseBody: `[]`,
 			expectError:  false,
 			validateRequest: func(t *testing.T, r *http.Request) {
-				// Should properly URL-encode the folder path
-				if !strings.Contains(r.URL.String(), "Series+Name+With+Spaces") {
-					t.Errorf("Expected URL-encoded folder path, got %s", r.URL.String())
+				// Should properly URL-encode the downloadId
+				if !strings.Contains(r.URL.String(), "downloadId=download-id-with") {
+					t.Errorf("Expected URL-encoded downloadId, got %s", r.URL.String())
 				}
 			},
 		},
@@ -4497,6 +4503,7 @@ func TestHybridManualImportWorkflow(t *testing.T) {
 				InstanceType: "sonarr",
 				SeriesID:     42,
 				OutputPath:   "/downloads/Test.Series.S01E01",
+				DownloadId:   "test-download-123",
 			},
 			scanResponse: `[
 				{
@@ -4518,13 +4525,13 @@ func TestHybridManualImportWorkflow(t *testing.T) {
 					t.Errorf("Expected 2 requests, got %d", len(*requests))
 				}
 
-				// First request should be scan with seriesId filter
+				// First request should be scan with downloadId parameter
 				scanReq := (*requests)[0]
 				if scanReq.Method != "GET" {
 					t.Errorf("Expected GET for scan, got %s", scanReq.Method)
 				}
-				if !strings.Contains(scanReq.URL.String(), "seriesId=42") {
-					t.Errorf("Expected seriesId=42 in scan URL, got %s", scanReq.URL.String())
+				if !strings.Contains(scanReq.URL.String(), "downloadId=test-download-123") {
+					t.Errorf("Expected downloadId=test-download-123 in scan URL, got %s", scanReq.URL.String())
 				}
 
 				// Second request should be import
