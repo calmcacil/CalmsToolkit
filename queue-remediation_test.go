@@ -5467,8 +5467,56 @@ func TestValidateTitleMatch(t *testing.T) {
 			name:          "Minor typo",
 			queueTitle:    "Spider-Man",
 			scannedTitle:  "Spiderman",
+			expectMatch:   true, // Should pass: high character similarity (90%+)
+			minSimilarity: 60.0,
+			maxSimilarity: 95.0,
+		},
+		{
+			name:          "False positive - Cruel Summer vs Last Summer",
+			queueTitle:    "Cruel Summer",
+			scannedTitle:  "Last Summer",
+			expectMatch:   false,
+			minSimilarity: 0.0,
+			maxSimilarity: 80.0, // Should fail with new algorithm
+		},
+		{
+			name:          "False positive - The Office vs Office Space",
+			queueTitle:    "The Office",
+			scannedTitle:  "Office Space",
+			expectMatch:   false,
+			minSimilarity: 0.0,
+			maxSimilarity: 80.0,
+		},
+		{
+			name:          "True match - The Matrix vs Matrix",
+			queueTitle:    "The Matrix",
+			scannedTitle:  "Matrix",
+			expectMatch:   true, // Should pass: 100% token similarity after filtering "the"
+			minSimilarity: 50.0,
+			maxSimilarity: 90.0,
+		},
+		{
+			name:          "True match - hyphen variation",
+			queueTitle:    "Spider-Man: No Way Home",
+			scannedTitle:  "SpiderMan No Way Home",
+			expectMatch:   true, // High character similarity despite token difference
+			minSimilarity: 80.0,
+			maxSimilarity: 85.0,
+		},
+		{
+			name:          "False positive - Avatar vs Avatar The Way of Water",
+			queueTitle:    "Avatar",
+			scannedTitle:  "Avatar The Way of Water",
+			expectMatch:   false,
+			minSimilarity: 0.0,
+			maxSimilarity: 80.0,
+		},
+		{
+			name:          "True match - case and punctuation",
+			queueTitle:    "THE WALKING DEAD",
+			scannedTitle:  "The Walking Dead",
 			expectMatch:   true,
-			minSimilarity: 85.0,
+			minSimilarity: 100.0,
 			maxSimilarity: 100.0,
 		},
 	}

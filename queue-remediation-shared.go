@@ -1851,11 +1851,14 @@ func min(a, b, c int) int {
 	return c
 }
 
-// calculateSimilarity computes percentage similarity between two strings
+// calculateSimilarity computes weighted similarity between two strings
+// using character-level (60%), token-level (30%), and length ratio (10%) scoring
 func calculateSimilarity(s1, s2 string) float64 {
 	if s1 == s2 {
 		return 100.0
 	}
+
+	// Component 1: Character-level similarity (Levenshtein) - 60% weight
 	maxLen := len(s1)
 	if len(s2) > maxLen {
 		maxLen = len(s2)
@@ -1864,32 +1867,175 @@ func calculateSimilarity(s1, s2 string) float64 {
 		return 100.0
 	}
 	distance := levenshteinDistance(s1, s2)
-	return (1.0 - float64(distance)/float64(maxLen)) * 100.0
+	charSimilarity := (1.0 - float64(distance)/float64(maxLen)) * 100.0
+
+	// Component 2: Token-level similarity (Jaccard) - 30% weight
+	tokenSimilarity := calculateTokenSimilarity(s1, s2)
+
+	// Component 3: Length ratio - 10% weight
+	lengthRatio := calculateLengthRatio(s1, s2)
+
+	// Weighted final score
+	finalScore := (0.6 * charSimilarity) + (0.3 * tokenSimilarity) + (0.1 * lengthRatio)
+
+	return finalScore
 }
 
-// validateTitleMatch checks if queue title matches scanned title with similarity threshold
+// calculateTokenSimilarity computes word-level overlap using Jaccard similarity
+// Filters out common articles and stop words before comparison
+func calculateTokenSimilarity(s1, s2 string) float64 {
+	// Common articles and stop words to ignore
+	stopWords := map[string]bool{
+		"the": true, "a": true, "an": true,
+	}
+
+	// Split into tokens and filter stop words
+	tokens1Raw := strings.Fields(s1)
+	tokens2Raw := strings.Fields(s2)
+
+	tokens1 := []string{}
+	for _, t := range tokens1Raw {
+		if !stopWords[t] {
+			tokens1 = append(tokens1, t)
+		}
+	}
+
+	tokens2 := []string{}
+	for _, t := range tokens2Raw {
+		if !stopWords[t] {
+			tokens2 = append(tokens2, t)
+		}
+	}
+
+	if len(tokens1) == 0 && len(tokens2) == 0 {
+		return 100.0
+	}
+	if len(tokens1) == 0 || len(tokens2) == 0 {
+		return 0.0
+	}
+
+	// Build sets for intersection/union calculation
+	set1 := make(map[string]bool)
+	for _, token := range tokens1 {
+		set1[token] = true
+	}
+
+	set2 := make(map[string]bool)
+	for _, token := range tokens2 {
+		set2[token] = true
+	}
+
+	// Calculate intersection
+	intersection := 0
+	for token := range set1 {
+		if set2[token] {
+			intersection++
+		}
+	}
+
+	// Calculate union
+	union := len(set1)
+	for token := range set2 {
+		if !set1[token] {
+			union++
+		}
+	}
+
+	if union == 0 {
+		return 100.0
+	}
+
+	return (float64(intersection) / float64(union)) * 100.0
+}
+
+// calculateLengthRatio computes length similarity between two strings
+func calculateLengthRatio(s1, s2 string) float64 {
+	len1 := len(s1)
+	len2 := len(s2)
+
+	if len1 == 0 && len2 == 0 {
+		return 100.0
+	}
+	if len1 == 0 || len2 == 0 {
+		return 0.0
+	}
+
+	minLen := float64(len1)
+	maxLen := float64(len2)
+	if len1 > len2 {
+		minLen = float64(len2)
+		maxLen = float64(len1)
+	}
+
+	return (minLen / maxLen) * 100.0
+}
+
+// validateTitleMatch checks if queue title matches scanned title with hybrid similarity logic
 func validateTitleMatch(queueTitle, scannedTitle string) TitleMatchResult {
 	normalized1 := normalizeTitle(queueTitle)
 	normalized2 := normalizeTitle(scannedTitle)
-	similarity := calculateSimilarity(normalized1, normalized2)
+
+	// Calculate individual components
+	maxLen := len(normalized1)
+	if len(normalized2) > maxLen {
+		maxLen = len(normalized2)
+	}
+	if maxLen == 0 {
+		return TitleMatchResult{
+			QueueTitle:        queueTitle,
+			ScannedTitle:      scannedTitle,
+			NormalizedQueue:   normalized1,
+			NormalizedScanned: normalized2,
+			Similarity:        100.0,
+			IsMatch:           true,
+			Reason:            "Both titles empty",
+		}
+	}
+
+	distance := levenshteinDistance(normalized1, normalized2)
+	charSimilarity := (1.0 - float64(distance)/float64(maxLen)) * 100.0
+	tokenSimilarity := calculateTokenSimilarity(normalized1, normalized2)
+	lengthRatio := calculateLengthRatio(normalized1, normalized2)
+
+	// Weighted final score (used as fallback)
+	finalScore := (0.6 * charSimilarity) + (0.3 * tokenSimilarity) + (0.1 * lengthRatio)
 
 	result := TitleMatchResult{
 		QueueTitle:        queueTitle,
 		ScannedTitle:      scannedTitle,
 		NormalizedQueue:   normalized1,
 		NormalizedScanned: normalized2,
-		Similarity:        similarity,
+		Similarity:        finalScore,
 	}
 
-	if similarity >= 95.0 {
+	// HYBRID LOGIC:
+	// 1. If character similarity is very high (≥90%), accept regardless of token score
+	//    (handles hyphenation, punctuation differences: "Spider-Man" vs "Spiderman")
+	if charSimilarity >= 90.0 {
 		result.IsMatch = true
-		result.Reason = fmt.Sprintf("Strong match (%.1f%% similar)", similarity)
-	} else if similarity >= 85.0 {
+		result.Reason = fmt.Sprintf("Strong character match (%.1f%% char, %.1f%% final)", charSimilarity, finalScore)
+		return result
+	}
+
+	// 2. If token similarity is very high (≥80%), accept regardless of character score
+	//    (handles word order, article differences: "The Matrix" vs "Matrix")
+	if tokenSimilarity >= 80.0 {
 		result.IsMatch = true
-		result.Reason = fmt.Sprintf("Acceptable match (%.1f%% similar)", similarity)
+		result.Reason = fmt.Sprintf("Strong token match (%.1f%% token, %.1f%% final)", tokenSimilarity, finalScore)
+		return result
+	}
+
+	// 3. Otherwise, require weighted score ≥85%
+	if finalScore >= 95.0 {
+		result.IsMatch = true
+		result.Reason = fmt.Sprintf("Strong match (%.1f%% similar)", finalScore)
+	} else if finalScore >= 85.0 {
+		result.IsMatch = true
+		result.Reason = fmt.Sprintf("Acceptable match (%.1f%% similar)", finalScore)
 	} else {
 		result.IsMatch = false
-		result.Reason = fmt.Sprintf("Title mismatch (%.1f%% similar)", similarity)
+		result.Reason = fmt.Sprintf("Title mismatch (%.1f%% similar, %.1f%% char, %.1f%% token)",
+			finalScore, charSimilarity, tokenSimilarity)
 	}
 
 	return result
