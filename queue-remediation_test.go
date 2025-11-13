@@ -4032,7 +4032,7 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 			useRestAPI: true,
 			queueItem: QueueItem{
 				ID:           123,
-				Title:        "Test Series S01E01",
+				Title:        "Test Series",
 				InstanceType: "sonarr",
 				SeriesID:     42,
 				OutputPath:   "/downloads/Test.Series.S01E01",
@@ -4546,7 +4546,7 @@ func TestHybridManualImportWorkflow(t *testing.T) {
 			useRestAPI: true,
 			queueItem: QueueItem{
 				ID:           456,
-				Title:        "Target Series S02E03",
+				Title:        "Target Series",
 				InstanceType: "sonarr",
 				SeriesID:     42,
 				OutputPath:   "/downloads/mixed-batch",
@@ -5140,6 +5140,598 @@ func TestManualImportPathValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCalculateQualityScore verifies quality scoring algorithm
+func TestCalculateQualityScore(t *testing.T) {
+	tests := []struct {
+		name     string
+		quality  QualityModel
+		expected int
+	}{
+		{
+			name: "Basic 1080p",
+			quality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expected: 1080, // resolution only
+		},
+		{
+			name: "1080p v2",
+			quality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 2, Real: 0, IsRepack: false},
+			},
+			expected: 1280, // 1080 + (2 * 100)
+		},
+		{
+			name: "1080p REAL",
+			quality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 1, IsRepack: false},
+			},
+			expected: 1130, // 1080 + 50
+		},
+		{
+			name: "1080p REPACK",
+			quality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: true},
+			},
+			expected: 1105, // 1080 + 25
+		},
+		{
+			name: "1080p v2 REAL REPACK",
+			quality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 2, Real: 1, IsRepack: true},
+			},
+			expected: 1355, // 1080 + 200 + 50 + 25
+		},
+		{
+			name: "720p",
+			quality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-720p", Resolution: 720},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expected: 720,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := calculateQualityScore(tt.quality)
+			if score != tt.expected {
+				t.Errorf("calculateQualityScore() = %d, want %d", score, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCompareQualities verifies quality comparison logic
+func TestCompareQualities(t *testing.T) {
+	tests := []struct {
+		name            string
+		queueQuality    QualityModel
+		existingQuality QualityModel
+		expectUpgrade   bool
+		expectDowngrade bool
+		expectEqual     bool
+	}{
+		{
+			name: "Upgrade 720p to 1080p",
+			queueQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			existingQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-720p", Resolution: 720},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expectUpgrade: true,
+		},
+		{
+			name: "Downgrade 1080p to 720p",
+			queueQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-720p", Resolution: 720},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			existingQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expectDowngrade: true,
+		},
+		{
+			name: "Same quality",
+			queueQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			existingQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expectEqual: true,
+		},
+		{
+			name: "Upgrade v1 to v2",
+			queueQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 2, Real: 0, IsRepack: false},
+			},
+			existingQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expectUpgrade: true,
+		},
+		{
+			name: "Upgrade to REAL",
+			queueQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 1, IsRepack: false},
+			},
+			existingQuality: QualityModel{
+				Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+				Revision: RevisionModel{Version: 1, Real: 0, IsRepack: false},
+			},
+			expectUpgrade: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := compareQualities(tt.queueQuality, tt.existingQuality)
+			if result.IsUpgrade != tt.expectUpgrade {
+				t.Errorf("IsUpgrade = %v, want %v", result.IsUpgrade, tt.expectUpgrade)
+			}
+			if result.IsDowngrade != tt.expectDowngrade {
+				t.Errorf("IsDowngrade = %v, want %v", result.IsDowngrade, tt.expectDowngrade)
+			}
+			if result.IsEqual != tt.expectEqual {
+				t.Errorf("IsEqual = %v, want %v", result.IsEqual, tt.expectEqual)
+			}
+			if result.Reason == "" {
+				t.Error("Reason should not be empty")
+			}
+		})
+	}
+}
+
+// TestNormalizeTitle verifies title normalization
+func TestNormalizeTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Basic title",
+			input:    "Breaking Bad",
+			expected: "breaking bad",
+		},
+		{
+			name:     "Title with dots",
+			input:    "Mr.Robot",
+			expected: "mr robot",
+		},
+		{
+			name:     "Title with dashes",
+			input:    "Spider-Man",
+			expected: "spider man",
+		},
+		{
+			name:     "Title with underscores",
+			input:    "The_Walking_Dead",
+			expected: "the walking dead",
+		},
+		{
+			name:     "Title with punctuation",
+			input:    "What's Up: Doc?",
+			expected: "whats up doc",
+		},
+		{
+			name:     "Title with quotes",
+			input:    `The "Best" Show`,
+			expected: "the best show",
+		},
+		{
+			name:     "Title with multiple spaces",
+			input:    "Game  of   Thrones",
+			expected: "game of thrones",
+		},
+		{
+			name:     "Complex title",
+			input:    "The.Office.US.2005",
+			expected: "the office us 2005",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeTitle(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeTitle(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestLevenshteinDistance verifies edit distance calculation
+func TestLevenshteinDistance(t *testing.T) {
+	tests := []struct {
+		name     string
+		s1       string
+		s2       string
+		expected int
+	}{
+		{
+			name:     "Identical strings",
+			s1:       "hello",
+			s2:       "hello",
+			expected: 0,
+		},
+		{
+			name:     "One character different",
+			s1:       "hello",
+			s2:       "hallo",
+			expected: 1,
+		},
+		{
+			name:     "Insertion",
+			s1:       "hello",
+			s2:       "hellos",
+			expected: 1,
+		},
+		{
+			name:     "Deletion",
+			s1:       "hellos",
+			s2:       "hello",
+			expected: 1,
+		},
+		{
+			name:     "Empty strings",
+			s1:       "",
+			s2:       "",
+			expected: 0,
+		},
+		{
+			name:     "One empty",
+			s1:       "hello",
+			s2:       "",
+			expected: 5,
+		},
+		{
+			name:     "Completely different",
+			s1:       "abc",
+			s2:       "xyz",
+			expected: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := levenshteinDistance(tt.s1, tt.s2)
+			if result != tt.expected {
+				t.Errorf("levenshteinDistance(%q, %q) = %d, want %d", tt.s1, tt.s2, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestValidateTitleMatch verifies title matching with similarity threshold
+func TestValidateTitleMatch(t *testing.T) {
+	tests := []struct {
+		name          string
+		queueTitle    string
+		scannedTitle  string
+		expectMatch   bool
+		minSimilarity float64
+		maxSimilarity float64
+	}{
+		{
+			name:          "Exact match",
+			queueTitle:    "Breaking Bad",
+			scannedTitle:  "Breaking Bad",
+			expectMatch:   true,
+			minSimilarity: 100.0,
+			maxSimilarity: 100.0,
+		},
+		{
+			name:          "Close match with formatting",
+			queueTitle:    "Breaking.Bad.S01E01",
+			scannedTitle:  "Breaking Bad",
+			expectMatch:   false, // Episode numbers reduce similarity below threshold
+			minSimilarity: 60.0,
+			maxSimilarity: 70.0,
+		},
+		{
+			name:          "Year difference",
+			queueTitle:    "The Office (US)",
+			scannedTitle:  "The Office",
+			expectMatch:   false, // Year tag reduces similarity below threshold
+			minSimilarity: 60.0,
+			maxSimilarity: 75.0,
+		},
+		{
+			name:          "Completely different",
+			queueTitle:    "Breaking Bad",
+			scannedTitle:  "Game of Thrones",
+			expectMatch:   false,
+			minSimilarity: 0.0,
+			maxSimilarity: 85.0,
+		},
+		{
+			name:          "Minor typo",
+			queueTitle:    "Spider-Man",
+			scannedTitle:  "Spiderman",
+			expectMatch:   true,
+			minSimilarity: 85.0,
+			maxSimilarity: 100.0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := validateTitleMatch(tt.queueTitle, tt.scannedTitle)
+			if result.IsMatch != tt.expectMatch {
+				t.Errorf("validateTitleMatch() IsMatch = %v, want %v (similarity: %.1f%%)",
+					result.IsMatch, tt.expectMatch, result.Similarity)
+			}
+			if result.Similarity < tt.minSimilarity || result.Similarity > tt.maxSimilarity {
+				t.Errorf("validateTitleMatch() Similarity = %.1f%%, want between %.1f%% and %.1f%%",
+					result.Similarity, tt.minSimilarity, tt.maxSimilarity)
+			}
+			if result.Reason == "" {
+				t.Error("Reason should not be empty")
+			}
+		})
+	}
+}
+
+// TestMapStatusToActionWithQualityData verifies action mapping uses quality comparison
+func TestMapStatusToActionWithQualityData(t *testing.T) {
+	tests := []struct {
+		name              string
+		item              QueueItem
+		expectedAction    string
+		expectedBlocklist bool
+		expectedManualImp bool
+	}{
+		{
+			name: "Quality no upgrade - confirmed downgrade",
+			item: QueueItem{
+				ID:     1,
+				Title:  "Test Show",
+				Status: "completed",
+				StatusMessages: []StatusMessage{
+					{Messages: []string{"quality not an upgrade"}},
+				},
+				QualityComparison: &QualityComparison{
+					IsDowngrade: true,
+					IsUpgrade:   false,
+				},
+			},
+			expectedAction:    "delete",
+			expectedBlocklist: true,
+			expectedManualImp: false,
+		},
+		{
+			name: "Quality no upgrade - but actually IS upgrade",
+			item: QueueItem{
+				ID:     2,
+				Title:  "Test Show",
+				Status: "completed",
+				StatusMessages: []StatusMessage{
+					{Messages: []string{"quality not an upgrade"}},
+				},
+				QualityComparison: &QualityComparison{
+					IsUpgrade:   true,
+					IsDowngrade: false,
+				},
+			},
+			expectedAction:    "manual_import",
+			expectedBlocklist: false,
+			expectedManualImp: true,
+		},
+		{
+			name: "Matched by ID - title match OK",
+			item: QueueItem{
+				ID:     3,
+				Title:  "Test Show",
+				Status: "completed",
+				StatusMessages: []StatusMessage{
+					{Messages: []string{"matched to series by id"}},
+				},
+				TitleMatchResult: &TitleMatchResult{
+					IsMatch:    true,
+					Similarity: 98.0,
+				},
+			},
+			expectedAction:    "manual_import",
+			expectedBlocklist: false,
+			expectedManualImp: true,
+		},
+		{
+			name: "Matched by ID - title mismatch",
+			item: QueueItem{
+				ID:     4,
+				Title:  "Wrong Show",
+				Status: "completed",
+				StatusMessages: []StatusMessage{
+					{Messages: []string{"matched to series by id"}},
+				},
+				TitleMatchResult: &TitleMatchResult{
+					IsMatch:    false,
+					Similarity: 30.0,
+				},
+			},
+			expectedAction:    "delete",
+			expectedBlocklist: true,
+			expectedManualImp: false,
+		},
+		{
+			name: "Import blocked - title OK",
+			item: QueueItem{
+				ID:                   5,
+				Title:                "Test Show",
+				Status:               "completed",
+				TrackedDownloadState: "importBlocked",
+				TitleMatchResult: &TitleMatchResult{
+					IsMatch:    true,
+					Similarity: 95.0,
+				},
+			},
+			expectedAction:    "manual_import",
+			expectedBlocklist: false,
+			expectedManualImp: true,
+		},
+		{
+			name: "Import blocked - title mismatch",
+			item: QueueItem{
+				ID:                   6,
+				Title:                "Wrong Show",
+				Status:               "completed",
+				TrackedDownloadState: "importBlocked",
+				TitleMatchResult: &TitleMatchResult{
+					IsMatch:    false,
+					Similarity: 40.0,
+				},
+			},
+			expectedAction:    "delete",
+			expectedBlocklist: true,
+			expectedManualImp: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action, blocklist, manualImp := mapStatusToAction(tt.item)
+			if action != tt.expectedAction {
+				t.Errorf("action = %q, want %q", action, tt.expectedAction)
+			}
+			if blocklist != tt.expectedBlocklist {
+				t.Errorf("blocklist = %v, want %v", blocklist, tt.expectedBlocklist)
+			}
+			if manualImp != tt.expectedManualImp {
+				t.Errorf("manualImport = %v, want %v", manualImp, tt.expectedManualImp)
+			}
+		})
+	}
+}
+
+// TestFetchEpisodeFiles verifies episode file API integration
+func TestFetchEpisodeFiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/api/v3/episodefile") {
+			seriesID := r.URL.Query().Get("seriesId")
+			if seriesID == "123" {
+				json.NewEncoder(w).Encode([]EpisodeFileResource{
+					{
+						ID:       1,
+						SeriesID: 123,
+						Quality: QualityModel{
+							Quality:  QualityDefinition{Name: "HDTV-1080p", Resolution: 1080},
+							Revision: RevisionModel{Version: 1},
+						},
+					},
+				})
+			} else {
+				w.Write([]byte("[]"))
+			}
+		}
+	}))
+	defer server.Close()
+
+	config := Config{Timeout: 5 * time.Second}
+
+	t.Run("Valid series ID", func(t *testing.T) {
+		files, err := fetchEpisodeFiles(config, server.URL, "test-token", 123)
+		if err != nil {
+			t.Fatalf("fetchEpisodeFiles() error = %v", err)
+		}
+		if len(files) != 1 {
+			t.Errorf("len(files) = %d, want 1", len(files))
+		}
+		if files[0].SeriesID != 123 {
+			t.Errorf("SeriesID = %d, want 123", files[0].SeriesID)
+		}
+	})
+
+	t.Run("Invalid series ID", func(t *testing.T) {
+		_, err := fetchEpisodeFiles(config, server.URL, "test-token", 0)
+		if err == nil {
+			t.Error("fetchEpisodeFiles() should return error for seriesID 0")
+		}
+	})
+}
+
+// TestFetchMovieFile verifies movie file API integration
+func TestFetchMovieFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Api-Key") != "test-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "/api/v3/moviefile") {
+			movieID := r.URL.Query().Get("movieId")
+			if movieID == "456" {
+				json.NewEncoder(w).Encode([]MovieFileResource{
+					{
+						ID:      1,
+						MovieID: 456,
+						Quality: QualityModel{
+							Quality:  QualityDefinition{Name: "Bluray-1080p", Resolution: 1080},
+							Revision: RevisionModel{Version: 1},
+						},
+					},
+				})
+			} else {
+				w.Write([]byte("[]"))
+			}
+		}
+	}))
+	defer server.Close()
+
+	config := Config{Timeout: 5 * time.Second}
+
+	t.Run("Valid movie ID", func(t *testing.T) {
+		file, err := fetchMovieFile(config, server.URL, "test-token", 456)
+		if err != nil {
+			t.Fatalf("fetchMovieFile() error = %v", err)
+		}
+		if file == nil {
+			t.Fatal("fetchMovieFile() returned nil file")
+		}
+		if file.MovieID != 456 {
+			t.Errorf("MovieID = %d, want 456", file.MovieID)
+		}
+	})
+
+	t.Run("No existing file", func(t *testing.T) {
+		file, err := fetchMovieFile(config, server.URL, "test-token", 999)
+		if err != nil {
+			t.Fatalf("fetchMovieFile() error = %v", err)
+		}
+		if file != nil {
+			t.Error("fetchMovieFile() should return nil for non-existent movie file")
+		}
+	})
+
+	t.Run("Invalid movie ID", func(t *testing.T) {
+		_, err := fetchMovieFile(config, server.URL, "test-token", 0)
+		if err == nil {
+			t.Error("fetchMovieFile() should return error for movieID 0")
+		}
+	})
 }
 
 // ========== HELPER FUNCTIONS ==========

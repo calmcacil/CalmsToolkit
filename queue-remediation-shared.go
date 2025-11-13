@@ -24,20 +24,23 @@ type StatusMessage struct {
 
 // QueueItem represents an item in the download queue
 type QueueItem struct {
-	ID                    int             `json:"id"`
-	Title                 string          `json:"title"`
-	Status                string          `json:"status"`
-	TrackedDownloadState  string          `json:"trackedDownloadState"`
-	TrackedDownloadStatus string          `json:"trackedDownloadStatus"`
-	StatusMessages        []StatusMessage `json:"statusMessages"`
-	DownloadClient        string          `json:"downloadClient"`
-	DownloadId            string          `json:"downloadId"`
-	OutputPath            string          `json:"outputPath"`
-	ErrorMessage          string          `json:"errorMessage"`
-	InstanceURL           string          `json:"-"`
-	InstanceType          string          `json:"-"`
-	SeriesID              int             `json:"seriesId,omitempty"`
-	MovieID               int             `json:"movieId,omitempty"`
+	ID                    int                `json:"id"`
+	Title                 string             `json:"title"`
+	Status                string             `json:"status"`
+	TrackedDownloadState  string             `json:"trackedDownloadState"`
+	TrackedDownloadStatus string             `json:"trackedDownloadStatus"`
+	StatusMessages        []StatusMessage    `json:"statusMessages"`
+	DownloadClient        string             `json:"downloadClient"`
+	DownloadId            string             `json:"downloadId"`
+	OutputPath            string             `json:"outputPath"`
+	ErrorMessage          string             `json:"errorMessage"`
+	InstanceURL           string             `json:"-"`
+	InstanceType          string             `json:"-"`
+	SeriesID              int                `json:"seriesId,omitempty"`
+	MovieID               int                `json:"movieId,omitempty"`
+	ExistingQuality       *QualityModel      `json:"-"` // Quality of existing file on disk
+	QualityComparison     *QualityComparison `json:"-"` // Result of quality comparison
+	TitleMatchResult      *TitleMatchResult  `json:"-"` // Result of title validation
 }
 
 // QueueResponse represents the response from queue API calls
@@ -120,6 +123,73 @@ type ImportRejection struct {
 	Type   string `json:"type"`
 }
 
+// EpisodeFileResource represents an episode file from Sonarr API
+type EpisodeFileResource struct {
+	ID            int          `json:"id"`
+	SeriesID      int          `json:"seriesId"`
+	SeasonNumber  int          `json:"seasonNumber"`
+	RelativePath  string       `json:"relativePath"`
+	Path          string       `json:"path"`
+	Size          int64        `json:"size"`
+	DateAdded     string       `json:"dateAdded"`
+	Quality       QualityModel `json:"quality"`
+	MediaInfo     MediaInfo    `json:"mediaInfo"`
+	EpisodeFileID int          `json:"episodeFileId"`
+	Episodes      []int        `json:"episodeIds"`
+}
+
+// MovieFileResource represents a movie file from Radarr API
+type MovieFileResource struct {
+	ID           int          `json:"id"`
+	MovieID      int          `json:"movieId"`
+	RelativePath string       `json:"relativePath"`
+	Path         string       `json:"path"`
+	Size         int64        `json:"size"`
+	DateAdded    string       `json:"dateAdded"`
+	Quality      QualityModel `json:"quality"`
+	MediaInfo    MediaInfo    `json:"mediaInfo"`
+}
+
+// MediaInfo represents media codec and bitrate information
+type MediaInfo struct {
+	AudioBitrate     int    `json:"audioBitrate"`
+	AudioChannels    int    `json:"audioChannels"`
+	AudioCodec       string `json:"audioCodec"`
+	AudioLanguages   string `json:"audioLanguages"`
+	AudioStreamCount int    `json:"audioStreamCount"`
+	VideoBitDepth    int    `json:"videoBitDepth"`
+	VideoBitrate     int    `json:"videoBitrate"`
+	VideoCodec       string `json:"videoCodec"`
+	VideoFps         string `json:"videoFps"`
+	Resolution       string `json:"resolution"`
+	RunTime          string `json:"runTime"`
+	ScanType         string `json:"scanType"`
+}
+
+// QualityComparison represents the result of comparing two quality models
+type QualityComparison struct {
+	IsUpgrade         bool
+	IsDowngrade       bool
+	IsEqual           bool
+	NewScore          int
+	ExistingScore     int
+	ScoreDiff         int
+	Reason            string
+	NewFormatted      string
+	ExistingFormatted string
+}
+
+// TitleMatchResult represents the result of title matching validation
+type TitleMatchResult struct {
+	IsMatch           bool
+	Similarity        float64
+	QueueTitle        string
+	ScannedTitle      string
+	NormalizedQueue   string
+	NormalizedScanned string
+	Reason            string
+}
+
 // ManualImportRequest represents a manual import request for individual files
 type ManualImportRequest struct {
 	Path         string       `json:"path"`
@@ -175,18 +245,54 @@ func mapStatusToAction(item QueueItem) (action string, blocklist bool, manualImp
 
 	switch reason {
 	case "custom_format_no_upgrade":
+		// If we have quality comparison data, verify it's actually not an upgrade
+		if item.QualityComparison != nil {
+			if item.QualityComparison.IsUpgrade {
+				// Status message says no upgrade, but our analysis says it IS an upgrade
+				// Attempt manual import instead of deleting
+				return "manual_import", false, true
+			}
+			// Confirmed not an upgrade, safe to delete
+			return "delete", shouldBlocklist, false
+		}
+		// No quality data, trust the status message
 		return "delete", shouldBlocklist, false
 	case "quality_no_upgrade":
+		// If we have quality comparison data, verify it's actually not an upgrade
+		if item.QualityComparison != nil {
+			if item.QualityComparison.IsUpgrade {
+				// Status message says no upgrade, but our analysis says it IS an upgrade
+				// This indicates a discrepancy - attempt manual import
+				return "manual_import", false, true
+			}
+			if item.QualityComparison.IsDowngrade {
+				// Confirmed downgrade, delete with blocklist
+				return "delete", true, false
+			}
+			// Same quality or confirmed not an upgrade, safe to delete
+			return "delete", shouldBlocklist, false
+		}
+		// No quality data, trust the status message
 		return "delete", shouldBlocklist, false
 	case "no_files_found":
 		return "delete", shouldBlocklist, false
 	case "sample_file":
 		return "delete", shouldBlocklist, false
 	case "matched_by_id":
+		// Validate title match if available
+		if item.TitleMatchResult != nil && !item.TitleMatchResult.IsMatch {
+			// Title mismatch detected, safer to delete than risk wrong import
+			return "delete", true, false
+		}
 		return "manual_import", false, true
 	}
 
 	if item.TrackedDownloadState == "importBlocked" || strings.Contains(strings.ToLower(item.ErrorMessage), "import blocked") {
+		// Check title match for import blocked items
+		if item.TitleMatchResult != nil && !item.TitleMatchResult.IsMatch {
+			// Title mismatch, don't attempt import
+			return "delete", true, false
+		}
 		return "manual_import", false, true
 	}
 
@@ -207,7 +313,7 @@ func parseStatusMessages(statusMessages []StatusMessage) (string, bool) {
 				isCustomFormat = true
 			}
 
-			if strings.Contains(msgLower, "quality revision") {
+			if strings.Contains(msgLower, "quality revision") || strings.Contains(msgLower, "quality not an upgrade") {
 				hasQualityCF = true
 			}
 
@@ -822,6 +928,23 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 				continue
 			}
 
+			// Validate title match if we have the queue title
+			if queueItem.Title != "" && item.Series.Title != "" {
+				titleMatch := validateTitleMatch(queueItem.Title, item.Series.Title)
+				if !titleMatch.IsMatch {
+					if config.Verbose {
+						log.Printf("[VERBOSE] Skipping file %s: title mismatch - %s", item.Path, titleMatch.Reason)
+					}
+					fmt.Fprintf(os.Stderr,
+						"[WARN] Skipping file %s: title similarity only %.1f%% (queue: %s, scanned: %s)\n",
+						item.Path, titleMatch.Similarity, queueItem.Title, item.Series.Title)
+					continue
+				}
+				if config.Verbose {
+					log.Printf("[VERBOSE] Title match validated for %s: %s", item.Path, titleMatch.Reason)
+				}
+			}
+
 			req := ManualImportRequest{
 				Path:         item.Path,
 				SeriesID:     item.Series.ID,
@@ -869,6 +992,23 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 					"[WARN] Skipping file %s: belongs to Movie %d, but queue item expects Movie %d\n",
 					item.Path, item.Movie.ID, queueItem.MovieID)
 				continue
+			}
+
+			// Validate title match if we have the queue title
+			if queueItem.Title != "" && item.Movie.Title != "" {
+				titleMatch := validateTitleMatch(queueItem.Title, item.Movie.Title)
+				if !titleMatch.IsMatch {
+					if config.Verbose {
+						log.Printf("[VERBOSE] Skipping file %s: title mismatch - %s", item.Path, titleMatch.Reason)
+					}
+					fmt.Fprintf(os.Stderr,
+						"[WARN] Skipping file %s: title similarity only %.1f%% (queue: %s, scanned: %s)\n",
+						item.Path, titleMatch.Similarity, queueItem.Title, item.Movie.Title)
+					continue
+				}
+				if config.Verbose {
+					log.Printf("[VERBOSE] Title match validated for %s: %s", item.Path, titleMatch.Reason)
+				}
 			}
 
 			req := ManualImportRequest{
@@ -1282,9 +1422,8 @@ func classifyAndRemediate(config Config, dryRun bool) error {
 
 	for _, item := range items {
 		totalCount++
-		action, blocklist, manualImport := mapStatusToAction(item)
 
-		// Skip items in /torrents/ directory (active downloads)
+		// Skip items in /torrents/ directory (active downloads) - check early to avoid unnecessary API calls
 		if strings.Contains(item.OutputPath, "/torrents/") || strings.Contains(item.OutputPath, "/torrents") {
 			if dryRun {
 				fmt.Printf("%s\n", formatQueueItemHeader(config, item))
@@ -1295,6 +1434,69 @@ func classifyAndRemediate(config Config, dryRun bool) error {
 			}
 			continue
 		}
+
+		// Enrich queue item with quality and title validation data
+		token, err := getTokenForInstance(config, item.InstanceURL, item.InstanceType)
+		if err == nil {
+			// Fetch existing quality for comparison
+			if item.InstanceType == "sonarr" && item.SeriesID > 0 {
+				files, err := fetchEpisodeFiles(config, item.InstanceURL, token, item.SeriesID)
+				if err == nil && len(files) > 0 {
+					// Use the first (typically most recent) episode file as reference
+					item.ExistingQuality = &files[0].Quality
+					if config.Debug {
+						log.Printf("[DEBUG] Fetched existing quality for Series %d: %s", item.SeriesID, formatQualityString(files[0].Quality))
+					}
+				}
+			} else if item.InstanceType == "radarr" && item.MovieID > 0 {
+				file, err := fetchMovieFile(config, item.InstanceURL, token, item.MovieID)
+				if err == nil && file != nil {
+					item.ExistingQuality = &file.Quality
+					if config.Debug {
+						log.Printf("[DEBUG] Fetched existing quality for Movie %d: %s", item.MovieID, formatQualityString(file.Quality))
+					}
+				}
+			}
+
+			// Perform quality comparison if we have both queue and existing quality
+			// Extract quality from status messages or attempt to parse from title
+			reason, _ := parseStatusMessages(item.StatusMessages)
+			if (reason == "quality_no_upgrade" || reason == "custom_format_no_upgrade") && item.ExistingQuality != nil {
+				// We know there's a quality comparison happening
+				// For now, we trust the API's assessment since queue quality isn't directly available
+				// in the queue API response. This is a placeholder for future enhancement.
+				if config.Debug {
+					log.Printf("[DEBUG] Quality comparison indicated by status messages for item %d", item.ID)
+				}
+			}
+
+			// Perform title validation for "matched by id" cases
+			if reason == "matched_by_id" {
+				if item.InstanceType == "sonarr" && item.SeriesID > 0 {
+					series, err := fetchSeriesDetails(config, item.InstanceURL, token, item.SeriesID)
+					if err == nil {
+						titleMatch := validateTitleMatch(item.Title, series.Title)
+						item.TitleMatchResult = &titleMatch
+						if config.Debug {
+							log.Printf("[DEBUG] Title validation for Series %d: %s (%.1f%% similar)",
+								item.SeriesID, titleMatch.Reason, titleMatch.Similarity)
+						}
+					}
+				} else if item.InstanceType == "radarr" && item.MovieID > 0 {
+					movie, err := fetchMovieDetails(config, item.InstanceURL, token, item.MovieID)
+					if err == nil {
+						titleMatch := validateTitleMatch(item.Title, movie.Title)
+						item.TitleMatchResult = &titleMatch
+						if config.Debug {
+							log.Printf("[DEBUG] Title validation for Movie %d: %s (%.1f%% similar)",
+								item.MovieID, titleMatch.Reason, titleMatch.Similarity)
+						}
+					}
+				}
+			}
+		}
+
+		action, blocklist, manualImport := mapStatusToAction(item)
 
 		if dryRun {
 			// Enhanced header with status, state, and client info
@@ -1425,4 +1627,270 @@ func triggerManualImportWithLogging(config Config, logger tuiLoggerInterface, in
 	}
 
 	return estimatedCalls, err
+}
+
+// fetchEpisodeFiles retrieves episode file information for a series from Sonarr API
+func fetchEpisodeFiles(config Config, instanceURL, token string, seriesID int) ([]EpisodeFileResource, error) {
+	if seriesID == 0 {
+		return nil, fmt.Errorf("invalid seriesID: 0")
+	}
+
+	url := fmt.Sprintf("%s/api/v3/episodefile?seriesId=%d", instanceURL, seriesID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: config.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var files []EpisodeFileResource
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return files, nil
+}
+
+// fetchMovieFile retrieves movie file information from Radarr API
+func fetchMovieFile(config Config, instanceURL, token string, movieID int) (*MovieFileResource, error) {
+	if movieID == 0 {
+		return nil, fmt.Errorf("invalid movieID: 0")
+	}
+
+	url := fmt.Sprintf("%s/api/v3/moviefile?movieId=%d", instanceURL, movieID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: config.Timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var files []MovieFileResource
+	if err := json.NewDecoder(resp.Body).Decode(&files); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(files) == 0 {
+		return nil, nil // No existing file
+	}
+
+	return &files[0], nil
+}
+
+// calculateQualityScore computes a numeric score for a quality profile
+func calculateQualityScore(q QualityModel) int {
+	score := q.Quality.Resolution
+	// Only add bonus for versions > 1
+	if q.Revision.Version > 1 {
+		score += q.Revision.Version * 100
+	}
+	if q.Revision.Real > 0 {
+		score += 50
+	}
+	if q.Revision.IsRepack {
+		score += 25
+	}
+	return score
+}
+
+// formatQualityString creates a human-readable quality description
+func formatQualityString(q QualityModel) string {
+	parts := []string{q.Quality.Name}
+	if q.Revision.Version > 1 {
+		parts = append(parts, fmt.Sprintf("v%d", q.Revision.Version))
+	}
+	if q.Revision.Real > 0 {
+		parts = append(parts, "REAL")
+	}
+	if q.Revision.IsRepack {
+		parts = append(parts, "REPACK")
+	}
+	return fmt.Sprintf("%s (%d)", q.Quality.Name, q.Quality.Resolution) + " " + joinNonEmpty(parts[1:], " ")
+}
+
+// joinNonEmpty joins non-empty strings with separator
+func joinNonEmpty(parts []string, sep string) string {
+	if len(parts) == 0 {
+		return ""
+	}
+	result := ""
+	for i, p := range parts {
+		if p != "" {
+			if result != "" {
+				result += sep
+			}
+			result += p
+		}
+		if i == 0 && result != "" {
+			result = sep + result
+		}
+	}
+	return result
+}
+
+// compareQualities performs detailed quality comparison between queue and existing files
+func compareQualities(queueQuality, existingQuality QualityModel) QualityComparison {
+	newScore := calculateQualityScore(queueQuality)
+	existingScore := calculateQualityScore(existingQuality)
+	diff := newScore - existingScore
+
+	comparison := QualityComparison{
+		NewScore:          newScore,
+		ExistingScore:     existingScore,
+		ScoreDiff:         diff,
+		NewFormatted:      formatQualityString(queueQuality),
+		ExistingFormatted: formatQualityString(existingQuality),
+	}
+
+	if diff > 0 {
+		comparison.IsUpgrade = true
+		comparison.Reason = fmt.Sprintf("Upgrade: %s → %s (+%d points)", comparison.ExistingFormatted, comparison.NewFormatted, diff)
+	} else if diff < 0 {
+		comparison.IsDowngrade = true
+		comparison.Reason = fmt.Sprintf("Downgrade: %s → %s (%d points)", comparison.ExistingFormatted, comparison.NewFormatted, diff)
+	} else {
+		comparison.IsEqual = true
+		comparison.Reason = fmt.Sprintf("Same quality: %s", comparison.NewFormatted)
+	}
+
+	return comparison
+}
+
+// normalizeTitle removes common punctuation and formatting for comparison
+func normalizeTitle(title string) string {
+	// Convert to lowercase
+	normalized := strings.ToLower(title)
+	// Remove common separators and punctuation
+	normalized = strings.ReplaceAll(normalized, ".", " ")
+	normalized = strings.ReplaceAll(normalized, "-", " ")
+	normalized = strings.ReplaceAll(normalized, "_", " ")
+	normalized = strings.ReplaceAll(normalized, ":", "")
+	normalized = strings.ReplaceAll(normalized, "'", "")
+	normalized = strings.ReplaceAll(normalized, "\"", "")
+	normalized = strings.ReplaceAll(normalized, "?", "")
+	normalized = strings.ReplaceAll(normalized, "!", "")
+	// Collapse multiple spaces
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	return strings.TrimSpace(normalized)
+}
+
+// levenshteinDistance calculates the edit distance between two strings
+func levenshteinDistance(s1, s2 string) int {
+	if len(s1) == 0 {
+		return len(s2)
+	}
+	if len(s2) == 0 {
+		return len(s1)
+	}
+
+	// Create distance matrix
+	matrix := make([][]int, len(s1)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(s2)+1)
+		matrix[i][0] = i
+	}
+	for j := range matrix[0] {
+		matrix[0][j] = j
+	}
+
+	// Calculate distances
+	for i := 1; i <= len(s1); i++ {
+		for j := 1; j <= len(s2); j++ {
+			cost := 0
+			if s1[i-1] != s2[j-1] {
+				cost = 1
+			}
+			matrix[i][j] = min(
+				matrix[i-1][j]+1,      // deletion
+				matrix[i][j-1]+1,      // insertion
+				matrix[i-1][j-1]+cost, // substitution
+			)
+		}
+	}
+
+	return matrix[len(s1)][len(s2)]
+}
+
+// min returns the minimum of three integers
+func min(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
+// calculateSimilarity computes percentage similarity between two strings
+func calculateSimilarity(s1, s2 string) float64 {
+	if s1 == s2 {
+		return 100.0
+	}
+	maxLen := len(s1)
+	if len(s2) > maxLen {
+		maxLen = len(s2)
+	}
+	if maxLen == 0 {
+		return 100.0
+	}
+	distance := levenshteinDistance(s1, s2)
+	return (1.0 - float64(distance)/float64(maxLen)) * 100.0
+}
+
+// validateTitleMatch checks if queue title matches scanned title with similarity threshold
+func validateTitleMatch(queueTitle, scannedTitle string) TitleMatchResult {
+	normalized1 := normalizeTitle(queueTitle)
+	normalized2 := normalizeTitle(scannedTitle)
+	similarity := calculateSimilarity(normalized1, normalized2)
+
+	result := TitleMatchResult{
+		QueueTitle:        queueTitle,
+		ScannedTitle:      scannedTitle,
+		NormalizedQueue:   normalized1,
+		NormalizedScanned: normalized2,
+		Similarity:        similarity,
+	}
+
+	if similarity >= 95.0 {
+		result.IsMatch = true
+		result.Reason = fmt.Sprintf("Strong match (%.1f%% similar)", similarity)
+	} else if similarity >= 85.0 {
+		result.IsMatch = true
+		result.Reason = fmt.Sprintf("Acceptable match (%.1f%% similar)", similarity)
+	} else {
+		result.IsMatch = false
+		result.Reason = fmt.Sprintf("Title mismatch (%.1f%% similar)", similarity)
+	}
+
+	return result
 }
