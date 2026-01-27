@@ -3,7 +3,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,7 +25,17 @@ type TUIModel struct {
 	quitting      bool
 	debugMessages []string
 	showDebug     bool
+	verboseDebug  bool
 	debugScroll   int
+	episodeCache  map[int]EpisodeResource
+	seriesCache   map[int]SeriesResource
+	mappingInfo   map[int]mappingInfo
+}
+
+type mappingInfo struct {
+	Episode    EpisodeResource
+	Series     SeriesResource
+	TitleMatch TitleMatchResult
 }
 
 // TUI messages for state updates
@@ -128,7 +140,11 @@ func InitialModel(config Config) TUIModel {
 		height:        24,
 		debugMessages: []string{},
 		showDebug:     config.Verbose || config.Debug,
+		verboseDebug:  false,
 		debugScroll:   0,
+		episodeCache:  make(map[int]EpisodeResource),
+		seriesCache:   make(map[int]SeriesResource),
+		mappingInfo:   make(map[int]mappingInfo),
 	}
 }
 
@@ -223,6 +239,15 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					} else {
 						m.status = "Debug view disabled"
 					}
+				case 'v':
+					if m.config.Debug || m.config.Verbose {
+						m.verboseDebug = !m.verboseDebug
+						if m.verboseDebug {
+							m.status = "Verbose debug enabled"
+						} else {
+							m.status = "Verbose debug disabled"
+						}
+					}
 				}
 			}
 		}
@@ -236,22 +261,46 @@ func (m TUIModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.error = fmt.Sprintf("Failed to load items: %v", msg.err)
 		} else {
-			m.items = filterItems(msg.items)
+			filteredItems, report := filterItemsWithReport(m.config, msg.items)
+			m.items = filteredItems
 			if len(m.items) == 0 {
 				m.status = "No queue items requiring remediation found"
 			} else {
 				m.status = fmt.Sprintf("Loaded %d items requiring remediation", len(m.items))
+			}
+
+			// Pre-fetch mapping details for metadata mapping pending items (Sonarr)
+			for _, item := range m.items {
+				if getReason(item) == "metadata mapping pending" && item.InstanceType == "sonarr" && item.EpisodeID > 0 {
+					m.ensureMappingInfo(item)
+				}
+			}
+
+			if m.config.Debug {
+				summaryLogs, verboseLogs := buildSummaryBlock(report)
+				m.debugMessages = append(m.debugMessages, summaryLogs...)
+
+				if m.verboseDebug {
+					m.debugMessages = append(m.debugMessages, verboseLogs...)
+				}
+
+				if len(m.debugMessages) > 500 {
+					m.debugMessages = m.debugMessages[len(m.debugMessages)-500:]
+				}
 			}
 		}
 
 	case actionExecutedMsg:
 		m.loading = false
 
-		// Append debug and verbose logs to debugMessages
 		if len(msg.debugLog) > 0 || len(msg.verboseLog) > 0 {
-			m.debugMessages = append(m.debugMessages, msg.verboseLog...)
-			m.debugMessages = append(m.debugMessages, msg.debugLog...)
-			// Keep only last 500 messages to prevent memory issues
+			if m.verboseDebug {
+				m.debugMessages = append(m.debugMessages, msg.debugLog...)
+				m.debugMessages = append(m.debugMessages, msg.verboseLog...)
+			} else {
+				m.debugMessages = append(m.debugMessages, msg.debugLog...)
+			}
+
 			if len(m.debugMessages) > 500 {
 				m.debugMessages = m.debugMessages[len(m.debugMessages)-500:]
 			}
@@ -354,6 +403,35 @@ func (m TUIModel) View() string {
 			content.WriteString("\n")
 		}
 
+		reason := getReason(item)
+
+		// Show proposed mapping for Sonarr items when mapping details help manual import
+		if (reason == "metadata mapping pending" || reason == "matched to series by ID") && item.InstanceType == "sonarr" && item.EpisodeID > 0 {
+			m.ensureMappingInfo(item)
+			label := "Proposed Mapping:"
+			if reason == "matched to series by ID" {
+				label = "Current Mapping:"
+			}
+			content.WriteString(infoStyle.Render(label))
+			content.WriteString("\n")
+			if info, ok := m.mappingInfo[item.EpisodeID]; ok {
+				if info.Series.Title != "" {
+					content.WriteString(fmt.Sprintf("  • Series: %s\n", info.Series.Title))
+				}
+				content.WriteString(fmt.Sprintf("  • Episode: S%02dE%02d - %s\n", info.Episode.SeasonNumber, info.Episode.EpisodeNumber, info.Episode.Title))
+				if info.Episode.AbsoluteEpisodeNumber > 0 {
+					content.WriteString(fmt.Sprintf("  • Absolute #: %d\n", info.Episode.AbsoluteEpisodeNumber))
+				}
+				if info.Episode.AirDateUtc != "" {
+					content.WriteString(fmt.Sprintf("  • Air date (UTC): %s\n", info.Episode.AirDateUtc))
+				}
+				content.WriteString(fmt.Sprintf("  • Title match: %.1f%% (%s)\n", info.TitleMatch.Similarity, info.TitleMatch.Reason))
+			} else {
+				content.WriteString("  • Mapping details unavailable\n")
+			}
+			content.WriteString("\n")
+		}
+
 		// Recommended action
 		action, _, _ := mapStatusToAction(item)
 		var actionText string
@@ -368,7 +446,6 @@ func (m TUIModel) View() string {
 			actionText = "MONITOR"
 		}
 
-		reason := getReason(item)
 		content.WriteString(infoStyle.Render(fmt.Sprintf("Recommended Action: %s", actionText)))
 		content.WriteString("\n")
 		content.WriteString(infoStyle.Render(fmt.Sprintf("→ %s", reason)))
@@ -426,7 +503,21 @@ func (m TUIModel) View() string {
 			debugToggle = "[D] Show Debug"
 		}
 	}
-	content.WriteString(helpStyle.Render(fmt.Sprintf("[s] Skip/Monitor  [r] Refresh  %s  [q] Quit", debugToggle)))
+
+	verboseToggle := ""
+	if m.config.Verbose || m.config.Debug {
+		if m.verboseDebug {
+			verboseToggle = "[v] Verbose Debug ✓"
+		} else {
+			verboseToggle = "[v] Verbose Debug"
+		}
+	}
+
+	toggles := []string{debugToggle}
+	if verboseToggle != "" {
+		toggles = append(toggles, verboseToggle)
+	}
+	content.WriteString(helpStyle.Render(fmt.Sprintf("[s] Skip/Monitor  [r] Refresh  %s  [q] Quit", strings.Join(toggles, "  "))))
 
 	return content.String()
 }
@@ -439,24 +530,184 @@ func loadItems(config Config) tea.Cmd {
 	}
 }
 
-// filterItems filters items that need remediation (skipping /torrents/ and normal items)
-func filterItems(items []QueueItem) []QueueItem {
+// InstanceFilterReport captures per-instance filtering data
+type InstanceFilterReport struct {
+	InstanceName    string
+	TotalItems      int
+	FilteredItems   int
+	SkippedTorrents int
+	SkippedMonitor  int
+	ItemsByReason   map[string][]QueueItem
+}
+
+// FilterReport aggregates filtering results across instances
+type FilterReport struct {
+	TotalItems    int
+	FilteredItems int
+	Instances     []InstanceFilterReport
+}
+
+// filterItemsWithReport filters items that need remediation and builds a report
+func filterItemsWithReport(config Config, items []QueueItem) ([]QueueItem, FilterReport) {
 	var filtered []QueueItem
+	report := FilterReport{TotalItems: len(items)}
+	instanceReports := make(map[string]*InstanceFilterReport)
 
 	for _, item := range items {
-		// Skip items in /torrents/ directory
+		instanceName := getInstanceName(config, item.InstanceURL, item.InstanceType)
+		if _, ok := instanceReports[instanceName]; !ok {
+			instanceReports[instanceName] = &InstanceFilterReport{
+				InstanceName:  instanceName,
+				ItemsByReason: make(map[string][]QueueItem),
+			}
+		}
+
+		instReport := instanceReports[instanceName]
+		instReport.TotalItems++
+
 		if strings.Contains(item.OutputPath, "/torrents/") {
+			instReport.SkippedTorrents++
 			continue
 		}
 
-		// Only include items that need remediation
-		action, _, _ := mapStatusToAction(item)
-		if action != "monitor" || item.TrackedDownloadState == "importBlocked" {
+		include := needsRemediation(item)
+		if include {
 			filtered = append(filtered, item)
+			instReport.FilteredItems++
+			reason := getReason(item)
+			instReport.ItemsByReason[reason] = append(instReport.ItemsByReason[reason], item)
+		} else {
+			instReport.SkippedMonitor++
 		}
 	}
 
-	return filtered
+	for _, inst := range instanceReports {
+		report.Instances = append(report.Instances, *inst)
+	}
+
+	sort.Slice(report.Instances, func(i, j int) bool {
+		return report.Instances[i].InstanceName < report.Instances[j].InstanceName
+	})
+
+	report.FilteredItems = len(filtered)
+	return filtered, report
+}
+
+func buildSummaryBlock(report FilterReport) ([]string, []string) {
+	var summary []string
+	var verbose []string
+
+	summary = append(summary, "[DEBUG] === Filter Summary ===")
+	summary = append(summary, fmt.Sprintf("[DEBUG] Filtered %d/%d items requiring remediation", report.FilteredItems, report.TotalItems))
+
+	for _, inst := range report.Instances {
+		summary = append(summary, fmt.Sprintf("[DEBUG] -- %s --", inst.InstanceName))
+		summary = append(summary, fmt.Sprintf("[DEBUG] %s: %d/%d items require remediation", inst.InstanceName, inst.FilteredItems, inst.TotalItems))
+
+		if inst.SkippedTorrents > 0 {
+			summary = append(summary, fmt.Sprintf("[DEBUG] %s: skipped %d torrent-path items", inst.InstanceName, inst.SkippedTorrents))
+		}
+		if inst.SkippedMonitor > 0 {
+			summary = append(summary, fmt.Sprintf("[DEBUG] %s: %d items monitored/ignored", inst.InstanceName, inst.SkippedMonitor))
+		}
+
+		var reasons []string
+		for reason := range inst.ItemsByReason {
+			reasons = append(reasons, reason)
+		}
+		sort.Strings(reasons)
+
+		for _, reason := range reasons {
+			items := inst.ItemsByReason[reason]
+			summary = append(summary, fmt.Sprintf("[DEBUG]   %s: %d", reason, len(items)))
+
+			if len(items) == 0 {
+				continue
+			}
+
+			sampleCount := len(items)
+			if sampleCount > 5 {
+				sampleCount = 5
+			}
+
+			var titles []string
+			for i := 0; i < sampleCount; i++ {
+				titles = append(titles, truncateTitle(items[i].Title))
+			}
+			verbose = append(verbose, fmt.Sprintf("[VERBOSE] %s %s: %s", inst.InstanceName, reason, strings.Join(titles, " | ")))
+			if len(items) > sampleCount {
+				verbose = append(verbose, fmt.Sprintf("[VERBOSE] %s %s: %d more suppressed", inst.InstanceName, reason, len(items)-sampleCount))
+			}
+		}
+	}
+
+	if len(report.Instances) > 0 {
+		summary = append(summary, "[DEBUG] ------------------------")
+	}
+
+	return summary, verbose
+}
+
+func (m *TUIModel) ensureMappingInfo(item QueueItem) {
+	if item.InstanceType != "sonarr" || item.EpisodeID == 0 {
+		return
+	}
+
+	if m.mappingInfo == nil {
+		m.mappingInfo = make(map[int]mappingInfo)
+	}
+	if m.episodeCache == nil {
+		m.episodeCache = make(map[int]EpisodeResource)
+	}
+	if m.seriesCache == nil {
+		m.seriesCache = make(map[int]SeriesResource)
+	}
+
+	if _, ok := m.mappingInfo[item.EpisodeID]; ok {
+		return
+	}
+
+	token, err := getTokenForInstance(m.config, item.InstanceURL, item.InstanceType)
+	if err != nil {
+		return
+	}
+
+	episode, err := fetchEpisodeDetails(m.config, item.InstanceURL, token, item.EpisodeID)
+	if err != nil || episode == nil {
+		return
+	}
+
+	m.episodeCache[item.EpisodeID] = *episode
+
+	var series SeriesResource
+	if episode.SeriesID != 0 {
+		if cached, ok := m.seriesCache[episode.SeriesID]; ok {
+			series = cached
+		} else {
+			seriesResp, serr := fetchSeriesDetails(m.config, item.InstanceURL, token, episode.SeriesID)
+			if serr == nil && seriesResp != nil {
+				series = *seriesResp
+				m.seriesCache[episode.SeriesID] = series
+			}
+		}
+	}
+
+	titleMatch := validateTitleMatch(item.Title, episode.Title)
+	m.mappingInfo[item.EpisodeID] = mappingInfo{
+		Episode:    *episode,
+		Series:     series,
+		TitleMatch: titleMatch,
+	}
+}
+
+func truncateTitle(title string) string {
+	const maxLength = 40
+	runes := []rune(title)
+	if len(runes) <= maxLength {
+		return title
+	}
+
+	return string(runes[:maxLength-1]) + "…"
 }
 
 // executeSuggestedAction executes the suggested action for an item
@@ -500,10 +751,18 @@ func executeAction(config Config, item QueueItem, action string) tea.Cmd {
 			err = deleteQueueItemWithLogging(config, logger, item.InstanceURL, token, item.ID, true, shouldBlocklist)
 
 		case "manual_import":
+			reason := getReason(item)
+			useRest := config.UseRestAPI
+			// XEM/TBA mapping pending requires manual UI-equivalent command flow (no REST manual import)
+			if reason == "metadata mapping pending" {
+				useRest = false
+			}
+
 			logger.logVerbose(fmt.Sprintf("Triggering manual import for queue item #%d: %s", item.ID, item.Title))
 			logger.logVerbose(fmt.Sprintf("Output path: %s", item.OutputPath))
 			logger.logVerbose(fmt.Sprintf("Instance type: %s", item.InstanceType))
-			logger.logVerbose(fmt.Sprintf("Use REST API: %v", config.UseRestAPI))
+			logger.logVerbose(fmt.Sprintf("Use REST API: %v", useRest))
+			logger.logVerbose(fmt.Sprintf("Reason: %s", reason))
 
 			if item.SeriesID > 0 {
 				logger.logVerbose(fmt.Sprintf("Series ID: %d", item.SeriesID))
@@ -512,8 +771,15 @@ func executeAction(config Config, item QueueItem, action string) tea.Cmd {
 				logger.logVerbose(fmt.Sprintf("Movie ID: %d", item.MovieID))
 			}
 
-			count, importErr := triggerManualImportWithLogging(config, logger, item.InstanceURL, token, item.OutputPath, item.InstanceType, config.UseRestAPI, item)
+			count, importErr := triggerManualImportWithLogging(config, logger, item.InstanceURL, token, item.OutputPath, item.InstanceType, useRest, item)
 			apiCallCount = count
+			if errors.Is(importErr, errManualImportNoMapping) {
+				logger.logWarn(fmt.Sprintf("Mapping failed; deleting queue item %d", item.ID))
+				apiCallCount++
+				err = deleteQueueItemWithLogging(config, logger, item.InstanceURL, token, item.ID, true, false)
+				action = "delete"
+				break
+			}
 			err = importErr
 
 		case "monitor":
