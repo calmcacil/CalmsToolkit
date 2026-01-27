@@ -102,7 +102,7 @@ func TestMapStatusToAction(t *testing.T) {
 			expectedManualImport: false,
 		},
 		{
-			name:          "Matched by ID not name",
+			name:          "Matched by ID not name - delete with blocklist",
 			status:        "completed",
 			trackedState:  "importPending",
 			trackedStatus: "warning",
@@ -114,9 +114,9 @@ func TestMapStatusToAction(t *testing.T) {
 					},
 				},
 			},
-			expectedAction:       "manual_import",
-			expectedBlocklist:    false,
-			expectedManualImport: true,
+			expectedAction:       "delete",
+			expectedBlocklist:    true,
+			expectedManualImport: false,
 		},
 		{
 			name:                 "Import blocked state",
@@ -205,6 +205,36 @@ func TestMapStatusToAction(t *testing.T) {
 			expectedAction:       "manual_import",
 			expectedBlocklist:    false,
 			expectedManualImport: true,
+		},
+		{
+			name:          "Import blocked WITH sample file message",
+			status:        "completed",
+			trackedState:  "importBlocked",
+			trackedStatus: "warning",
+			statusMessages: []StatusMessage{
+				{
+					Title:    "Warning",
+					Messages: []string{"Sample"},
+				},
+			},
+			expectedAction:       "delete",
+			expectedBlocklist:    false,
+			expectedManualImport: false,
+		},
+		{
+			name:          "Import blocked WITH no files found message",
+			status:        "completed",
+			trackedState:  "importBlocked",
+			trackedStatus: "warning",
+			statusMessages: []StatusMessage{
+				{
+					Title:    "Warning",
+					Messages: []string{"No files found"},
+				},
+			},
+			expectedAction:       "delete",
+			expectedBlocklist:    false,
+			expectedManualImport: false,
 		},
 		// ==================== MULTI-MESSAGE TEST CASES ====================
 		// Tests for multiple simultaneous status messages to verify priority hierarchy
@@ -322,6 +352,48 @@ func TestMapStatusToAction(t *testing.T) {
 			expectedBlocklist:    false,
 			expectedManualImport: false,
 		},
+		{
+			name:          "Sample + TheXEM mapping pending - Mapping takes priority (American Pickers bug fix)",
+			status:        "completed",
+			trackedState:  "importBlocked",
+			trackedStatus: "warning",
+			statusMessages: []StatusMessage{
+				{
+					Title:    "Warning",
+					Messages: []string{"This show has individual episode mappings on TheXEM but the mapping for this episode has not been confirmed yet by their administrators. TheXEM needs manual input."},
+				},
+				{
+					Title:    "Warning",
+					Messages: []string{"Sample"},
+				},
+				{
+					Title:    "Warning",
+					Messages: []string{"This show has individual episode mappings on TheXEM but the mapping for this episode has not been confirmed yet by their administrators. TheXEM needs manual input."},
+				},
+			},
+			expectedAction:       "manual_import",
+			expectedBlocklist:    false,
+			expectedManualImport: true,
+		},
+		{
+			name:          "Sample + TBA title - Mapping takes priority",
+			status:        "completed",
+			trackedState:  "importBlocked",
+			trackedStatus: "warning",
+			statusMessages: []StatusMessage{
+				{
+					Title:    "Warning",
+					Messages: []string{"Sample"},
+				},
+				{
+					Title:    "Warning",
+					Messages: []string{"Episode has a TBA title and recently aired"},
+				},
+			},
+			expectedAction:       "manual_import",
+			expectedBlocklist:    false,
+			expectedManualImport: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -345,6 +417,33 @@ func TestMapStatusToAction(t *testing.T) {
 				t.Errorf("manualImport = %v, want %v", manualImport, tt.expectedManualImport)
 			}
 		})
+	}
+}
+
+func TestMapStatusToActionMatchedByID(t *testing.T) {
+	sonarrItem := QueueItem{
+		InstanceType:          "sonarr",
+		Status:                "completed",
+		TrackedDownloadState:  "importPending",
+		TrackedDownloadStatus: "warning",
+		StatusMessages:        []StatusMessage{{Title: "Warning", Messages: []string{"Found matching series via grab history, but release was matched to series by ID"}}},
+	}
+	radarrItem := QueueItem{
+		InstanceType:          "radarr",
+		Status:                "completed",
+		TrackedDownloadState:  "importPending",
+		TrackedDownloadStatus: "warning",
+		StatusMessages:        []StatusMessage{{Title: "Warning", Messages: []string{"Found matching series via grab history, but release was matched to series by ID"}}},
+	}
+
+	action, _, manual := mapStatusToAction(sonarrItem)
+	if action != "manual_import" || !manual {
+		t.Errorf("Sonarr matched_by_id action = %q manual=%v, want manual_import/true", action, manual)
+	}
+
+	action, _, manual = mapStatusToAction(radarrItem)
+	if action != "delete" || manual {
+		t.Errorf("Radarr matched_by_id action = %q manual=%v, want delete/false", action, manual)
 	}
 }
 
@@ -750,101 +849,207 @@ func TestDeleteQueueItem(t *testing.T) {
 	}
 }
 
-// TestTriggerManualImport verifies manual import command
+// TestTriggerManualImport verifies manual import command using scan → build → execute workflow
 func TestTriggerManualImport(t *testing.T) {
 	tests := []struct {
 		name            string
 		downloadPath    string
-		statusCode      int
+		scanStatusCode  int
+		importStatus    int
 		expectError     bool
+		queueItem       QueueItem
 		validateRequest func(*testing.T, *http.Request, map[string]interface{})
 	}{
 		{
-			name:         "Successful manual import trigger",
-			downloadPath: "/downloads/Movie.2024",
-			statusCode:   http.StatusCreated,
-			expectError:  false,
+			name:           "Successful manual import with scan and execute",
+			downloadPath:   "/downloads/Movie.2024",
+			scanStatusCode: http.StatusOK,
+			importStatus:   http.StatusCreated,
+			expectError:    false,
+			queueItem:      QueueItem{ID: 1, OutputPath: "/downloads/Movie.2024", MovieID: 42, DownloadId: "test-download-id"},
 			validateRequest: func(t *testing.T, r *http.Request, body map[string]interface{}) {
-				if body["name"] != "DownloadedEpisodesScan" && body["name"] != "DownloadedMoviesScan" {
-					t.Errorf("Command name = %q, want DownloadedEpisodesScan or DownloadedMoviesScan", body["name"])
+				if body["name"] != "ManualImport" {
+					t.Errorf("Command name = %q, want ManualImport", body["name"])
 				}
-				if body["path"] != "/downloads/Movie.2024" {
-					t.Errorf("Path = %q, want /downloads/Movie.2024", body["path"])
+				// Check that files array exists
+				if _, ok := body["files"]; !ok {
+					t.Errorf("Expected 'files' field in ManualImport command")
 				}
 			},
 		},
 		{
-			name:         "Empty path",
-			downloadPath: "",
-			statusCode:   http.StatusCreated,
-			expectError:  false,
+			name:           "Scan returns no files",
+			downloadPath:   "/downloads/empty",
+			scanStatusCode: http.StatusOK,
+			importStatus:   http.StatusCreated,
+			expectError:    true, // Should error because no files found
+			queueItem:      QueueItem{ID: 2, OutputPath: "/downloads/empty", MovieID: 43, DownloadId: "empty-download"},
 		},
 		{
-			name:         "Server error",
-			downloadPath: "/downloads/test",
-			statusCode:   http.StatusInternalServerError,
-			expectError:  true,
+			name:           "Scan fails with server error",
+			downloadPath:   "/downloads/test",
+			scanStatusCode: http.StatusInternalServerError,
+			importStatus:   http.StatusCreated,
+			expectError:    true,
+			queueItem:      QueueItem{ID: 3, OutputPath: "/downloads/test", MovieID: 44, DownloadId: "error-download"},
 		},
 		{
-			name:         "Bad request",
-			downloadPath: "/invalid/path",
-			statusCode:   http.StatusBadRequest,
-			expectError:  true,
+			name:           "Import execution fails",
+			downloadPath:   "/downloads/import-fail",
+			scanStatusCode: http.StatusOK,
+			importStatus:   http.StatusBadRequest,
+			expectError:    true,
+			queueItem:      QueueItem{ID: 4, OutputPath: "/downloads/import-fail", MovieID: 45, DownloadId: "fail-download"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Verify POST method
-				if r.Method != "POST" {
-					t.Errorf("Expected POST, got %s", r.Method)
-				}
-
-				// Verify endpoint
-				if !strings.Contains(r.URL.Path, "/api/v3/command") {
-					t.Errorf("Expected /api/v3/command in path, got %s", r.URL.Path)
-				}
-
-				// Verify content type
-				if r.Header.Get("Content-Type") != "application/json" {
-					t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
-				}
-
 				// Verify API key
 				if r.Header.Get("X-Api-Key") != "test-token" {
 					w.WriteHeader(http.StatusUnauthorized)
 					return
 				}
 
-				// Parse request body
-				var body map[string]interface{}
-				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-					t.Errorf("Failed to decode request body: %v", err)
+				// Handle command status polling (GET /api/v3/command/{id})
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/") {
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+					return
 				}
 
-				// Run custom validations
-				if tt.validateRequest != nil {
-					tt.validateRequest(t, r, body)
+				// Handle scan request (GET /api/v3/manualimport)
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/manualimport") {
+					w.WriteHeader(tt.scanStatusCode)
+					if tt.scanStatusCode == http.StatusOK {
+						// Return mock scan results based on test case
+						if tt.name == "Scan returns no files" {
+							json.NewEncoder(w).Encode([]ManualImportResource{})
+						} else {
+							// Return a valid file that can be imported (with Movie metadata for Radarr)
+							json.NewEncoder(w).Encode([]ManualImportResource{
+								{
+									Path:       tt.downloadPath + "/movie.mkv",
+									Name:       "movie.mkv",
+									Movie:      &MovieResource{ID: tt.queueItem.MovieID, Title: "Test Movie"},
+									Quality:    QualityModel{Quality: QualityDefinition{Name: "Bluray-1080p"}},
+									Rejections: []ImportRejection{}, // No rejections = importable
+								},
+							})
+						}
+					} else {
+						json.NewEncoder(w).Encode(map[string]string{"error": "scan failed"})
+					}
+					return
 				}
 
-				w.WriteHeader(tt.statusCode)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"id":    1,
-					"name":  body["name"],
-					"state": "queued",
-				})
+				// Handle import command (POST /api/v3/command)
+				if r.Method == "POST" && strings.Contains(r.URL.Path, "/api/v3/command") {
+					if r.Header.Get("Content-Type") != "application/json" {
+						t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+					}
+
+					var body map[string]interface{}
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Errorf("Failed to decode request body: %v", err)
+					}
+
+					// Run custom validations
+					if tt.validateRequest != nil {
+						tt.validateRequest(t, r, body)
+					}
+
+					w.WriteHeader(tt.importStatus)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"id":    1,
+						"name":  body["name"],
+						"state": "queued",
+					})
+					return
+				}
+
+				// Unexpected request
+				t.Errorf("Unexpected request: %s %s", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotFound)
 			}))
 			defer server.Close()
 
 			config := Config{Timeout: 5 * time.Second}
-			queueItem := QueueItem{OutputPath: tt.downloadPath}
-			err := triggerManualImport(config, server.URL, "test-token", tt.downloadPath, "sonarr", false, queueItem)
+			err := triggerManualImport(config, server.URL, "test-token", tt.downloadPath, "radarr", false, tt.queueItem)
 
 			if (err != nil) != tt.expectError {
 				t.Errorf("error = %v, expectError = %v", err, tt.expectError)
 			}
 		})
+	}
+}
+
+func TestTriggerManualImportMatchedByIDFallback(t *testing.T) {
+	var commandCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/manualimport"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode([]ManualImportResource{
+				{
+					Path:       "/downloads/Test.Series.S01E02/file.mkv",
+					Quality:    QualityModel{Quality: QualityDefinition{ID: 1, Name: "HDTV-720p"}},
+					Languages:  []Language{{ID: 1, Name: "English"}},
+					Rejections: []ImportRejection{{Reason: "Unknown Series", Type: "permanent"}},
+				},
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/series"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode([]SeriesResource{{ID: 42, Title: "Test Series"}})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/parse"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(ParseResource{
+				Series: SeriesResource{ID: 42, Title: "Test Series"},
+				ParsedEpisodeInfo: ParsedEpisodeInfo{
+					SeasonNumber:   1,
+					EpisodeNumbers: []int{2},
+				},
+			})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/episode"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode([]EpisodeResource{{ID: 555, SeriesID: 42, SeasonNumber: 1, EpisodeNumber: 2, Title: "Ep"}})
+
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/api/v3/command"):
+			commandCalled = true
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": 7})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(CommandResource{ID: 7, Status: "completed", Result: "successful"})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	queueItem := QueueItem{
+		ID:           101,
+		Title:        "Test.Series.S01E02.720p",
+		InstanceType: "sonarr",
+		OutputPath:   "/downloads/Test.Series.S01E02",
+		DownloadId:   "download-1",
+		StatusMessages: []StatusMessage{
+			{Title: "Warning", Messages: []string{"matched to series by ID"}},
+		},
+	}
+
+	config := Config{Timeout: 5 * time.Second}
+	if err := triggerManualImport(config, server.URL, "test-token", queueItem.OutputPath, "sonarr", false, queueItem); err != nil {
+		t.Fatalf("triggerManualImport fallback failed: %v", err)
+	}
+	if !commandCalled {
+		t.Error("Expected manual import command to be executed")
 	}
 }
 
@@ -1065,18 +1270,34 @@ func TestClassifyAndRemediate(t *testing.T) {
 		switch {
 		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/queue/"):
 			deleteCalls++
-			// Verify blocklist parameter for custom format items
+			// Verify blocklist parameter for items
 			if strings.Contains(r.URL.Path, "/queue/1") && r.URL.Query().Get("blocklist") != "true" {
-				t.Error("Item 1 should be deleted with blocklist=true")
+				t.Error("Item 1 (custom format) should be deleted with blocklist=true")
 			}
 			if strings.Contains(r.URL.Path, "/queue/2") && r.URL.Query().Get("blocklist") != "" {
-				t.Error("Item 2 should be deleted without blocklist parameter")
+				t.Error("Item 2 (no files) should be deleted without blocklist parameter")
+			}
+			if strings.Contains(r.URL.Path, "/queue/3") && r.URL.Query().Get("blocklist") != "true" {
+				t.Error("Item 3 (matched_by_id) should be deleted with blocklist=true")
 			}
 			w.WriteHeader(http.StatusOK)
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/manualimport"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode([]ManualImportResource{
+				{
+					Path:         "/downloads/Series.S01E01/file.mkv",
+					Name:         "file.mkv",
+					Series:       &SeriesResource{ID: 42, Title: "Matched by ID"},
+					SeasonNumber: func() *int { n := 1; return &n }(),
+					Episodes:     []EpisodeResource{{EpisodeNumber: 1}},
+				},
+			})
 
 		case r.Method == "POST" && strings.Contains(r.URL.Path, "/command"):
 			manualImportCalls++
 			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": 1})
 
 		case strings.Contains(r.URL.Path, "/queue"):
 			// Return test queue
@@ -1119,6 +1340,7 @@ func TestClassifyAndRemediate(t *testing.T) {
 						TrackedDownloadState:  "importPending",
 						TrackedDownloadStatus: "warning",
 						OutputPath:            "/downloads/Series.S01E01",
+						SeriesID:              42,
 						StatusMessages: []StatusMessage{
 							{
 								Title:    "Warning",
@@ -1150,12 +1372,12 @@ func TestClassifyAndRemediate(t *testing.T) {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Should delete 2 items (custom format and no files)
+	// Should delete 2 items (custom format, no files)
 	if deleteCalls != 2 {
 		t.Errorf("Made %d delete calls, want 2", deleteCalls)
 	}
 
-	// Should trigger 1 manual import (matched by ID)
+	// Should trigger manual import for matched_by_id
 	if manualImportCalls != 1 {
 		t.Errorf("Made %d manual import calls, want 1", manualImportCalls)
 	}
@@ -1168,6 +1390,10 @@ func TestClassifyAndRemediateDryRun(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/command/"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+
 		case r.Method == "DELETE":
 			deleteCalls++
 			w.WriteHeader(http.StatusOK)
@@ -1888,7 +2114,7 @@ func TestGetManualImportDetails(t *testing.T) {
 				SeriesID:     123,
 				OutputPath:   "/downloads/test",
 			},
-			expectedOutput: "     • Series ID: 123 (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+			expectedOutput: "     • Series ID: 123 (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → ManualImport",
 		},
 		{
 			name: "Radarr item with movie ID",
@@ -1897,7 +2123,7 @@ func TestGetManualImportDetails(t *testing.T) {
 				MovieID:      456,
 				OutputPath:   "/downloads/movie",
 			},
-			expectedOutput: "     • Movie ID: 456 (validated)\n[DRY-RUN]     • Output Path: /downloads/movie\n[DRY-RUN]     • Import Method: Command API → DownloadedMoviesScan",
+			expectedOutput: "     • Movie ID: 456 (validated)\n[DRY-RUN]     • Output Path: /downloads/movie\n[DRY-RUN]     • Import Method: Command API → ManualImport",
 		},
 		{
 			name: "Item with no IDs or path",
@@ -1912,7 +2138,7 @@ func TestGetManualImportDetails(t *testing.T) {
 				InstanceType: "sonarr",
 				OutputPath:   "/downloads/onlypath",
 			},
-			expectedOutput: "     • Output Path: /downloads/onlypath\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+			expectedOutput: "     • Output Path: /downloads/onlypath\n[DRY-RUN]     • Import Method: Command API → ManualImport",
 		},
 	}
 
@@ -1978,7 +2204,7 @@ func TestGetManualImportDetailsWithNameLookup(t *testing.T) {
 				SeriesID:     123,
 				OutputPath:   "/downloads/test",
 			},
-			expectedOutput: "     • Series ID: 123 (Test Series Name) (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+			expectedOutput: "     • Series ID: 123 (Test Series Name) (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → ManualImport",
 		},
 		{
 			name: "Radarr item with movie ID and successful lookup",
@@ -1988,7 +2214,7 @@ func TestGetManualImportDetailsWithNameLookup(t *testing.T) {
 				MovieID:      456,
 				OutputPath:   "/downloads/movie",
 			},
-			expectedOutput: "     • Movie ID: 456 (Test Movie Name, 2024) (validated)\n[DRY-RUN]     • Output Path: /downloads/movie\n[DRY-RUN]     • Import Method: Command API → DownloadedMoviesScan",
+			expectedOutput: "     • Movie ID: 456 (Test Movie Name, 2024) (validated)\n[DRY-RUN]     • Output Path: /downloads/movie\n[DRY-RUN]     • Import Method: Command API → ManualImport",
 		},
 		{
 			name: "Series lookup fails (invalid URL)",
@@ -1998,7 +2224,7 @@ func TestGetManualImportDetailsWithNameLookup(t *testing.T) {
 				SeriesID:     123,
 				OutputPath:   "/downloads/test",
 			},
-			expectedOutput: "     • Series ID: 123 (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → DownloadedEpisodesScan",
+			expectedOutput: "     • Series ID: 123 (validated)\n[DRY-RUN]     • Output Path: /downloads/test\n[DRY-RUN]     • Import Method: Command API → ManualImport",
 		},
 	}
 
@@ -2119,7 +2345,7 @@ func TestGetActionDescription(t *testing.T) {
 					},
 				},
 			},
-			expectedOutput: "→ Would MANUAL_IMPORT - matched to series by ID (series validation successful)",
+			expectedOutput: "→ Would MANUAL_IMPORT - matched to series by ID (fallback to delete on mapping failure)",
 		},
 		{
 			name:   "Manual import without path",
@@ -2351,6 +2577,12 @@ func TestExecuteManualImport(t *testing.T) {
 				if r.Header.Get("X-Api-Key") != "test-token" {
 					w.WriteHeader(http.StatusUnauthorized)
 					w.Write([]byte(`{"error":"Unauthorized"}`))
+					return
+				}
+
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/") {
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
 					return
 				}
 
@@ -3186,10 +3418,10 @@ func TestTUIItemsLoaded(t *testing.T) {
 	if tuiModel.error != "" {
 		t.Errorf("Expected no error, got %q", tuiModel.error)
 	}
-	if len(tuiModel.items) != 1 {
-		t.Errorf("Expected 1 item, got %d", len(tuiModel.items))
+	if len(tuiModel.items) != 2 {
+		t.Errorf("Expected 2 items, got %d", len(tuiModel.items))
 	}
-	if !strings.Contains(tuiModel.status, "Loaded 1 items") {
+	if !strings.Contains(tuiModel.status, "Loaded 2 items") {
 		t.Errorf("Expected status to mention loaded items, got %q", tuiModel.status)
 	}
 
@@ -3309,7 +3541,7 @@ func TestTUIFilterItems(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filtered := filterItems(tt.items)
+			filtered, _ := filterItemsWithReport(Config{}, tt.items)
 
 			if len(filtered) != tt.expectedCount {
 				t.Errorf("Expected %d items, got %d", tt.expectedCount, len(filtered))
@@ -3782,6 +4014,12 @@ func TestExecuteManualImportCommandAPI(t *testing.T) {
 					return
 				}
 
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/") {
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+					return
+				}
+
 				// Run custom request validations
 				if tt.validateRequest != nil {
 					tt.validateRequest(t, r, tt.importRequests)
@@ -3891,6 +4129,24 @@ func TestBuildManualImportRequestsComprehensive(t *testing.T) {
 			},
 			instanceType:  "sonarr",
 			expectedCount: 0, // Should skip due to ID mismatch
+		},
+		{
+			name: "Sonarr - soft rejection allowed",
+			scannedItems: []ManualImportResource{
+				{
+					Path:         "/downloads/Series.S01E02/file.mkv",
+					Series:       &SeriesResource{ID: 42, Title: "Test Series"},
+					SeasonNumber: intPtr(1),
+					Episodes:     []EpisodeResource{{ID: 123457}},
+					Rejections:   []ImportRejection{{Reason: "Episode is not monitored", Type: "warning"}},
+				},
+			},
+			queueItem: QueueItem{
+				SeriesID:   42,
+				DownloadId: "soft-reject",
+			},
+			instanceType:  "sonarr",
+			expectedCount: 1,
 		},
 		{
 			name: "Radarr - proper movie handling (no episode fields)",
@@ -4053,13 +4309,20 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 			expectSuccess:   true,
 			expectFallback:  false,
 			validateCalls: func(t *testing.T, requests *[]http.Request) {
+				var filtered []http.Request
+				for _, req := range *requests {
+					if req.Method == "GET" && strings.Contains(req.URL.Path, "/api/v3/command/") {
+						continue
+					}
+					filtered = append(filtered, req)
+				}
 				// Should have scan and command calls
-				if len(*requests) != 2 {
-					t.Errorf("Expected 2 requests (scan + command), got %d", len(*requests))
+				if len(filtered) != 2 {
+					t.Errorf("Expected 2 requests (scan + command), got %d", len(filtered))
 				}
 
 				// First request: GET scan with downloadId parameter
-				scanReq := (*requests)[0]
+				scanReq := filtered[0]
 				if scanReq.Method != "GET" {
 					t.Errorf("Expected GET for scan, got %s", scanReq.Method)
 				}
@@ -4071,7 +4334,7 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 				}
 
 				// Second request: POST command with ManualImport structure
-				cmdReq := (*requests)[1]
+				cmdReq := filtered[1]
 				if cmdReq.Method != "POST" {
 					t.Errorf("Expected POST for command, got %s", cmdReq.Method)
 				}
@@ -4089,115 +4352,8 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 				}
 			},
 		},
-		{
-			name:       "REST API fallback - empty scan results",
-			useRestAPI: true,
-			queueItem: QueueItem{
-				ID:           456,
-				Title:        "Fallback Test",
-				InstanceType: "radarr",
-				MovieID:      123,
-				OutputPath:   "/downloads/Fallback.Test.2024",
-				DownloadId:   "fallback123",
-			},
-			scanResponse:    `[]`, // Empty scan triggers fallback
-			commandResponse: `{"id": 98765, "name": "DownloadedMoviesScan", "state": "queued"}`,
-			expectSuccess:   true,
-			expectFallback:  true,
-			validateCalls: func(t *testing.T, requests *[]http.Request) {
-				// Should have scan attempt and command fallback
-				if len(*requests) != 2 {
-					t.Errorf("Expected 2 requests (scan + fallback command), got %d", len(*requests))
-				}
-
-				scanReq := (*requests)[0]
-				if scanReq.Method != "GET" {
-					t.Error("First request should be GET scan")
-				}
-
-				cmdReq := (*requests)[1]
-				if cmdReq.Method != "POST" {
-					t.Error("Second request should be POST command")
-				}
-
-				// Verify fallback command structure
-				var cmdData map[string]interface{}
-				if err := json.NewDecoder(cmdReq.Body).Decode(&cmdData); err != nil {
-					t.Fatalf("Failed to decode fallback command: %v", err)
-				}
-				if cmdData["name"] != "DownloadedMoviesScan" {
-					t.Errorf("Expected DownloadedMoviesScan fallback, got %v", cmdData["name"])
-				}
-				if cmdData["path"] != "/downloads/Fallback.Test.2024" {
-					t.Errorf("Expected exact path in fallback, got %v", cmdData["path"])
-				}
-			},
-		},
-		{
-			name:       "Command API direct - REST disabled",
-			useRestAPI: false,
-			queueItem: QueueItem{
-				ID:           789,
-				Title:        "Direct Command Test",
-				InstanceType: "sonarr",
-				SeriesID:     42,
-				OutputPath:   "/downloads/Direct.Command.Test",
-				DownloadId:   "direct123",
-			},
-			commandResponse: `{"id": 11111, "name": "DownloadedEpisodesScan", "state": "queued"}`,
-			expectSuccess:   true,
-			expectFallback:  false,
-			validateCalls: func(t *testing.T, requests *[]http.Request) {
-				// Should have only command call
-				if len(*requests) != 1 {
-					t.Errorf("Expected 1 request (direct command), got %d", len(*requests))
-				}
-
-				cmdReq := (*requests)[0]
-				if cmdReq.Method != "POST" {
-					t.Errorf("Expected POST for direct command, got %s", cmdReq.Method)
-				}
-				if !strings.Contains(cmdReq.URL.String(), "/api/v3/command") {
-					t.Errorf("Expected command endpoint, got %s", cmdReq.URL.String())
-				}
-
-				// Verify direct command structure
-				var cmdData map[string]interface{}
-				if err := json.NewDecoder(cmdReq.Body).Decode(&cmdData); err != nil {
-					t.Fatalf("Failed to decode direct command: %v", err)
-				}
-				if cmdData["name"] != "DownloadedEpisodesScan" {
-					t.Errorf("Expected DownloadedEpisodesScan, got %v", cmdData["name"])
-				}
-				if cmdData["path"] != "/downloads/Direct.Command.Test" {
-					t.Errorf("Expected exact path, got %v", cmdData["path"])
-				}
-				if cmdData["importMode"] != "Move" {
-					t.Errorf("Expected Move importMode, got %v", cmdData["importMode"])
-				}
-			},
-		},
-		{
-			name:       "REST API scan failure - fallback to command",
-			useRestAPI: true,
-			queueItem: QueueItem{
-				ID:           999,
-				Title:        "Scan Failure Test",
-				InstanceType: "sonarr",
-				SeriesID:     42,
-				OutputPath:   "/downloads/Scan.Failure.Test",
-			},
-			scanResponse:    "", // Will trigger 500 error
-			commandResponse: `{"id": 22222, "name": "DownloadedEpisodesScan", "state": "queued"}`,
-			expectSuccess:   true,
-			expectFallback:  true,
-			validateCalls: func(t *testing.T, requests *[]http.Request) {
-				// Should have failed scan and successful fallback
-				if len(*requests) != 2 {
-					t.Errorf("Expected 2 requests (failed scan + fallback command), got %d", len(*requests))
-				}
-			},
-		},
+		// NOTE: Test cases for DownloadedEpisodesScan/DownloadedMoviesScan fallback removed
+		// These tested obsolete behavior - the correct approach is scan → build → execute with ManualImport command
 	}
 
 	for _, tt := range tests {
@@ -4221,6 +4377,11 @@ func TestTriggerManualImportHybridWorkflow(t *testing.T) {
 				}
 
 				switch {
+				case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/"):
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.Write([]byte(`{"id": 54321, "status": "completed", "result": "successful"}`))
+
 				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "GET":
 					// Scan endpoint
 					if tt.scanResponse == "" {
@@ -4482,8 +4643,17 @@ func TestTUIItemRemovalAfterAction(t *testing.T) {
 
 // ========== ENHANCED MANUAL IMPORT TESTS ==========
 
-// TestHybridManualImportWorkflow tests the complete hybrid API workflow
-func TestHybridManualImportWorkflow(t *testing.T) {
+// NOTE: TestHybridManualImportWorkflow has been temporarily disabled because it tests
+// the OLD DownloadedEpisodesScan fallback behavior that was removed in this PR.
+// The test needs to be rewritten to test the CORRECT flow: scan → build → execute with ManualImport command.
+// The functionality is already tested by TestTriggerManualImport and TestTriggerManualImportHybridWorkflow.
+/*
+// NOTE: DISABLED - TestHybridManualImportWorkflow_OBSOLETE tests the OLD DownloadedEpisodesScan fallback
+// behavior that was removed. The test needs to be rewritten to test the CORRECT flow: scan → build → execute.
+// The functionality is already tested by TestTriggerManualImport and TestTriggerManualImportHybridWorkflow.
+// TestHybridManualImportWorkflow_OBSOLETE tests the complete hybrid API workflow
+func TestHybridManualImportWorkflow_OBSOLETE(t *testing.T) {
+	t.Skip("DISABLED: This test validates obsolete DownloadedEpisodesScan fallback behavior that was removed")
 	tests := []struct {
 		name           string
 		useRestAPI     bool
@@ -4762,6 +4932,7 @@ func TestHybridManualImportWorkflow(t *testing.T) {
 		})
 	}
 }
+*/
 
 // TestManualImportIDValidation tests the critical ID validation logic
 func TestManualImportIDValidation(t *testing.T) {
@@ -4810,7 +4981,7 @@ func TestManualImportIDValidation(t *testing.T) {
 				}
 			]`,
 			expectedResult: "skipped",
-			expectError:    false,
+			expectError:    true,
 		},
 		{
 			name: "Valid Radarr movie ID match",
@@ -4846,7 +5017,7 @@ func TestManualImportIDValidation(t *testing.T) {
 				}
 			]`,
 			expectedResult: "skipped",
-			expectError:    false,
+			expectError:    true,
 		},
 		{
 			name: "Mixed files with some valid",
@@ -4884,8 +5055,8 @@ func TestManualImportIDValidation(t *testing.T) {
 				OutputPath:   "/downloads/empty",
 			},
 			scanResponse:   `[]`,
-			expectedResult: "empty", // Should succeed via fallback to Command API
-			expectError:    false,
+			expectedResult: "empty",
+			expectError:    true,
 		},
 	}
 
@@ -4894,6 +5065,12 @@ func TestManualImportIDValidation(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("X-Api-Key") != "test-token" {
 					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/") {
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
 					return
 				}
 
@@ -4924,18 +5101,22 @@ func TestManualImportIDValidation(t *testing.T) {
 					t.Errorf("Expected successful import, got error: %v", err)
 				}
 			case "skipped":
-				// Should succeed via fallback to Command API
-				if err != nil {
+				if !tt.expectError && err != nil {
 					t.Errorf("Expected success via fallback, got error: %v", err)
+				}
+				if tt.expectError && err == nil {
+					t.Errorf("Expected error for skipped files, got success")
 				}
 			case "partial":
 				if err != nil {
 					t.Errorf("Expected partial success, got error: %v", err)
 				}
 			case "empty":
-				// Should succeed via fallback to Command API
-				if err != nil {
+				if !tt.expectError && err != nil {
 					t.Errorf("Expected success via fallback for empty scan, got error: %v", err)
+				}
+				if tt.expectError && err == nil {
+					t.Errorf("Expected error for empty scan, got success")
 				}
 			}
 
@@ -4960,7 +5141,7 @@ func TestManualImportErrorHandling(t *testing.T) {
 		errorMessage   string
 	}{
 		{
-			name:       "REST API scan failure falls back to command",
+			name:       "REST API scan failure returns error",
 			useRestAPI: true,
 			queueItem: QueueItem{
 				ID:           123,
@@ -4970,8 +5151,8 @@ func TestManualImportErrorHandling(t *testing.T) {
 			},
 			scanStatus:     http.StatusBadRequest,
 			scanResponse:   `{"error": "Invalid path"}`,
-			expectError:    false,
-			expectFallback: true,
+			expectError:    true,
+			expectFallback: false,
 		},
 		{
 			name:       "REST API import failure",
@@ -5027,13 +5208,26 @@ func TestManualImportErrorHandling(t *testing.T) {
 				}
 
 				switch {
+				case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/"):
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+
 				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "GET":
-					w.WriteHeader(tt.scanStatus)
-					w.Write([]byte(tt.scanResponse))
+					if tt.scanStatus == 0 {
+						w.WriteHeader(http.StatusOK)
+						w.Write([]byte(`[]`))
+					} else {
+						w.WriteHeader(tt.scanStatus)
+						w.Write([]byte(tt.scanResponse))
+					}
 
 				case strings.Contains(r.URL.Path, "/manualimport") && r.Method == "POST":
-					w.WriteHeader(tt.importStatus)
-					w.Write([]byte(`{"error": "Import failed"}`))
+					if tt.importStatus == 0 {
+						w.WriteHeader(http.StatusOK)
+					} else {
+						w.WriteHeader(tt.importStatus)
+						w.Write([]byte(`{"error": "Import failed"}`))
+					}
 
 				case strings.Contains(r.URL.Path, "/command"):
 					if tt.name == "Command API failure" {
@@ -5047,6 +5241,9 @@ func TestManualImportErrorHandling(t *testing.T) {
 							"state": "queued",
 						})
 					}
+
+				default:
+					w.WriteHeader(http.StatusNotFound)
 				}
 			}))
 			defer server.Close()
@@ -5105,6 +5302,11 @@ func TestManualImportPathValidation(t *testing.T) {
 			var actualPath string
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/") {
+					w.WriteHeader(http.StatusOK)
+					json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+					return
+				}
 				if strings.Contains(r.URL.Path, "/command") {
 					var cmdData map[string]interface{}
 					json.NewDecoder(r.Body).Decode(&cmdData)
@@ -5585,7 +5787,7 @@ func TestMapStatusToActionWithQualityData(t *testing.T) {
 			expectedManualImp: true,
 		},
 		{
-			name: "Matched by ID - title match OK",
+			name: "Matched by ID - always delete with blocklist",
 			item: QueueItem{
 				ID:     3,
 				Title:  "Test Show",
@@ -5598,12 +5800,12 @@ func TestMapStatusToActionWithQualityData(t *testing.T) {
 					Similarity: 98.0,
 				},
 			},
-			expectedAction:    "manual_import",
-			expectedBlocklist: false,
-			expectedManualImp: true,
+			expectedAction:    "delete",
+			expectedBlocklist: true,
+			expectedManualImp: false,
 		},
 		{
-			name: "Matched by ID - title mismatch",
+			name: "Matched by ID - title mismatch also deletes",
 			item: QueueItem{
 				ID:     4,
 				Title:  "Wrong Show",
@@ -5783,3 +5985,568 @@ func TestFetchMovieFile(t *testing.T) {
 }
 
 // ========== HELPER FUNCTIONS ==========
+
+// ========== TESTS: FolderName and ReleaseType Fields ==========
+
+// TestBuildManualImportRequests_FolderNameAndReleaseType verifies folder name extraction and release type setting
+func TestBuildManualImportRequests_FolderNameAndReleaseType(t *testing.T) {
+	config := Config{Verbose: false}
+
+	tests := []struct {
+		name           string
+		inputPath      string
+		expectedFolder string
+		instanceType   string
+		useReleaseType bool // Only Sonarr uses releaseType
+	}{
+		{
+			name:           "Standard Sonarr release path",
+			inputPath:      "/downloads/Sonarr/American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy/American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy.mp4",
+			expectedFolder: "American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy",
+			instanceType:   "sonarr",
+			useReleaseType: true,
+		},
+		{
+			name:           "Simple Sonarr path",
+			inputPath:      "/downloads/Release.Name/file.mkv",
+			expectedFolder: "Release.Name",
+			instanceType:   "sonarr",
+			useReleaseType: true,
+		},
+		{
+			name:           "Deep nested Sonarr path",
+			inputPath:      "/mnt/storage/downloads/complete/Series.S01E01.1080p/episode.mkv",
+			expectedFolder: "Series.S01E01.1080p",
+			instanceType:   "sonarr",
+			useReleaseType: true,
+		},
+		{
+			name:           "Path with spaces - Sonarr",
+			inputPath:      "/downloads/My Series S01E01/My Series S01E01.mkv",
+			expectedFolder: "My Series S01E01",
+			instanceType:   "sonarr",
+			useReleaseType: true,
+		},
+		{
+			name:           "Radarr movie path - no releaseType",
+			inputPath:      "/downloads/Movie.2024.1080p/Movie.2024.1080p.mkv",
+			expectedFolder: "",
+			instanceType:   "radarr",
+			useReleaseType: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create mock scanned item
+			scannedItems := []ManualImportResource{
+				{
+					Path: tt.inputPath,
+					Quality: QualityModel{
+						Quality: QualityDefinition{
+							ID:   10,
+							Name: "WEBDL-1080p",
+						},
+					},
+					Languages: []Language{{ID: 1, Name: "English"}},
+				},
+			}
+
+			// Create queue item based on instance type
+			// Use empty title to bypass title matching validation
+			queueItem := QueueItem{
+				ID:         1,
+				Title:      "",
+				DownloadId: "test-download-id",
+			}
+
+			if tt.instanceType == "sonarr" {
+				scannedItems[0].Series = &SeriesResource{
+					ID:    484,
+					Title: "Test Series",
+				}
+				seasonNum := 1
+				scannedItems[0].SeasonNumber = &seasonNum
+				scannedItems[0].Episodes = []EpisodeResource{
+					{
+						ID:            58363,
+						SeasonNumber:  1,
+						EpisodeNumber: 1,
+					},
+				}
+				queueItem.SeriesID = 484
+			} else {
+				scannedItems[0].Movie = &MovieResource{
+					ID:    456,
+					Title: "Test Movie",
+					Year:  2024,
+				}
+				queueItem.MovieID = 456
+			}
+
+			// Build import requests
+			requests := buildManualImportRequests(config, scannedItems, queueItem, tt.instanceType)
+
+			if len(requests) != 1 {
+				t.Fatalf("Expected 1 request, got %d", len(requests))
+			}
+
+			req := requests[0]
+
+			// Verify FolderName
+			if tt.instanceType == "sonarr" {
+				if req.FolderName != tt.expectedFolder {
+					t.Errorf("FolderName = %q, want %q", req.FolderName, tt.expectedFolder)
+				}
+			} else {
+				// Radarr doesn't set FolderName
+				if req.FolderName != "" {
+					t.Errorf("Radarr should not set FolderName, got %q", req.FolderName)
+				}
+			}
+
+			// Verify ReleaseType
+			if tt.useReleaseType {
+				if req.ReleaseType != "singleEpisode" {
+					t.Errorf("ReleaseType = %q, want %q", req.ReleaseType, "singleEpisode")
+				}
+			} else {
+				// Radarr doesn't use releaseType
+				if req.ReleaseType != "" {
+					t.Errorf("Radarr should not set ReleaseType, got %q", req.ReleaseType)
+				}
+			}
+
+			// Verify other essential fields are populated
+			if req.Path != tt.inputPath {
+				t.Errorf("Path = %q, want %q", req.Path, tt.inputPath)
+			}
+			if req.DownloadID != "test-download-id" {
+				t.Errorf("DownloadID = %q, want %q", req.DownloadID, "test-download-id")
+			}
+		})
+	}
+}
+
+// TestManualImportRequest_JSONMarshaling verifies JSON field names and structure
+func TestManualImportRequest_JSONMarshaling(t *testing.T) {
+	tests := []struct {
+		name           string
+		request        ManualImportRequest
+		expectedFields map[string]interface{}
+		omittedFields  []string
+	}{
+		{
+			name: "Sonarr request with all fields",
+			request: ManualImportRequest{
+				Path:         "/downloads/folder/file.mkv",
+				FolderName:   "folder",
+				SeriesID:     484,
+				EpisodeIDs:   []int{58363},
+				ReleaseType:  "singleEpisode",
+				DownloadID:   "test-download-id",
+				ReleaseGroup: "GROUP",
+				ImportMode:   "auto",
+			},
+			expectedFields: map[string]interface{}{
+				"path":         "/downloads/folder/file.mkv",
+				"folderName":   "folder",
+				"seriesId":     float64(484),
+				"episodeIds":   []interface{}{float64(58363)},
+				"releaseType":  "singleEpisode",
+				"downloadId":   "test-download-id",
+				"releaseGroup": "GROUP",
+				"importMode":   "auto",
+			},
+			omittedFields: []string{"movieId", "seasonNumber"},
+		},
+		{
+			name: "Radarr request without folderName/releaseType",
+			request: ManualImportRequest{
+				Path:         "/downloads/movie/file.mkv",
+				MovieID:      456,
+				DownloadID:   "movie-download-id",
+				ReleaseGroup: "GROUP",
+				ImportMode:   "auto",
+			},
+			expectedFields: map[string]interface{}{
+				"path":         "/downloads/movie/file.mkv",
+				"movieId":      float64(456),
+				"downloadId":   "movie-download-id",
+				"releaseGroup": "GROUP",
+				"importMode":   "auto",
+			},
+			omittedFields: []string{"folderName", "releaseType", "seriesId", "episodeIds"},
+		},
+		{
+			name: "Minimal request - verify omitempty",
+			request: ManualImportRequest{
+				Path: "/downloads/minimal.mkv",
+			},
+			expectedFields: map[string]interface{}{
+				"path": "/downloads/minimal.mkv",
+			},
+			omittedFields: []string{"folderName", "releaseType", "seriesId", "movieId", "downloadId"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jsonBytes, err := json.Marshal(tt.request)
+			if err != nil {
+				t.Fatalf("Failed to marshal JSON: %v", err)
+			}
+
+			var result map[string]interface{}
+			if err := json.Unmarshal(jsonBytes, &result); err != nil {
+				t.Fatalf("Failed to unmarshal JSON: %v", err)
+			}
+
+			// Verify expected fields are present and correct
+			for field, expectedValue := range tt.expectedFields {
+				actualValue, exists := result[field]
+				if !exists {
+					t.Errorf("Expected field %q not found in JSON", field)
+					continue
+				}
+
+				// Handle array comparison
+				if expectedArray, ok := expectedValue.([]interface{}); ok {
+					actualArray, ok := actualValue.([]interface{})
+					if !ok {
+						t.Errorf("Field %q: expected array, got %T", field, actualValue)
+						continue
+					}
+					if len(actualArray) != len(expectedArray) {
+						t.Errorf("Field %q: array length = %d, want %d", field, len(actualArray), len(expectedArray))
+						continue
+					}
+					for i := range expectedArray {
+						if actualArray[i] != expectedArray[i] {
+							t.Errorf("Field %q[%d]: got %v, want %v", field, i, actualArray[i], expectedArray[i])
+						}
+					}
+				} else if actualValue != expectedValue {
+					t.Errorf("Field %q: got %v, want %v", field, actualValue, expectedValue)
+				}
+			}
+
+			// Verify omitted fields are not present (omitempty behavior)
+			for _, field := range tt.omittedFields {
+				if _, exists := result[field]; exists {
+					t.Errorf("Field %q should be omitted but found in JSON with value: %v", field, result[field])
+				}
+			}
+		})
+	}
+}
+
+// TestExecuteManualImport_PayloadStructure verifies complete payload structure sent to API
+func TestExecuteManualImport_PayloadStructure(t *testing.T) {
+	var capturedPayload ManualImportCommand
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/") {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+			return
+		}
+		// Verify endpoint
+		if !strings.Contains(r.URL.Path, "/api/v3/command") {
+			t.Errorf("Expected /api/v3/command, got %s", r.URL.Path)
+		}
+
+		// Verify method
+		if r.Method != "POST" {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+
+		// Verify content type
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
+		}
+
+		// Capture and decode payload
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("Failed to read request body: %v", err)
+		}
+
+		if err := json.Unmarshal(body, &capturedPayload); err != nil {
+			t.Fatalf("Failed to unmarshal payload: %v", err)
+		}
+
+		// Send success response
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":    1,
+			"name":  "ManualImport",
+			"state": "queued",
+		})
+	}))
+	defer server.Close()
+
+	config := Config{Timeout: 5 * time.Second}
+
+	// Create test import requests with new fields
+	importRequests := []ManualImportRequest{
+		{
+			Path:         "/downloads/American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy/file.mp4",
+			FolderName:   "American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy",
+			SeriesID:     484,
+			EpisodeIDs:   []int{58363},
+			ReleaseType:  "singleEpisode",
+			DownloadID:   "test-download",
+			ReleaseGroup: "BeechyBoy",
+			Quality: QualityModel{
+				Quality: QualityDefinition{ID: 10, Name: "WEBDL-1080p"},
+			},
+			Languages:  []Language{{ID: 1, Name: "English"}},
+			ImportMode: "auto",
+		},
+	}
+
+	// Execute manual import
+	err := executeManualImport(config, server.URL, "test-token", importRequests)
+	if err != nil {
+		t.Fatalf("executeManualImport failed: %v", err)
+	}
+
+	// Verify command structure
+	if capturedPayload.Name != "ManualImport" {
+		t.Errorf("Command name = %q, want %q", capturedPayload.Name, "ManualImport")
+	}
+
+	if capturedPayload.ImportMode != "auto" {
+		t.Errorf("ImportMode = %q, want %q", capturedPayload.ImportMode, "auto")
+	}
+
+	if len(capturedPayload.Files) != 1 {
+		t.Fatalf("Files count = %d, want 1", len(capturedPayload.Files))
+	}
+
+	file := capturedPayload.Files[0]
+
+	// Verify new fields are present in payload
+	if file.FolderName != "American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy" {
+		t.Errorf("FolderName = %q, want %q", file.FolderName, "American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy")
+	}
+
+	if file.ReleaseType != "singleEpisode" {
+		t.Errorf("ReleaseType = %q, want %q", file.ReleaseType, "singleEpisode")
+	}
+
+	// Verify other essential fields
+	if file.Path != importRequests[0].Path {
+		t.Errorf("Path = %q, want %q", file.Path, importRequests[0].Path)
+	}
+
+	if file.SeriesID != 484 {
+		t.Errorf("SeriesID = %d, want 484", file.SeriesID)
+	}
+
+	if len(file.EpisodeIDs) != 1 || file.EpisodeIDs[0] != 58363 {
+		t.Errorf("EpisodeIDs = %v, want [58363]", file.EpisodeIDs)
+	}
+
+	if file.DownloadID != "test-download" {
+		t.Errorf("DownloadID = %q, want %q", file.DownloadID, "test-download")
+	}
+}
+
+// TestTriggerManualImport_EndToEnd verifies complete workflow with new fields
+func TestTriggerManualImport_EndToEnd(t *testing.T) {
+	var scanCalled bool
+	var executeCalled bool
+	var capturedCommand ManualImportCommand
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/command/"):
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(CommandResource{ID: 1, Status: "completed", Result: "successful"})
+
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v3/manualimport"):
+			scanCalled = true
+			// Return scan response with American Pickers example
+			w.WriteHeader(http.StatusOK)
+			seasonNum := 27
+			json.NewEncoder(w).Encode([]ManualImportResource{
+				{
+					Path: "/downloads/Sonarr/American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy/American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy.mp4",
+					Series: &SeriesResource{
+						ID:    484,
+						Title: "American Pickers",
+					},
+					SeasonNumber: &seasonNum,
+					Episodes: []EpisodeResource{
+						{
+							ID:            58363,
+							SeasonNumber:  27,
+							EpisodeNumber: 10,
+						},
+					},
+					Quality: QualityModel{
+						Quality: QualityDefinition{ID: 10, Name: "WEBDL-1080p"},
+					},
+					Languages:    []Language{{ID: 1, Name: "English"}},
+					ReleaseGroup: "BeechyBoy",
+				},
+			})
+
+		case r.Method == "POST" && strings.Contains(r.URL.Path, "/api/v3/command"):
+			executeCalled = true
+			// Capture command payload
+			body, _ := io.ReadAll(r.Body)
+			json.Unmarshal(body, &capturedCommand)
+
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"id":    1,
+				"name":  "ManualImport",
+				"state": "queued",
+			})
+		}
+	}))
+	defer server.Close()
+
+	config := Config{
+		Timeout: 5 * time.Second,
+		Verbose: false,
+	}
+
+	queueItem := QueueItem{
+		ID:         123,
+		Title:      "American Pickers",
+		SeriesID:   484,
+		OutputPath: "/downloads/Sonarr/American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy",
+		DownloadId: "test-download-id",
+	}
+
+	// Trigger manual import
+	err := triggerManualImport(config, server.URL, "test-token", queueItem.OutputPath, "sonarr", false, queueItem)
+	if err != nil {
+		t.Fatalf("triggerManualImport failed: %v", err)
+	}
+
+	// Verify both API calls were made
+	if !scanCalled {
+		t.Error("Scan API was not called")
+	}
+	if !executeCalled {
+		t.Error("Execute API was not called")
+	}
+
+	// Verify command structure
+	if capturedCommand.Name != "ManualImport" {
+		t.Errorf("Command name = %q, want ManualImport", capturedCommand.Name)
+	}
+
+	if len(capturedCommand.Files) != 1 {
+		t.Fatalf("Files count = %d, want 1", len(capturedCommand.Files))
+	}
+
+	file := capturedCommand.Files[0]
+
+	// Verify NEW fields are present in final payload
+	if file.FolderName != "American.Pickers.S27E10.1080p.WEB.H264-BeechyBoy" {
+		t.Errorf("FolderName not set correctly in end-to-end workflow: got %q", file.FolderName)
+	}
+
+	if file.ReleaseType != "singleEpisode" {
+		t.Errorf("ReleaseType not set correctly in end-to-end workflow: got %q", file.ReleaseType)
+	}
+
+	// Verify other fields are still correct
+	if file.SeriesID != 484 {
+		t.Errorf("SeriesID = %d, want 484", file.SeriesID)
+	}
+
+	if len(file.EpisodeIDs) != 1 {
+		t.Errorf("EpisodeIDs count = %d, want 1", len(file.EpisodeIDs))
+	}
+}
+
+// TestBuildManualImportRequests_EdgeCases verifies edge cases for folder name extraction
+func TestBuildManualImportRequests_EdgeCases(t *testing.T) {
+	config := Config{Verbose: false}
+
+	tests := []struct {
+		name           string
+		inputPath      string
+		expectedFolder string
+		shouldSucceed  bool
+	}{
+		{
+			name:           "Root-level path",
+			inputPath:      "/file.mkv",
+			expectedFolder: "/",
+			shouldSucceed:  true,
+		},
+		{
+			name:           "Path with trailing slash",
+			inputPath:      "/downloads/folder/",
+			expectedFolder: "folder",
+			shouldSucceed:  true,
+		},
+		{
+			name:           "Path with dots in folder name",
+			inputPath:      "/downloads/Series.S01E01.720p/file.mkv",
+			expectedFolder: "Series.S01E01.720p",
+			shouldSucceed:  true,
+		},
+		{
+			name:           "Path with special characters",
+			inputPath:      "/downloads/Series (2024) [1080p]/file.mkv",
+			expectedFolder: "Series (2024) [1080p]",
+			shouldSucceed:  true,
+		},
+		{
+			name:           "Deeply nested path",
+			inputPath:      "/mnt/data/media/tv/downloads/complete/Series.S01E01/file.mkv",
+			expectedFolder: "Series.S01E01",
+			shouldSucceed:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			seasonNum := 1
+			scannedItems := []ManualImportResource{
+				{
+					Path: tt.inputPath,
+					Series: &SeriesResource{
+						ID:    1,
+						Title: "Test",
+					},
+					SeasonNumber: &seasonNum,
+					Episodes: []EpisodeResource{
+						{ID: 1, SeasonNumber: 1, EpisodeNumber: 1},
+					},
+					Quality:   QualityModel{Quality: QualityDefinition{ID: 1, Name: "HDTV-720p"}},
+					Languages: []Language{{ID: 1, Name: "English"}},
+				},
+			}
+
+			queueItem := QueueItem{
+				SeriesID: 1,
+			}
+
+			requests := buildManualImportRequests(config, scannedItems, queueItem, "sonarr")
+
+			if tt.shouldSucceed {
+				if len(requests) != 1 {
+					t.Fatalf("Expected 1 request, got %d", len(requests))
+				}
+
+				if requests[0].FolderName != tt.expectedFolder {
+					t.Errorf("FolderName = %q, want %q", requests[0].FolderName, tt.expectedFolder)
+				}
+			} else {
+				if len(requests) != 0 {
+					t.Errorf("Expected 0 requests for invalid path, got %d", len(requests))
+				}
+			}
+		})
+	}
+}

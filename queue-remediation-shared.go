@@ -6,12 +6,14 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	neturl "net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -37,6 +39,8 @@ type QueueItem struct {
 	InstanceURL           string             `json:"-"`
 	InstanceType          string             `json:"-"`
 	SeriesID              int                `json:"seriesId,omitempty"`
+	EpisodeID             int                `json:"episodeId,omitempty"`
+	EpisodeIDs            []int              `json:"episodeIds,omitempty"`
 	MovieID               int                `json:"movieId,omitempty"`
 	ExistingQuality       *QualityModel      `json:"-"` // Quality of existing file on disk
 	QualityComparison     *QualityComparison `json:"-"` // Result of quality comparison
@@ -85,12 +89,16 @@ type MovieResource struct {
 
 // EpisodeResource represents an episode in Sonarr
 type EpisodeResource struct {
-	ID            int    `json:"id"`
-	SeasonNumber  int    `json:"seasonNumber"`
-	EpisodeNumber int    `json:"episodeNumber"`
-	Title         string `json:"title"`
+	ID                    int    `json:"id"`
+	SeriesID              int    `json:"seriesId"`
+	SeasonNumber          int    `json:"seasonNumber"`
+	EpisodeNumber         int    `json:"episodeNumber"`
+	AbsoluteEpisodeNumber int    `json:"absoluteEpisodeNumber,omitempty"`
+	Title                 string `json:"title"`
+	AirDateUtc            string `json:"airDateUtc,omitempty"`
 }
 
+// QualityModel represents quality information
 // QualityModel represents quality information
 type QualityModel struct {
 	Quality  QualityDefinition `json:"quality"`
@@ -193,6 +201,7 @@ type TitleMatchResult struct {
 // ManualImportRequest represents a manual import request for individual files
 type ManualImportRequest struct {
 	Path         string       `json:"path"`
+	FolderName   string       `json:"folderName,omitempty"`
 	SeriesID     int          `json:"seriesId,omitempty"`
 	MovieID      int          `json:"movieId,omitempty"`
 	SeasonNumber int          `json:"seasonNumber,omitempty"`
@@ -200,6 +209,7 @@ type ManualImportRequest struct {
 	Quality      QualityModel `json:"quality,omitempty"`
 	Languages    []Language   `json:"languages,omitempty"`
 	ReleaseGroup string       `json:"releaseGroup,omitempty"`
+	ReleaseType  string       `json:"releaseType,omitempty"`
 	DownloadID   string       `json:"downloadId,omitempty"`
 	IndexerFlags int          `json:"indexerFlags,omitempty"`
 	ImportMode   string       `json:"importMode,omitempty"`
@@ -210,6 +220,44 @@ type ManualImportCommand struct {
 	Name       string                `json:"name"`
 	Files      []ManualImportRequest `json:"files"`
 	ImportMode string                `json:"importMode"`
+}
+
+// ManualImportReprocessResource represents a resource for POST /api/v3/manualimport
+type ManualImportReprocessResource struct {
+	ID           int          `json:"id,omitempty"`
+	Path         string       `json:"path"`
+	SeriesID     int          `json:"seriesId,omitempty"`
+	SeasonNumber int          `json:"seasonNumber,omitempty"`
+	EpisodeIDs   []int        `json:"episodeIds,omitempty"`
+	Quality      QualityModel `json:"quality,omitempty"`
+	Languages    []Language   `json:"languages,omitempty"`
+	ReleaseGroup string       `json:"releaseGroup,omitempty"`
+	DownloadID   string       `json:"downloadId,omitempty"`
+	IndexerFlags int          `json:"indexerFlags,omitempty"`
+	ReleaseType  string       `json:"releaseType,omitempty"`
+}
+
+// CommandResource represents a command status response
+type CommandResource struct {
+	ID        int    `json:"id"`
+	Status    string `json:"status"`
+	Result    string `json:"result"`
+	Message   string `json:"message"`
+	Exception string `json:"exception"`
+}
+
+// ParseResource represents Sonarr parse endpoint response (partial)
+type ParseResource struct {
+	Series            SeriesResource    `json:"series"`
+	Episodes          []EpisodeResource `json:"episodes"`
+	ParsedEpisodeInfo ParsedEpisodeInfo `json:"parsedEpisodeInfo"`
+}
+
+// ParsedEpisodeInfo represents parsed episode details from release title
+type ParsedEpisodeInfo struct {
+	SeasonNumber           int   `json:"seasonNumber"`
+	EpisodeNumbers         []int `json:"episodeNumbers"`
+	AbsoluteEpisodeNumbers []int `json:"absoluteEpisodeNumbers"`
 }
 
 // Config represents the application configuration
@@ -224,6 +272,8 @@ type Config struct {
 	Debug        bool
 }
 
+var errManualImportNoMapping = errors.New("manual import mapping not possible")
+
 // sanitizeURL removes sensitive information from URLs for logging
 func sanitizeURL(rawURL string) string {
 	parsed, err := neturl.Parse(rawURL)
@@ -237,62 +287,73 @@ func sanitizeURL(rawURL string) string {
 
 // mapStatusToAction determines the appropriate action for a queue item based on its status
 func mapStatusToAction(item QueueItem) (action string, blocklist bool, manualImport bool) {
-	if item.Status == "failed" || strings.EqualFold(item.TrackedDownloadStatus, "warning") && strings.Contains(strings.ToLower(item.ErrorMessage), "failed") {
-		return "delete", false, false
-	}
+	statusLower := strings.ToLower(item.Status)
+	stateLower := strings.ToLower(item.TrackedDownloadState)
+	healthLower := strings.ToLower(item.TrackedDownloadStatus)
 
 	reason, shouldBlocklist := parseStatusMessages(item.StatusMessages)
 
+	// Hard failures
+	if statusLower == "failed" || stateLower == "failed" || stateLower == "failedpending" || healthLower == "error" {
+		return "delete", shouldBlocklist, false
+	}
+
+	// Import blocked needs intervention
+	if stateLower == "importblocked" || strings.Contains(strings.ToLower(item.ErrorMessage), "import blocked") {
+		if reason == "custom_format_no_upgrade" || reason == "quality_no_upgrade" {
+			return "delete", true, false
+		}
+		// Sample files and no-files should be deleted, not manual imported
+		if reason == "sample_file" || reason == "no_files_found" {
+			return "delete", false, false
+		}
+		if item.TitleMatchResult != nil && !item.TitleMatchResult.IsMatch {
+			return "delete", true, false
+		}
+		return "manual_import", false, true
+	}
+
 	switch reason {
 	case "custom_format_no_upgrade":
-		// If we have quality comparison data, verify it's actually not an upgrade
 		if item.QualityComparison != nil {
 			if item.QualityComparison.IsUpgrade {
-				// Status message says no upgrade, but our analysis says it IS an upgrade
-				// Attempt manual import instead of deleting
 				return "manual_import", false, true
 			}
-			// Confirmed not an upgrade, safe to delete
 			return "delete", shouldBlocklist, false
 		}
-		// No quality data, trust the status message
 		return "delete", shouldBlocklist, false
 	case "quality_no_upgrade":
-		// If we have quality comparison data, verify it's actually not an upgrade
 		if item.QualityComparison != nil {
 			if item.QualityComparison.IsUpgrade {
-				// Status message says no upgrade, but our analysis says it IS an upgrade
-				// This indicates a discrepancy - attempt manual import
 				return "manual_import", false, true
 			}
 			if item.QualityComparison.IsDowngrade {
-				// Confirmed downgrade, delete with blocklist
 				return "delete", true, false
 			}
-			// Same quality or confirmed not an upgrade, safe to delete
 			return "delete", shouldBlocklist, false
 		}
-		// No quality data, trust the status message
 		return "delete", shouldBlocklist, false
 	case "no_files_found":
 		return "delete", shouldBlocklist, false
 	case "sample_file":
 		return "delete", shouldBlocklist, false
 	case "matched_by_id":
-		// Validate title match if available
-		if item.TitleMatchResult != nil && !item.TitleMatchResult.IsMatch {
-			// Title mismatch detected, safer to delete than risk wrong import
-			return "delete", true, false
+		// Sonarr: attempt manual import with downloadId/library fallback.
+		// Radarr: keep delete behavior.
+		if item.InstanceType == "sonarr" {
+			return "manual_import", false, true
 		}
+		return "delete", true, false
+	case "mapping_pending":
 		return "manual_import", false, true
 	}
 
-	if item.TrackedDownloadState == "importBlocked" || strings.Contains(strings.ToLower(item.ErrorMessage), "import blocked") {
-		// Check title match for import blocked items
-		if item.TitleMatchResult != nil && !item.TitleMatchResult.IsMatch {
-			// Title mismatch, don't attempt import
-			return "delete", true, false
-		}
+	// Warnings and degraded health on completed downloads should be handled
+	if statusLower == "warning" || healthLower == "warning" {
+		return "manual_import", false, true
+	}
+
+	if stateLower == "importpending" && reason != "unknown" {
 		return "manual_import", false, true
 	}
 
@@ -301,7 +362,7 @@ func mapStatusToAction(item QueueItem) (action string, blocklist bool, manualImp
 
 // parseStatusMessages analyzes status messages to determine the reason for queue item status
 func parseStatusMessages(statusMessages []StatusMessage) (string, bool) {
-	var hasQualityCF, hasSample, hasNoFiles, hasIDMatch bool
+	var hasQualityCF, hasSample, hasNoFiles, hasIDMatch, hasMappingPending bool
 	var isCustomFormat bool
 
 	for _, sm := range statusMessages {
@@ -313,7 +374,7 @@ func parseStatusMessages(statusMessages []StatusMessage) (string, bool) {
 				isCustomFormat = true
 			}
 
-			if strings.Contains(msgLower, "quality revision") || strings.Contains(msgLower, "quality not an upgrade") {
+			if strings.Contains(msgLower, "quality revision") || strings.Contains(msgLower, "quality not an upgrade") || strings.Contains(msgLower, "not an upgrade") {
 				hasQualityCF = true
 			}
 
@@ -327,6 +388,10 @@ func parseStatusMessages(statusMessages []StatusMessage) (string, bool) {
 
 			if strings.Contains(msgLower, "matched to series by id") {
 				hasIDMatch = true
+			}
+
+			if strings.Contains(msgLower, "thexem") || strings.Contains(msgLower, "needs manual input") || strings.Contains(msgLower, "tba title") {
+				hasMappingPending = true
 			}
 		}
 	}
@@ -342,6 +407,16 @@ func parseStatusMessages(statusMessages []StatusMessage) (string, bool) {
 		return "matched_by_id", false
 	}
 
+	// mapping_pending takes precedence over sample_file because:
+	// 1. Downloads often contain BOTH sample files AND the actual episode
+	// 2. The "Sample" status message refers to one file, not the entire download
+	// 3. Manual import scan will filter out sample files via Rejections array
+	// 4. TheXEM mapping issues require manual import to resolve
+	if hasMappingPending {
+		return "mapping_pending", false
+	}
+
+	// Only treat as sample_file if that's the ONLY issue (no mapping pending)
 	if hasSample {
 		return "sample_file", false
 	}
@@ -351,6 +426,41 @@ func parseStatusMessages(statusMessages []StatusMessage) (string, bool) {
 	}
 
 	return "unknown", false
+}
+
+// needsRemediation determines if an item should be surfaced for action
+func needsRemediation(item QueueItem) bool {
+	if strings.Contains(item.OutputPath, "/torrents/") {
+		return false
+	}
+
+	statusLower := strings.ToLower(item.Status)
+	stateLower := strings.ToLower(item.TrackedDownloadState)
+	healthLower := strings.ToLower(item.TrackedDownloadStatus)
+
+	if statusLower == "failed" || statusLower == "warning" || statusLower == "downloadclientunavailable" {
+		return true
+	}
+
+	if stateLower == "importblocked" || stateLower == "failedpending" || stateLower == "failed" || stateLower == "ignored" {
+		return true
+	}
+
+	if healthLower == "warning" || healthLower == "error" {
+		return true
+	}
+
+	reason, _ := parseStatusMessages(item.StatusMessages)
+
+	if stateLower == "importpending" && reason != "unknown" {
+		return true
+	}
+
+	if stateLower == "importpending" && healthLower != "" && healthLower != "ok" {
+		return true
+	}
+
+	return false
 }
 
 // getInstanceName returns a formatted instance name for display
@@ -390,6 +500,8 @@ func getReason(item QueueItem) string {
 		return "sample file detected"
 	case "matched_by_id":
 		return "matched to series by ID"
+	case "mapping_pending":
+		return "metadata mapping pending"
 	case "unknown":
 		if item.TrackedDownloadState == "importBlocked" {
 			return "import blocked"
@@ -434,6 +546,39 @@ func fetchSeriesDetails(config Config, instanceURL, token string, seriesID int) 
 	}
 
 	return &series, nil
+}
+
+// fetchEpisodeDetails fetches episode details by ID from Sonarr API
+func fetchEpisodeDetails(config Config, instanceURL, token string, episodeID int) (*EpisodeResource, error) {
+	client := &http.Client{
+		Timeout: config.Timeout,
+	}
+
+	endpoint := fmt.Sprintf("%s/api/v3/episode/%d", instanceURL, episodeID)
+
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Api-Key", token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	var episode EpisodeResource
+	if err := json.NewDecoder(resp.Body).Decode(&episode); err != nil {
+		return nil, err
+	}
+
+	return &episode, nil
 }
 
 // fetchMovieDetails fetches movie details by ID from Radarr API
@@ -564,146 +709,111 @@ func deleteQueueItem(config Config, url string, token string, itemID int, remove
 }
 
 // triggerManualImport triggers manual import for a downloaded file
+// Both REST API and Command API paths use the same workflow: scan → build → execute
+// The executeManualImport() function uses the correct ManualImport command
 func triggerManualImport(config Config, url string, token string, downloadPath string, instanceType string, useRestAPI bool, queueItem QueueItem) error {
-	if useRestAPI {
-		if config.Verbose {
+	if config.Verbose {
+		if useRestAPI {
 			log.Printf("[INFO] Using REST API for manual import (queue item #%d: %s)", queueItem.ID, queueItem.Title)
-			log.Printf("[VERBOSE] API Call 1/3: Scanning for files (GET /api/v3/manualimport with seriesId=%d or movieId=%d)", queueItem.SeriesID, queueItem.MovieID)
-		}
-
-		scannedItems, err := scanForManualImport(config, url, token, downloadPath, queueItem, instanceType)
-		if err != nil {
-			if config.Verbose {
-				log.Printf("[VERBOSE] REST API scan failed, falling back to Command API: %v", err)
-			}
-			fmt.Fprintf(os.Stderr, "[WARN] REST API scan failed, falling back to Command API: %v\n", err)
 		} else {
-			// Log scan results
-			if config.Verbose {
-				rejectedCount := 0
-				for _, item := range scannedItems {
-					if len(item.Rejections) > 0 {
-						rejectedCount++
-					}
-				}
-				log.Printf("[VERBOSE] Scan completed: found %d total files (%d rejected, %d potentially importable)",
-					len(scannedItems), rejectedCount, len(scannedItems)-rejectedCount)
-
-				// Show first few files found for debugging
-				if config.Debug && len(scannedItems) > 0 {
-					log.Printf("[DEBUG] Files found in scan:")
-					for i, item := range scannedItems {
-						if i >= 5 {
-							log.Printf("[DEBUG]   ... and %d more files", len(scannedItems)-5)
-							break
-						}
-						status := "OK"
-						if len(item.Rejections) > 0 {
-							status = fmt.Sprintf("REJECTED: %s", formatRejections(item.Rejections))
-						}
-						log.Printf("[DEBUG]   %s [%s]", item.Name, status)
-					}
-				}
-			}
-
-			importRequests := buildManualImportRequests(config, scannedItems, queueItem, instanceType)
-
-			// Log filtering results
-			if config.Verbose {
-				log.Printf("[VERBOSE] After filtering: %d files ready for import (out of %d scanned)",
-					len(importRequests), len(scannedItems))
-				if len(importRequests) > 0 {
-					log.Printf("[VERBOSE] API Call 2/3: Executing import (POST /api/v3/command with %d files)", len(importRequests))
-				}
-			}
-
-			if len(importRequests) > 0 {
-				if err := executeManualImport(config, url, token, importRequests); err != nil {
-					if config.Verbose {
-						log.Printf("[VERBOSE] REST API import failed, falling back to Command API: %v", err)
-					}
-					fmt.Fprintf(os.Stderr, "[WARN] REST API import failed, falling back to Command API: %v\n", err)
-				} else {
-					// Import completed successfully
-					if config.Verbose {
-						log.Printf("[VERBOSE] REST API import completed successfully for %d files", len(importRequests))
-					}
-					return nil
-				}
-			} else {
-				if config.Verbose {
-					log.Printf("[VERBOSE] No importable files found in scan results (all %d files filtered out), falling back to Command API", len(scannedItems))
-				}
-				fmt.Fprintf(os.Stderr, "[WARN] No importable files found via REST API scan, falling back to Command API\n")
-			}
-		}
-	} else {
-		if config.Verbose {
 			log.Printf("[INFO] Using Command API for manual import (queue item #%d: %s)", queueItem.ID, queueItem.Title)
 		}
 	}
 
-	// Command API Fallback - Use OutputPath exactly as provided
-	client := &http.Client{
-		Timeout: config.Timeout,
-	}
-
-	var commandName string
-	if instanceType == "sonarr" {
-		commandName = "DownloadedEpisodesScan"
-	} else {
-		commandName = "DownloadedMoviesScan"
-	}
-
-	// CRITICAL FIX: Use queueItem.OutputPath (exact release folder) instead of parent directory
-	// Add importMode parameter for proper file handling
-	commandData := map[string]interface{}{
-		"name":       commandName,
-		"path":       queueItem.OutputPath, // Use exact path from queue item
-		"importMode": "Move",               // Explicitly set import mode (Move, Copy, or Auto)
-	}
-
-	jsonData, err := json.Marshal(commandData)
-	if err != nil {
-		return err
-	}
-
-	endpoint := fmt.Sprintf("%s/api/v3/command", url)
-
+	// Step 1: Scan for files
 	if config.Verbose {
-		log.Printf("[VERBOSE] Falling back to Command API for manual import")
-		log.Printf("[VERBOSE] API Endpoint: POST %s", sanitizeURL(endpoint))
-		log.Printf("[VERBOSE] Command: %s, Path: %s, ImportMode: Move", commandName, queueItem.OutputPath)
+		log.Printf("[VERBOSE] API Call 1/3: Scanning for files (GET /api/v3/manualimport with seriesId=%d or movieId=%d)", queueItem.SeriesID, queueItem.MovieID)
 	}
 
-	req, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonData)))
+	scannedItems, err := scanForManualImport(config, url, token, downloadPath, queueItem, instanceType)
 	if err != nil {
-		return err
+		return fmt.Errorf("scan failed: %w", err)
 	}
 
-	req.Header.Set("X-Api-Key", token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		bodyBytes, readErr := io.ReadAll(resp.Body)
-		if readErr != nil {
-			return fmt.Errorf("failed to trigger manual import: status %d (error reading response body: %v)", resp.StatusCode, readErr)
+	// Log scan results
+	if config.Verbose {
+		rejectedCount := 0
+		for _, item := range scannedItems {
+			if len(item.Rejections) > 0 {
+				rejectedCount++
+			}
 		}
-		log.Printf("[ERROR] Command API failed: status %d - %s", resp.StatusCode, string(bodyBytes))
-		return fmt.Errorf("failed to trigger manual import: status %d - %s", resp.StatusCode, string(bodyBytes))
+		log.Printf("[VERBOSE] Scan completed: found %d total files (%d rejected, %d potentially importable)",
+			len(scannedItems), rejectedCount, len(scannedItems)-rejectedCount)
+
+		// Show first few files found for debugging
+		if config.Debug && len(scannedItems) > 0 {
+			log.Printf("[DEBUG] Files found in scan:")
+			for i, item := range scannedItems {
+				if i >= 5 {
+					log.Printf("[DEBUG]   ... and %d more files", len(scannedItems)-5)
+					break
+				}
+				status := "OK"
+				if len(item.Rejections) > 0 {
+					status = fmt.Sprintf("REJECTED: %s", formatRejections(item.Rejections))
+				}
+				log.Printf("[DEBUG]   %s [%s]", item.Name, status)
+			}
+		}
 	}
 
+	// Step 2: Build import requests
+	importRequests := buildManualImportRequests(config, scannedItems, queueItem, instanceType)
+
+	// Fallback mapping for Sonarr matched_by_id when scan can't be used directly
+	if len(importRequests) == 0 && instanceType == "sonarr" {
+		reason, _ := parseStatusMessages(queueItem.StatusMessages)
+		if reason == "matched_by_id" {
+			fallbackRequests, match, fallbackErr := buildFallbackManualImportRequests(config, url, token, scannedItems, queueItem)
+			if fallbackErr == nil && len(fallbackRequests) > 0 {
+				importRequests = fallbackRequests
+				if config.Verbose {
+					log.Printf("[VERBOSE] Fallback mapping selected series match: %.1f%% (%s)", match.Similarity, match.Reason)
+				}
+			} else if fallbackErr != nil && fallbackErr != errManualImportNoMapping {
+				return fmt.Errorf("fallback mapping failed: %w", fallbackErr)
+			}
+		}
+	}
+
+	// Log filtering results
 	if config.Verbose {
-		log.Printf("[VERBOSE] Command API: Response status %d", resp.StatusCode)
+		log.Printf("[VERBOSE] After filtering: %d files ready for import (out of %d scanned)",
+			len(importRequests), len(scannedItems))
 	}
 
-	log.Printf("[INFO] Successfully triggered manual import via Command API for queue item #%d", queueItem.ID)
+	if len(importRequests) == 0 {
+		reason, _ := parseStatusMessages(queueItem.StatusMessages)
+		if reason == "matched_by_id" {
+			return errManualImportNoMapping
+		}
+		return fmt.Errorf("no importable files found (all %d scanned files were rejected or filtered out)", len(scannedItems))
+	}
+
+	// Step 3: Execute import using ManualImport command
+	if config.Verbose {
+		log.Printf("[VERBOSE] API Call 2/3: Executing import (POST /api/v3/command with %d files)", len(importRequests))
+	}
+
+	if err := executeManualImport(config, url, token, importRequests); err != nil {
+		if instanceType == "sonarr" {
+			if config.Verbose {
+				log.Printf("[VERBOSE] Manual import command failed; attempting reprocess fallback: %v", err)
+			}
+			if fallbackErr := executeManualImportReprocess(config, url, token, importRequests); fallbackErr == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("manual import failed: %w", err)
+	}
+
+	// Import completed successfully
+	if config.Verbose {
+		log.Printf("[VERBOSE] Manual import completed successfully for %d files", len(importRequests))
+	}
+
+	log.Printf("[INFO] Successfully triggered manual import for queue item #%d", queueItem.ID)
 
 	return nil
 }
@@ -717,24 +827,37 @@ func scanForManualImport(config Config, url, token, folderPath string, queueItem
 
 	var endpoint string
 
-	// CRITICAL FIX: Use downloadId as primary parameter per HAR investigation
-	// Web UI uses downloadId to track downloads - this is what makes scan work correctly
-	// Reference: /docs/HAR_INVESTIGATION.md lines 100-220 (real-world Sonarr web UI behavior)
+	// Prefer downloadId-first (matches Sonarr/Radarr web UI); fall back to folder scan
 	if queueItem.DownloadId != "" {
-		// Primary path: Use downloadId (matches Sonarr web UI exactly)
-		// This is the correct approach confirmed by HAR analysis of actual web UI traffic
+		// downloadId path should NOT include folder; filterExistingFiles=false per HAR traces
 		endpoint = fmt.Sprintf("%s/api/v3/manualimport?downloadId=%s&filterExistingFiles=false",
 			url, neturl.QueryEscape(queueItem.DownloadId))
 		if config.Verbose {
 			log.Printf("[VERBOSE] Scanning for manual import with downloadId: %s", queueItem.DownloadId)
 			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
+	} else if instanceType == "sonarr" && queueItem.SeriesID > 0 {
+		// Fallback with folder + seriesId when no downloadId is present
+		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&seriesId=%d&filterExistingFiles=false",
+			url, neturl.QueryEscape(folderPath), queueItem.SeriesID)
+		if config.Verbose {
+			log.Printf("[VERBOSE] Scanning for manual import with folder + SeriesID filter: folder=%s, seriesId=%d", folderPath, queueItem.SeriesID)
+			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
+		}
+	} else if instanceType == "radarr" && queueItem.MovieID > 0 {
+		// Fallback with folder + movieId when no downloadId is present
+		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&movieId=%d&filterExistingFiles=false",
+			url, neturl.QueryEscape(folderPath), queueItem.MovieID)
+		if config.Verbose {
+			log.Printf("[VERBOSE] Scanning for manual import with folder + MovieID filter: folder=%s, movieId=%d", folderPath, queueItem.MovieID)
+			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
+		}
 	} else {
-		// Fallback: Use folder if downloadId unavailable (edge case for non-standard downloads)
+		// Folder-only fallback
 		endpoint = fmt.Sprintf("%s/api/v3/manualimport?folder=%s&filterExistingFiles=false",
 			url, neturl.QueryEscape(folderPath))
 		if config.Verbose {
-			log.Printf("[VERBOSE] Scanning for manual import by folder (downloadId unavailable): folder=%s", folderPath)
+			log.Printf("[VERBOSE] Scanning for manual import by folder only (no ID available for filtering)")
 			log.Printf("[VERBOSE] API Endpoint: GET %s", sanitizeURL(endpoint))
 		}
 	}
@@ -788,6 +911,243 @@ func scanForManualImport(config Config, url, token, folderPath string, queueItem
 	}
 
 	return items, nil
+}
+
+func hasHardRejection(rejections []ImportRejection) bool {
+	for _, rejection := range rejections {
+		typeLower := strings.ToLower(rejection.Type)
+		if typeLower == "permanent" {
+			return true
+		}
+		reasonLower := strings.ToLower(rejection.Reason)
+		if strings.Contains(reasonLower, "unknown series") || strings.Contains(reasonLower, "unknown movie") {
+			return true
+		}
+	}
+	return false
+}
+
+func buildFallbackManualImportRequests(config Config, url, token string, scannedItems []ManualImportResource, queueItem QueueItem) ([]ManualImportRequest, TitleMatchResult, error) {
+	if len(scannedItems) == 0 {
+		return nil, TitleMatchResult{}, errManualImportNoMapping
+	}
+	if len(scannedItems) > 1 {
+		if config.Verbose {
+			log.Printf("[VERBOSE] Fallback mapping skipped: multiple scanned items (%d)", len(scannedItems))
+		}
+		return nil, TitleMatchResult{}, errManualImportNoMapping
+	}
+	item := scannedItems[0]
+	if item.Path == "" {
+		return nil, TitleMatchResult{}, errManualImportNoMapping
+	}
+
+	series, match, err := resolveSeriesForQueueItem(config, url, token, queueItem)
+	if err != nil {
+		return nil, TitleMatchResult{}, err
+	}
+
+	episodeIDs, err := resolveEpisodeIDs(config, url, token, series.ID, queueItem)
+	if err != nil {
+		return nil, TitleMatchResult{}, err
+	}
+	if len(episodeIDs) == 0 {
+		return nil, TitleMatchResult{}, errManualImportNoMapping
+	}
+
+	request := buildFallbackRequestFromScan(item, queueItem, series.ID, episodeIDs)
+	return []ManualImportRequest{request}, match, nil
+}
+
+func buildFallbackRequestFromScan(item ManualImportResource, queueItem QueueItem, seriesID int, episodeIDs []int) ManualImportRequest {
+	folderName := filepath.Base(filepath.Dir(item.Path))
+	return ManualImportRequest{
+		Path:         item.Path,
+		FolderName:   folderName,
+		SeriesID:     seriesID,
+		EpisodeIDs:   episodeIDs,
+		Quality:      item.Quality,
+		Languages:    item.Languages,
+		ReleaseGroup: item.ReleaseGroup,
+		ReleaseType:  "singleEpisode",
+		DownloadID:   queueItem.DownloadId,
+		IndexerFlags: item.IndexerFlags,
+		ImportMode:   "auto",
+	}
+}
+
+func resolveSeriesForQueueItem(config Config, url, token string, queueItem QueueItem) (SeriesResource, TitleMatchResult, error) {
+	if queueItem.SeriesID > 0 {
+		series, err := fetchSeriesDetails(config, url, token, queueItem.SeriesID)
+		if err == nil && series != nil {
+			match := validateTitleMatch(queueItem.Title, series.Title)
+			if match.Similarity >= 80.0 {
+				return *series, match, nil
+			}
+		}
+	}
+
+	matchTitle := queueItem.Title
+	parsed, err := parseReleaseTitle(config, url, token, queueItem.Title)
+	if err == nil && parsed != nil && parsed.Series.Title != "" {
+		matchTitle = parsed.Series.Title
+	}
+
+	allSeries, err := fetchSeriesList(config, url, token)
+	if err != nil {
+		return SeriesResource{}, TitleMatchResult{}, err
+	}
+
+	var best SeriesResource
+	bestMatch := TitleMatchResult{Similarity: 0}
+	for _, series := range allSeries {
+		match := validateTitleMatch(matchTitle, series.Title)
+		if match.Similarity > bestMatch.Similarity {
+			bestMatch = match
+			best = series
+		}
+	}
+
+	if bestMatch.Similarity < 80.0 {
+		return SeriesResource{}, bestMatch, errManualImportNoMapping
+	}
+
+	return best, bestMatch, nil
+}
+
+func resolveEpisodeIDs(config Config, url, token string, seriesID int, queueItem QueueItem) ([]int, error) {
+	if queueItem.EpisodeID > 0 {
+		return []int{queueItem.EpisodeID}, nil
+	}
+
+	parsed, err := parseReleaseTitle(config, url, token, queueItem.Title)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(parsed.Episodes) > 0 {
+		var ids []int
+		for _, episode := range parsed.Episodes {
+			if episode.ID > 0 {
+				ids = append(ids, episode.ID)
+			}
+		}
+		if len(ids) > 0 {
+			return ids, nil
+		}
+	}
+
+	season := parsed.ParsedEpisodeInfo.SeasonNumber
+	if season == 0 {
+		return nil, errManualImportNoMapping
+	}
+
+	if len(parsed.ParsedEpisodeInfo.EpisodeNumbers) == 0 && len(parsed.ParsedEpisodeInfo.AbsoluteEpisodeNumbers) == 0 {
+		return nil, errManualImportNoMapping
+	}
+
+	episodes, err := fetchEpisodesBySeries(config, url, token, seriesID)
+	if err != nil {
+		return nil, err
+	}
+
+	var ids []int
+	if len(parsed.ParsedEpisodeInfo.EpisodeNumbers) > 0 {
+		wanted := make(map[int]bool)
+		for _, number := range parsed.ParsedEpisodeInfo.EpisodeNumbers {
+			wanted[number] = true
+		}
+		for _, episode := range episodes {
+			if episode.SeasonNumber == season && wanted[episode.EpisodeNumber] {
+				ids = append(ids, episode.ID)
+			}
+		}
+	} else {
+		wanted := make(map[int]bool)
+		for _, number := range parsed.ParsedEpisodeInfo.AbsoluteEpisodeNumbers {
+			wanted[number] = true
+		}
+		for _, episode := range episodes {
+			if wanted[episode.AbsoluteEpisodeNumber] {
+				ids = append(ids, episode.ID)
+			}
+		}
+	}
+
+	if len(ids) == 0 {
+		return nil, errManualImportNoMapping
+	}
+
+	return ids, nil
+}
+
+func fetchSeriesList(config Config, instanceURL, token string) ([]SeriesResource, error) {
+	client := &http.Client{Timeout: config.Timeout}
+	endpoint := fmt.Sprintf("%s/api/v3/series", instanceURL)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	var series []SeriesResource
+	if err := json.NewDecoder(resp.Body).Decode(&series); err != nil {
+		return nil, err
+	}
+	return series, nil
+}
+
+func fetchEpisodesBySeries(config Config, instanceURL, token string, seriesID int) ([]EpisodeResource, error) {
+	client := &http.Client{Timeout: config.Timeout}
+	endpoint := fmt.Sprintf("%s/api/v3/episode?seriesId=%d", instanceURL, seriesID)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	var episodes []EpisodeResource
+	if err := json.NewDecoder(resp.Body).Decode(&episodes); err != nil {
+		return nil, err
+	}
+	return episodes, nil
+}
+
+func parseReleaseTitle(config Config, instanceURL, token, title string) (*ParseResource, error) {
+	client := &http.Client{Timeout: config.Timeout}
+	endpoint := fmt.Sprintf("%s/api/v3/parse?title=%s", instanceURL, neturl.QueryEscape(title))
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	var parsed ParseResource
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+		return nil, err
+	}
+	return &parsed, nil
 }
 
 // executeManualImport executes manual import requests via Command API
@@ -872,11 +1232,119 @@ func executeManualImport(config Config, url, token string, importRequests []Manu
 			log.Printf("[VERBOSE] Manual import command submitted with ID: %.0f", commandID)
 		}
 		log.Printf("[INFO] Successfully submitted manual import command (ID: %.0f) for %d file(s)", commandID, len(importRequests))
+		if err := waitForCommandCompletion(config, url, token, int(commandID)); err != nil {
+			return err
+		}
 	} else {
 		log.Printf("[INFO] Successfully submitted manual import command for %d file(s)", len(importRequests))
 	}
 
 	return nil
+}
+
+func executeManualImportReprocess(config Config, url, token string, importRequests []ManualImportRequest) error {
+	client := &http.Client{Timeout: config.Timeout}
+
+	resources := make([]ManualImportReprocessResource, 0, len(importRequests))
+	for _, request := range importRequests {
+		resources = append(resources, ManualImportReprocessResource{
+			Path:         request.Path,
+			SeriesID:     request.SeriesID,
+			SeasonNumber: request.SeasonNumber,
+			EpisodeIDs:   request.EpisodeIDs,
+			Quality:      request.Quality,
+			Languages:    request.Languages,
+			ReleaseGroup: request.ReleaseGroup,
+			DownloadID:   request.DownloadID,
+			IndexerFlags: request.IndexerFlags,
+			ReleaseType:  request.ReleaseType,
+		})
+	}
+
+	jsonData, err := json.Marshal(resources)
+	if err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("%s/api/v3/manualimport", url)
+	if config.Verbose {
+		log.Printf("[VERBOSE] Executing manual import reprocess: POST %s (%d files)", sanitizeURL(endpoint), len(resources))
+	}
+
+	req, err := http.NewRequest("POST", endpoint, strings.NewReader(string(jsonData)))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("failed to read response body: %v", readErr)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("failed to execute manual import reprocess: status %d - %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	if config.Verbose {
+		log.Printf("[VERBOSE] Manual import reprocess response: status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func waitForCommandCompletion(config Config, url, token string, commandID int) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		command, err := fetchCommandStatus(config, url, token, commandID)
+		if err != nil {
+			return err
+		}
+		status := strings.ToLower(command.Status)
+		result := strings.ToLower(command.Result)
+		switch status {
+		case "completed":
+			if result == "successful" || result == "" {
+				return nil
+			}
+			return fmt.Errorf("manual import command failed: %s", command.Message)
+		case "failed", "aborted", "cancelled", "orphaned":
+			return fmt.Errorf("manual import command %s: %s", status, command.Message)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	return fmt.Errorf("manual import command %d did not complete before timeout", commandID)
+}
+
+func fetchCommandStatus(config Config, instanceURL, token string, commandID int) (*CommandResource, error) {
+	client := &http.Client{Timeout: config.Timeout}
+	endpoint := fmt.Sprintf("%s/api/v3/command/%d", instanceURL, commandID)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+	var command CommandResource
+	if err := json.NewDecoder(resp.Body).Decode(&command); err != nil {
+		return nil, err
+	}
+	return &command, nil
 }
 
 // formatRejections converts rejection array to human-readable string
@@ -898,14 +1366,19 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 
 	for _, item := range scannedItems {
 		if len(item.Rejections) > 0 {
-			if config.Verbose {
-				rejectionReasons := make([]string, len(item.Rejections))
-				for i, r := range item.Rejections {
-					rejectionReasons[i] = r.Reason
-				}
-				log.Printf("[VERBOSE] Skipping file %s: rejected (%s)", item.Path, strings.Join(rejectionReasons, ", "))
+			rejectionReasons := make([]string, len(item.Rejections))
+			for i, r := range item.Rejections {
+				rejectionReasons[i] = r.Reason
 			}
-			continue
+			if hasHardRejection(item.Rejections) {
+				if config.Verbose {
+					log.Printf("[VERBOSE] Skipping file %s: hard rejection (%s)", item.Path, strings.Join(rejectionReasons, ", "))
+				}
+				continue
+			}
+			if config.Verbose {
+				log.Printf("[VERBOSE] Soft rejections present for %s (%s) - continuing", item.Path, strings.Join(rejectionReasons, ", "))
+			}
 		}
 
 		if instanceType == "sonarr" {
@@ -945,12 +1418,17 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 				}
 			}
 
+			// Extract folder name from file path (parent directory)
+			folderName := filepath.Base(filepath.Dir(item.Path))
+
 			req := ManualImportRequest{
 				Path:         item.Path,
+				FolderName:   folderName,
 				SeriesID:     item.Series.ID,
 				Quality:      item.Quality,
 				Languages:    item.Languages,
 				ReleaseGroup: item.ReleaseGroup,
+				ReleaseType:  "singleEpisode",
 				DownloadID:   queueItem.DownloadId,
 				IndexerFlags: item.IndexerFlags,
 				ImportMode:   "auto", // Set default import mode
@@ -969,8 +1447,8 @@ func buildManualImportRequests(config Config, scannedItems []ManualImportResourc
 				if queueItem.DownloadId != "" {
 					downloadIDInfo = queueItem.DownloadId
 				}
-				log.Printf("[VERBOSE] Accepted file %s: Series=%s, Season=%v, Episodes=%d, Quality=%s, DownloadID=%s",
-					item.Path, item.Series.Title, item.SeasonNumber, len(item.Episodes), item.Quality.Quality.Name, downloadIDInfo)
+				log.Printf("[VERBOSE] Accepted file %s: Series=%s, Season=%v, Episodes=%d, Quality=%s, FolderName=%s, ReleaseType=%s, DownloadID=%s",
+					item.Path, item.Series.Title, item.SeasonNumber, len(item.Episodes), item.Quality.Quality.Name, folderName, "singleEpisode", downloadIDInfo)
 			}
 
 			requests = append(requests, req)
@@ -1298,6 +1776,7 @@ func formatStatusMessages(item QueueItem) string {
 // getManualImportDetails extracts and validates series/movie mapping information
 func getManualImportDetails(config Config, item QueueItem) string {
 	var details []string
+	reason, _ := parseStatusMessages(item.StatusMessages)
 
 	// Series/Movie ID validation with name lookup
 	if item.SeriesID > 0 {
@@ -1335,11 +1814,11 @@ func getManualImportDetails(config Config, item QueueItem) string {
 
 	// Only add import method if we have IDs or path
 	if len(details) > 0 {
-		importMethod := "Command API → DownloadedEpisodesScan"
-		if item.InstanceType == "radarr" {
-			importMethod = "Command API → DownloadedMoviesScan"
-		}
+		importMethod := "Command API → ManualImport"
 		details = append(details, fmt.Sprintf("• Import Method: %s", importMethod))
+		if item.InstanceType == "sonarr" && reason == "matched_by_id" {
+			details = append(details, "• Mapping: downloadId scan, fallback to library match if needed")
+		}
 	}
 
 	if len(details) == 0 {
@@ -1395,7 +1874,7 @@ func getActionDescription(action string, item QueueItem) string {
 		reason, _ := parseStatusMessages(item.StatusMessages)
 		description := fmt.Sprintf("→ Would MANUAL_IMPORT - %s", getReason(item))
 		if reason == "matched_by_id" {
-			description += " (series validation successful)"
+			description += " (fallback to delete on mapping failure)"
 		}
 		return description
 
@@ -1557,6 +2036,15 @@ func classifyAndRemediate(config Config, dryRun bool) error {
 					continue
 				}
 				if err := triggerManualImport(config, item.InstanceURL, token, item.OutputPath, item.InstanceType, config.UseRestAPI, item); err != nil {
+					if errors.Is(err, errManualImportNoMapping) {
+						fmt.Fprintf(os.Stderr, "[WARN] Mapping failed; deleting queue item %d (%s)\n", item.ID, item.Title)
+						if delErr := deleteQueueItem(config, item.InstanceURL, token, item.ID, true, false); delErr != nil {
+							fmt.Fprintf(os.Stderr, "[ERROR] Failed to delete queue item %d (%s) after mapping failure: %v\n", item.ID, item.Title, delErr)
+						} else if config.Verbose {
+							log.Printf("[VERBOSE] Deleted queue item %d (%s) after mapping failure", item.ID, item.Title)
+						}
+						continue
+					}
 					fmt.Fprintf(os.Stderr, "[ERROR] Failed to trigger manual import for item %d (%s): %v\n", item.ID, item.Title, err)
 					continue
 				}
