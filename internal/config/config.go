@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"encoding/json"
@@ -136,7 +136,6 @@ func LoadToolkitConfig() (*ToolkitConfig, error) {
 		return nil, fmt.Errorf("unsupported config version: %d", cfg.Version)
 	}
 
-	// Normalize instance URLs
 	for i := range cfg.Sonarr {
 		cfg.Sonarr[i].URL = strings.TrimSuffix(cfg.Sonarr[i].URL, "/")
 	}

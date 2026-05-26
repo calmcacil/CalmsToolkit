@@ -1,30 +1,26 @@
-//go:build mediastreams
-
-package main
+package streams
 
 import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
-// Server types
 const (
 	ServerPlex     = "plex"
 	ServerJellyfin = "jellyfin"
 	ServerBoth     = "both"
 )
 
-// Plex XML structures
 type PlexMediaContainer struct {
 	XMLName xml.Name    `xml:"MediaContainer"`
 	Size    int         `xml:"size,attr"`
@@ -85,7 +81,6 @@ type PlexTranscodeSession struct {
 	AudioDecision string `xml:"audioDecision,attr"`
 }
 
-// Jellyfin JSON structures
 type JellyfinSession struct {
 	PlayState          JellyfinPlayState        `json:"PlayState"`
 	NowPlayingItem     *JellyfinNowPlayingItem  `json:"NowPlayingItem"`
@@ -129,7 +124,7 @@ type JellyfinTranscodingInfo struct {
 	TranscodeReasons []string `json:"TranscodeReasons"`
 }
 
-type StreamsToolConfig struct {
+type ToolConfig struct {
 	ServerType      string
 	PlexURL         string
 	PlexToken       string
@@ -185,8 +180,8 @@ type Summary struct {
 	Streams          []StreamInfo `json:"streams"`
 }
 
-func BuildStreamsToolConfig(tk *ToolkitConfig) StreamsToolConfig {
-	cfg := StreamsToolConfig{}
+func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
+	cfg := ToolConfig{}
 	if tk == nil {
 		cfg.Timeout = 10 * time.Second
 		cfg.WatchSeconds = 10
@@ -221,69 +216,20 @@ func BuildStreamsToolConfig(tk *ToolkitConfig) StreamsToolConfig {
 	return cfg
 }
 
-func main() {
-	tk, err := LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	cfg := BuildStreamsToolConfig(tk)
-
-	server := flag.String("server", cfg.ServerType, "Server type: plex, jellyfin, or both")
-	plexURL := flag.String("plex-url", cfg.PlexURL, "Plex server URL")
-	plexToken := flag.String("plex-token", cfg.PlexToken, "Plex authentication token")
-	jellyfinURL := flag.String("jellyfin-url", cfg.JellyfinURL, "Jellyfin server URL")
-	jellyfinToken := flag.String("jellyfin-token", cfg.JellyfinToken, "Jellyfin API token")
-	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
-	jsonOutput := flag.Bool("json", false, "Output in JSON format")
-	watchMode := flag.Bool("watch", false, "Continuously monitor streams")
-	watchSeconds := flag.Int("interval", cfg.WatchSeconds, "Watch mode refresh interval in seconds")
-	historyDuration := flag.Duration("history-duration", cfg.HistoryDuration, "How long to keep session history in watch mode")
-	quiet := flag.Bool("quiet", false, "Suppress non-error output")
-	flag.Parse()
-
-	cfg.ServerType = *server
-	cfg.PlexURL = *plexURL
-	cfg.PlexToken = *plexToken
-	cfg.JellyfinURL = *jellyfinURL
-	cfg.JellyfinToken = *jellyfinToken
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *jsonOutput
-	cfg.JSONOutput = *jsonOutput
-	cfg.WatchMode = *watchMode
-	cfg.WatchSeconds = *watchSeconds
-	cfg.HistoryDuration = *historyDuration
-	cfg.Quiet = *quiet
-
-	cfg.PlexURL = strings.TrimSuffix(cfg.PlexURL, "/")
-	cfg.JellyfinURL = strings.TrimSuffix(cfg.JellyfinURL, "/")
-
-	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
-		if cfg.PlexToken == "" {
-			fmt.Fprintf(os.Stderr, "ERROR: PLEX_TOKEN is not set\n")
-			os.Exit(1)
-		}
-	}
-	if cfg.ServerType == ServerJellyfin || cfg.ServerType == ServerBoth {
-		if cfg.JellyfinToken == "" {
-			fmt.Fprintf(os.Stderr, "ERROR: JELLYFIN_TOKEN is not set\n")
-			os.Exit(1)
-		}
-	}
-
+func Run(cfg ToolConfig) {
 	if cfg.WatchMode {
-		fmt.Print(AnsiHideCursor)
-		defer fmt.Print(AnsiShowCursor)
+		fmt.Print(colors.HideCursor)
+		defer fmt.Print(colors.ShowCursor)
 
 		history := &SessionHistory{
 			Records: make(map[string]*SessionRecord),
 		}
 
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		for {
-			fmt.Print(AnsiClearScreen + AnsiHomeCursor)
+			fmt.Print(colors.ClearScreen + colors.HomeCursor)
 			if err := displayAllSessionsWithHistory(ctx, cfg, history); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
@@ -303,7 +249,7 @@ func main() {
 	}
 }
 
-func displayAllSessionsWithHistory(ctx context.Context, cfg StreamsToolConfig, history *SessionHistory) error {
+func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
@@ -332,7 +278,7 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg StreamsToolConfig, h
 	return displayTerminalOutputWithHistory(allStreams, history, plexCount, jellyfinCount, cfg.NoColor)
 }
 
-func displayAllSessions(ctx context.Context, cfg StreamsToolConfig) error {
+func displayAllSessions(ctx context.Context, cfg ToolConfig) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
@@ -359,7 +305,7 @@ func displayAllSessions(ctx context.Context, cfg StreamsToolConfig) error {
 	return displayTerminalOutput(allStreams, plexCount, jellyfinCount, cfg.NoColor)
 }
 
-func fetchPlexStreams(ctx context.Context, client *http.Client, cfg StreamsToolConfig) ([]StreamInfo, error) {
+func fetchPlexStreams(ctx context.Context, client *http.Client, cfg ToolConfig) ([]StreamInfo, error) {
 	url := fmt.Sprintf("%s/status/sessions?X-Plex-Token=%s", cfg.PlexURL, cfg.PlexToken)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -398,7 +344,7 @@ func fetchPlexStreams(ctx context.Context, client *http.Client, cfg StreamsToolC
 	return streams, nil
 }
 
-func fetchJellyfinStreams(ctx context.Context, client *http.Client, cfg StreamsToolConfig) ([]StreamInfo, error) {
+func fetchJellyfinStreams(ctx context.Context, client *http.Client, cfg ToolConfig) ([]StreamInfo, error) {
 	url := fmt.Sprintf("%s/Sessions?api_key=%s", cfg.JellyfinURL, cfg.JellyfinToken)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -437,7 +383,6 @@ func fetchJellyfinStreams(ctx context.Context, client *http.Client, cfg StreamsT
 	return streams, nil
 }
 
-// generateSessionID creates a unique identifier for a stream to track it across refreshes
 func generateSessionID(stream StreamInfo) string {
 	return fmt.Sprintf("%s:%s:%s:%s", stream.Server, stream.User, stream.Title, stream.Client)
 }
@@ -687,7 +632,7 @@ func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error
 func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, noColor bool) error {
 	var buf strings.Builder
 
-	color := func(code string) string {
+	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
@@ -695,15 +640,15 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 	}
 
 	buf.WriteString(fmt.Sprintf("%s%s=== Media Streams Monitor ===%s\n",
-		color(ColorBold), color(ColorCyan), color(ColorReset)))
-	buf.WriteString(fmt.Sprintf("Total Sessions: %s%d%s", color(ColorBold), len(streams), color(ColorReset)))
+		clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset)))
+	buf.WriteString(fmt.Sprintf("Total Sessions: %s%d%s", clr(colors.Bold), len(streams), clr(colors.Reset)))
 	if plexCount > 0 || jellyfinCount > 0 {
 		buf.WriteString(fmt.Sprintf(" (Plex: %d, Jellyfin: %d)", plexCount, jellyfinCount))
 	}
 	buf.WriteString("\n\n")
 
 	if len(streams) == 0 {
-		buf.WriteString(fmt.Sprintf("%sNo active streams%s\n", color(ColorGreen), color(ColorReset)))
+		buf.WriteString(fmt.Sprintf("%sNo active streams%s\n", clr(colors.Green), clr(colors.Reset)))
 		fmt.Print(buf.String())
 		return nil
 	}
@@ -722,7 +667,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool) error {
 	var buf strings.Builder
 
-	color := func(code string) string {
+	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
@@ -730,23 +675,23 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	}
 
 	buf.WriteString(fmt.Sprintf("%s%s=== Media Streams Monitor ===%s\n",
-		color(ColorBold), color(ColorCyan), color(ColorReset)))
+		clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset)))
 
 	active, ended := getActiveAndEndedSessions(history)
 
-	buf.WriteString(fmt.Sprintf("Active Sessions: %s%d%s", color(ColorBold), len(active), color(ColorReset)))
+	buf.WriteString(fmt.Sprintf("Active Sessions: %s%d%s", clr(colors.Bold), len(active), clr(colors.Reset)))
 	if plexCount > 0 || jellyfinCount > 0 {
 		buf.WriteString(fmt.Sprintf(" (Plex: %d, Jellyfin: %d)", plexCount, jellyfinCount))
 	}
 	buf.WriteString("\n")
 
 	if len(ended) > 0 {
-		buf.WriteString(fmt.Sprintf("Recently Ended: %s%d%s\n", color(ColorGray), len(ended), color(ColorReset)))
+		buf.WriteString(fmt.Sprintf("Recently Ended: %s%d%s\n", clr(colors.Gray), len(ended), clr(colors.Reset)))
 	}
 	buf.WriteString("\n")
 
 	if len(active) == 0 {
-		buf.WriteString(fmt.Sprintf("%sNo active streams%s\n", color(ColorGreen), color(ColorReset)))
+		buf.WriteString(fmt.Sprintf("%sNo active streams%s\n", clr(colors.Green), clr(colors.Reset)))
 	} else {
 		for _, record := range active {
 			displayStreamToBuffer(&buf, record.Stream, noColor)
@@ -756,9 +701,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	if len(ended) > 0 {
 		buf.WriteString("\n")
 		buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-			color(ColorBold), color(ColorGray), color(ColorReset)))
+			clr(colors.Bold), clr(colors.Gray), clr(colors.Reset)))
 		buf.WriteString(fmt.Sprintf("%s%sRecently Ended Sessions:%s\n\n",
-			color(ColorBold), color(ColorGray), color(ColorReset)))
+			clr(colors.Bold), clr(colors.Gray), clr(colors.Reset)))
 
 		for _, record := range ended {
 			displayEndedStreamToBuffer(&buf, record, noColor)
@@ -778,14 +723,8 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	return nil
 }
 
-func displayStream(stream StreamInfo, noColor bool) {
-	var buf strings.Builder
-	displayStreamToBuffer(&buf, stream, noColor)
-	fmt.Print(buf.String())
-}
-
 func displayStreamToBuffer(buf *strings.Builder, stream StreamInfo, noColor bool) {
-	color := func(code string) string {
+	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
@@ -793,58 +732,58 @@ func displayStreamToBuffer(buf *strings.Builder, stream StreamInfo, noColor bool
 	}
 
 	buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-		color(ColorBold), color(ColorBlue), color(ColorReset)))
+		clr(colors.Bold), clr(colors.Blue), clr(colors.Reset)))
 
-	serverColor := ColorMagenta
+	serverColor := colors.Magenta
 	if stream.Server == "plex" {
-		serverColor = ColorYellow
+		serverColor = colors.Yellow
 	}
-	buf.WriteString(fmt.Sprintf("%s[%s]%s ", color(serverColor), strings.ToUpper(stream.Server), color(ColorReset)))
-	buf.WriteString(fmt.Sprintf("%sUser%s: %s%s%s\n", color(ColorBold), color(ColorReset),
-		color(ColorYellow), stream.User, color(ColorReset)))
+	buf.WriteString(fmt.Sprintf("%s[%s]%s ", clr(serverColor), strings.ToUpper(stream.Server), clr(colors.Reset)))
+	buf.WriteString(fmt.Sprintf("%sUser%s: %s%s%s\n", clr(colors.Bold), clr(colors.Reset),
+		clr(colors.Yellow), stream.User, clr(colors.Reset)))
 
 	if stream.Type == "episode" && stream.Show != "" {
-		buf.WriteString(fmt.Sprintf("%sShow%s: %s\n", color(ColorBold), color(ColorReset), stream.Show))
+		buf.WriteString(fmt.Sprintf("%sShow%s: %s\n", clr(colors.Bold), clr(colors.Reset), stream.Show))
 		if stream.Season != "" {
-			buf.WriteString(fmt.Sprintf("%sSeason%s: %s\n", color(ColorBold), color(ColorReset), stream.Season))
+			buf.WriteString(fmt.Sprintf("%sSeason%s: %s\n", clr(colors.Bold), clr(colors.Reset), stream.Season))
 		}
 		if stream.Episode != "" {
-			buf.WriteString(fmt.Sprintf("%sEpisode%s: %s - %s\n", color(ColorBold), color(ColorReset),
+			buf.WriteString(fmt.Sprintf("%sEpisode%s: %s - %s\n", clr(colors.Bold), clr(colors.Reset),
 				stream.Episode, stream.Title))
 		}
 	} else {
-		buf.WriteString(fmt.Sprintf("%sTitle%s: %s", color(ColorBold), color(ColorReset), stream.Title))
+		buf.WriteString(fmt.Sprintf("%sTitle%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Title))
 		if stream.Year != "" {
-			buf.WriteString(fmt.Sprintf(" %s(%s)%s", color(ColorCyan), stream.Year, color(ColorReset)))
+			buf.WriteString(fmt.Sprintf(" %s(%s)%s", clr(colors.Cyan), stream.Year, clr(colors.Reset)))
 		}
 		buf.WriteString("\n")
 	}
 
 	if stream.Device != "" {
-		buf.WriteString(fmt.Sprintf("%sClient%s: %s (%s)\n", color(ColorBold), color(ColorReset),
+		buf.WriteString(fmt.Sprintf("%sClient%s: %s (%s)\n", clr(colors.Bold), clr(colors.Reset),
 			stream.Client, stream.Device))
 	} else {
-		buf.WriteString(fmt.Sprintf("%sClient%s: %s\n", color(ColorBold), color(ColorReset), stream.Client))
+		buf.WriteString(fmt.Sprintf("%sClient%s: %s\n", clr(colors.Bold), clr(colors.Reset), stream.Client))
 	}
 
-	statusColor := ColorGreen
+	statusColor := colors.Green
 	if stream.Transcoding {
-		statusColor = ColorRed
+		statusColor = colors.Red
 	}
 	statusText := stream.Status
 	if stream.IsPaused {
 		statusText += " (Paused)"
 	}
-	buf.WriteString(fmt.Sprintf("%sStatus%s: %s%s%s\n", color(ColorBold), color(ColorReset),
-		color(statusColor), statusText, color(ColorReset)))
+	buf.WriteString(fmt.Sprintf("%sStatus%s: %s%s%s\n", clr(colors.Bold), clr(colors.Reset),
+		clr(statusColor), statusText, clr(colors.Reset)))
 
 	if stream.Bandwidth > 0 {
-		buf.WriteString(fmt.Sprintf("%sBandwidth%s: %s%.2f Mbps%s\n", color(ColorBold), color(ColorReset),
-			color(ColorMagenta), stream.Bandwidth, color(ColorReset)))
+		buf.WriteString(fmt.Sprintf("%sBandwidth%s: %s%.2f Mbps%s\n", clr(colors.Bold), clr(colors.Reset),
+			clr(colors.Magenta), stream.Bandwidth, clr(colors.Reset)))
 	}
 
 	if stream.Resolution != "" || stream.VideoCodec != "" {
-		buf.WriteString(fmt.Sprintf("%sQuality%s: ", color(ColorBold), color(ColorReset)))
+		buf.WriteString(fmt.Sprintf("%sQuality%s: ", clr(colors.Bold), clr(colors.Reset)))
 		if stream.Resolution != "" {
 			buf.WriteString(fmt.Sprintf("%s ", stream.Resolution))
 		}
@@ -860,7 +799,7 @@ func displayStreamToBuffer(buf *strings.Builder, stream StreamInfo, noColor bool
 }
 
 func displayEndedStreamToBuffer(buf *strings.Builder, record SessionRecord, noColor bool) {
-	color := func(code string) string {
+	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
@@ -870,33 +809,33 @@ func displayEndedStreamToBuffer(buf *strings.Builder, record SessionRecord, noCo
 	stream := record.Stream
 
 	buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-		color(ColorGray), color(ColorBold), color(ColorReset)))
+		clr(colors.Gray), clr(colors.Bold), clr(colors.Reset)))
 
-	serverColor := ColorGray
-	buf.WriteString(fmt.Sprintf("%s[%s]%s ", color(serverColor), strings.ToUpper(stream.Server), color(ColorReset)))
-	buf.WriteString(fmt.Sprintf("%sUser%s: %s%s%s ", color(ColorGray), color(ColorReset),
-		color(ColorGray), stream.User, color(ColorReset)))
-	buf.WriteString(fmt.Sprintf("%s[ENDED %s]%s\n", color(ColorGray), formatTimeSince(*record.EndTime), color(ColorReset)))
+	serverColor := colors.Gray
+	buf.WriteString(fmt.Sprintf("%s[%s]%s ", clr(serverColor), strings.ToUpper(stream.Server), clr(colors.Reset)))
+	buf.WriteString(fmt.Sprintf("%sUser%s: %s%s%s ", clr(colors.Gray), clr(colors.Reset),
+		clr(colors.Gray), stream.User, clr(colors.Reset)))
+	buf.WriteString(fmt.Sprintf("%s[ENDED %s]%s\n", clr(colors.Gray), formatTimeSince(*record.EndTime), clr(colors.Reset)))
 
 	if stream.Type == "episode" && stream.Show != "" {
-		buf.WriteString(fmt.Sprintf("%sShow%s: %s", color(ColorGray), color(ColorReset), stream.Show))
+		buf.WriteString(fmt.Sprintf("%sShow%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Show))
 		if stream.Season != "" && stream.Episode != "" {
 			buf.WriteString(fmt.Sprintf(" S%sE%s", stream.Season, stream.Episode))
 		}
 		buf.WriteString("\n")
 	} else {
-		buf.WriteString(fmt.Sprintf("%sTitle%s: %s", color(ColorGray), color(ColorReset), stream.Title))
+		buf.WriteString(fmt.Sprintf("%sTitle%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Title))
 		if stream.Year != "" {
 			buf.WriteString(fmt.Sprintf(" (%s)", stream.Year))
 		}
 		buf.WriteString("\n")
 	}
 
-	buf.WriteString(fmt.Sprintf("%sClient%s: %s\n", color(ColorGray), color(ColorReset), stream.Client))
+	buf.WriteString(fmt.Sprintf("%sClient%s: %s\n", clr(colors.Gray), clr(colors.Reset), stream.Client))
 
 	if record.EndTime != nil {
 		duration := record.EndTime.Sub(record.StartTime)
-		buf.WriteString(fmt.Sprintf("%sDuration%s: %s\n", color(ColorGray), color(ColorReset),
+		buf.WriteString(fmt.Sprintf("%sDuration%s: %s\n", clr(colors.Gray), clr(colors.Reset),
 			formatDuration(duration)))
 	}
 }
@@ -918,14 +857,8 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm", hours, minutes)
 }
 
-func displayStreamSummary(streams []StreamInfo, noColor bool) {
-	var buf strings.Builder
-	displayStreamSummaryToBuffer(&buf, streams, noColor)
-	fmt.Print(buf.String())
-}
-
 func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, noColor bool) {
-	color := func(code string) string {
+	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
@@ -934,7 +867,7 @@ func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, no
 
 	buf.WriteString("\n")
 	buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-		color(ColorBold), color(ColorCyan), color(ColorReset)))
+		clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset)))
 
 	transcodeCount := 0
 	totalBandwidth := 0.0
@@ -946,8 +879,8 @@ func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, no
 		totalBandwidth += stream.Bandwidth
 	}
 
-	buf.WriteString(fmt.Sprintf("%sTotal Streams%s: %d\n", color(ColorBold), color(ColorReset), len(streams)))
-	buf.WriteString(fmt.Sprintf("%sTranscoding%s: %d\n", color(ColorBold), color(ColorReset), transcodeCount))
-	buf.WriteString(fmt.Sprintf("%sTotal Bandwidth%s: %s%.2f Mbps%s\n", color(ColorBold), color(ColorReset),
-		color(ColorMagenta), totalBandwidth, color(ColorReset)))
+	buf.WriteString(fmt.Sprintf("%sTotal Streams%s: %d\n", clr(colors.Bold), clr(colors.Reset), len(streams)))
+	buf.WriteString(fmt.Sprintf("%sTranscoding%s: %d\n", clr(colors.Bold), clr(colors.Reset), transcodeCount))
+	buf.WriteString(fmt.Sprintf("%sTotal Bandwidth%s: %s%.2f Mbps%s\n", clr(colors.Bold), clr(colors.Reset),
+		clr(colors.Magenta), totalBandwidth, clr(colors.Reset)))
 }

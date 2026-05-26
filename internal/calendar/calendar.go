@@ -1,26 +1,24 @@
-//go:build mediacalendar
-
-package main
+package calendar
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/olekukonko/tablewriter"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
+
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
 const (
@@ -94,9 +92,9 @@ type CalendarItem struct {
 	SourceInstance string
 }
 
-type CalendarToolConfig struct {
-	SonarrInstances []ArrInstance
-	RadarrInstances []ArrInstance
+type ToolConfig struct {
+	SonarrInstances []config.ArrInstance
+	RadarrInstances []config.ArrInstance
 	Timeout         time.Duration
 	Days            int
 	DaysPast        int
@@ -148,8 +146,8 @@ type fetchQueueResult struct {
 	Err      error
 }
 
-func BuildCalendarToolConfig(tk *ToolkitConfig) CalendarToolConfig {
-	cfg := CalendarToolConfig{}
+func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
+	cfg := ToolConfig{}
 	if tk == nil {
 		cfg.Timeout = 10 * time.Second
 		cfg.Days = 1
@@ -193,40 +191,7 @@ func calculateDateRange(days, daysPast int) (start, end time.Time) {
 	return start, end
 }
 
-func main() {
-	tk, err := LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	cfg := BuildCalendarToolConfig(tk)
-
-	days := flag.Int("days", cfg.Days, "Number of days to display")
-	daysPast := flag.Int("days-past", cfg.DaysPast, "Number of past days to include")
-	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP connection timeout")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
-	jsonOutput := flag.Bool("json", false, "Output in JSON format")
-	watchMode := flag.Bool("watch", false, "Continuously monitor calendar")
-	watchSeconds := flag.Int("interval", cfg.WatchSeconds, "Watch mode refresh interval in seconds")
-	debug := flag.Bool("debug", cfg.Debug, "Enable debug logging")
-	noBanner := flag.Bool("no-banner", false, "Suppress the banner header")
-	quiet := flag.Bool("quiet", false, "Suppress queue warnings")
-	filter := flag.String("filter", "", "Filter: missing,available,premieres,monitored (comma-separated)")
-	monitoredOnly := flag.Bool("monitored-only", false, "Only show monitored items")
-	flag.Parse()
-
-	cfg.Days = *days
-	cfg.DaysPast = *daysPast
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *jsonOutput
-	cfg.JSONOutput = *jsonOutput
-	cfg.WatchMode = *watchMode
-	cfg.WatchSeconds = *watchSeconds
-	cfg.Debug = *debug
-	cfg.NoBanner = *noBanner
-	cfg.Quiet = *quiet
-	cfg.Filter = *filter
-	cfg.MonitoredOnly = *monitoredOnly
-
+func Run(cfg ToolConfig) {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
 		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
 		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
@@ -234,10 +199,10 @@ func main() {
 	}
 
 	if cfg.WatchMode {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		for {
-			fmt.Print(AnsiClearScreen + AnsiHomeCursor)
+			fmt.Print(colors.ClearScreen + colors.HomeCursor)
 			if err := displayCalendar(ctx, cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
@@ -257,7 +222,7 @@ func main() {
 	}
 }
 
-func displayCalendar(ctx context.Context, cfg CalendarToolConfig) error {
+func displayCalendar(ctx context.Context, cfg ToolConfig) error {
 	items, queueIssues, err := aggregateCalendar(ctx, cfg)
 	if err != nil {
 		return err
@@ -270,7 +235,7 @@ func displayCalendar(ctx context.Context, cfg CalendarToolConfig) error {
 	return displayTerminal(items, queueIssues, cfg)
 }
 
-func aggregateCalendar(ctx context.Context, cfg CalendarToolConfig) ([]CalendarItem, []QueueIssue, error) {
+func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []QueueIssue, error) {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 
 	client := &http.Client{
@@ -291,7 +256,6 @@ func aggregateCalendar(ctx context.Context, cfg CalendarToolConfig) ([]CalendarI
 
 	g, gCtx := errgroup.WithContext(ctx)
 
-	// Fetch Sonarr instances concurrently
 	for _, inst := range cfg.SonarrInstances {
 		inst := inst
 		g.Go(func() error {
@@ -299,7 +263,6 @@ func aggregateCalendar(ctx context.Context, cfg CalendarToolConfig) ([]CalendarI
 		})
 	}
 
-	// Fetch Radarr instances concurrently
 	for _, inst := range cfg.RadarrInstances {
 		inst := inst
 		g.Go(func() error {
@@ -311,7 +274,6 @@ func aggregateCalendar(ctx context.Context, cfg CalendarToolConfig) ([]CalendarI
 		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
 	}
 
-	// Sort items by air time
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].AirTime.Before(items[j].AirTime)
 	})
@@ -319,7 +281,7 @@ func aggregateCalendar(ctx context.Context, cfg CalendarToolConfig) ([]CalendarI
 	return items, queueIssues, nil
 }
 
-func fetchSonarrInstance(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+func fetchSonarrInstance(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
 		return fmt.Errorf("Sonarr %s: %w", inst.Name, err)
@@ -353,10 +315,9 @@ func fetchSonarrInstance(ctx context.Context, client *http.Client, inst ArrInsta
 	}
 	mu.Unlock()
 
-	// Check queue
 	queue, err := fetchQueue(ctx, client, inst, debug)
 	if err != nil {
-		return nil // queue check is best-effort
+		return nil
 	}
 
 	if queue != nil {
@@ -381,7 +342,7 @@ func fetchSonarrInstance(ctx context.Context, client *http.Client, inst ArrInsta
 	return nil
 }
 
-func fetchRadarrInstance(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+func fetchRadarrInstance(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
 		return fmt.Errorf("Radarr %s: %w", inst.Name, err)
@@ -453,7 +414,7 @@ func fetchRadarrInstance(ctx context.Context, client *http.Client, inst ArrInsta
 	return nil
 }
 
-func fetchSonarrCalendar(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
+func fetchSonarrCalendar(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s&includeSeries=true",
 		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
@@ -490,7 +451,7 @@ func fetchSonarrCalendar(ctx context.Context, client *http.Client, inst ArrInsta
 	return episodes, nil
 }
 
-func fetchRadarrCalendar(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
+func fetchRadarrCalendar(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s",
 		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
@@ -527,7 +488,7 @@ func fetchRadarrCalendar(ctx context.Context, client *http.Client, inst ArrInsta
 	return movies, nil
 }
 
-func fetchQueue(ctx context.Context, client *http.Client, inst ArrInstance, debug bool) (*QueueResponse, error) {
+func fetchQueue(ctx context.Context, client *http.Client, inst config.ArrInstance, debug bool) (*QueueResponse, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/queue?pageSize=1", inst.URL)
 
 	if debug {
@@ -563,7 +524,7 @@ func fetchQueue(ctx context.Context, client *http.Client, inst ArrInstance, debu
 	return &queue, nil
 }
 
-func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg CalendarToolConfig) error {
+func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg ToolConfig) error {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 	now := time.Now()
 
@@ -610,8 +571,8 @@ type calendarLayout struct {
 	color          func(string) string
 }
 
-func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, cfg CalendarToolConfig) error {
-	color := func(code string) string {
+func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, cfg ToolConfig) error {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
@@ -628,24 +589,24 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, cfg Calenda
 		}
 
 		fmt.Printf("%s%s⚠️  WARNING: %d items require manual intervention%s\n",
-			color(ColorBold), color(ColorRed), totalIssues, color(ColorReset))
+			clr(colors.Bold), clr(colors.Red), totalIssues, clr(colors.Reset))
 		for _, issue := range queueIssues {
 			fmt.Printf("%s→ %s: %s%s\n",
-				color(ColorYellow), issue.ServiceName, issue.URL, color(ColorReset))
+				clr(colors.Yellow), issue.ServiceName, issue.URL, clr(colors.Reset))
 		}
 		fmt.Println()
 	}
 
 	if !cfg.NoBanner {
 		fmt.Printf("%s%s=== Media Calendar ===%s\n\n",
-			color(ColorBold), color(ColorCyan), color(ColorReset))
+			clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset))
 	}
 
 	items = applyFilters(items, cfg)
 
 	if len(items) == 0 {
 		fmt.Printf("%sNo items match the current filters.%s\n",
-			color(ColorGreen), color(ColorReset))
+			clr(colors.Green), clr(colors.Reset))
 		return nil
 	}
 
@@ -667,18 +628,18 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, cfg Calenda
 		numColumns:     numColumns,
 		widthPerColumn: widthPerColumn,
 		totalDays:      totalDays,
-		color:          color,
+		color:          clr,
 	}
 	if err := renderHorizontalCalendar(dayGroups, cfg, now, start, layout); err != nil {
 		return err
 	}
 
-	displaySummary(items, now, color)
+	displaySummary(items, now, clr)
 
 	return nil
 }
 
-func applyFilters(items []CalendarItem, cfg CalendarToolConfig) []CalendarItem {
+func applyFilters(items []CalendarItem, cfg ToolConfig) []CalendarItem {
 	if cfg.MonitoredOnly {
 		filtered := make([]CalendarItem, 0, len(items))
 		for _, item := range items {
@@ -727,7 +688,7 @@ func applyFilters(items []CalendarItem, cfg CalendarToolConfig) []CalendarItem {
 	return items
 }
 
-func displaySummary(items []CalendarItem, now time.Time, color func(string) string) {
+func displaySummary(items []CalendarItem, now time.Time, clr func(string) string) {
 	episodes := 0
 	movies := 0
 	available := 0
@@ -749,10 +710,10 @@ func displaySummary(items []CalendarItem, now time.Time, color func(string) stri
 	future = len(items) - available - missing
 
 	fmt.Printf("\n%s%s%d items%s (%d episodes, %d movies) — ",
-		color(ColorBold), color(ColorCyan), len(items), color(ColorReset), episodes, movies)
+		clr(colors.Bold), clr(colors.Cyan), len(items), clr(colors.Reset), episodes, movies)
 	fmt.Printf("%s%d available%s, %s%d missing%s, %d upcoming\n",
-		color(ColorGreen), available, color(ColorReset),
-		color(ColorRed), missing, color(ColorReset),
+		clr(colors.Green), available, clr(colors.Reset),
+		clr(colors.Red), missing, clr(colors.Reset),
 		future)
 }
 
@@ -809,7 +770,7 @@ func truncateText(text string, maxLen int) string {
 	return text[:maxLen-3] + "..."
 }
 
-func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, cfg CalendarToolConfig, now time.Time, start time.Time, layout calendarLayout) error {
+func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, cfg ToolConfig, now time.Time, start time.Time, layout calendarLayout) error {
 	allHeaders := make([]string, 0)
 	allDayColumns := make([][]string, 0)
 	maxRows := 0
@@ -869,9 +830,9 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, cfg CalendarT
 	return nil
 }
 
-func buildDayContent(dayItems []CalendarItem, now time.Time, cfg CalendarToolConfig, color func(string) string, widthPerColumn int) []string {
+func buildDayContent(dayItems []CalendarItem, now time.Time, cfg ToolConfig, clr func(string) string, widthPerColumn int) []string {
 	if len(dayItems) == 0 {
-		return []string{color(ColorGreen) + "No releases" + color(ColorReset)}
+		return []string{clr(colors.Green) + "No releases" + clr(colors.Reset)}
 	}
 
 	sortedItems := slices.Clone(dayItems)
@@ -898,7 +859,7 @@ func buildDayContent(dayItems []CalendarItem, now time.Time, cfg CalendarToolCon
 		item := sortedItems[i]
 
 		if item.Type == "movie" {
-			content = append(content, formatMovie(item, now, cfg, color, widthPerColumn))
+			content = append(content, formatMovie(item, now, cfg, clr, widthPerColumn))
 			i++
 			continue
 		}
@@ -914,13 +875,13 @@ func buildDayContent(dayItems []CalendarItem, now time.Time, cfg CalendarToolCon
 
 		if consecutiveCount > maxDisplayPerShow {
 			for j := showStart; j < showStart+maxDisplayPerShow; j++ {
-				content = append(content, formatEpisode(sortedItems[j], now, cfg, color, widthPerColumn))
+				content = append(content, formatEpisode(sortedItems[j], now, cfg, clr, widthPerColumn))
 			}
 			remaining := consecutiveCount - maxDisplayPerShow
-			content = append(content, color(ColorCyan)+fmt.Sprintf("  + %d more episodes", remaining)+color(ColorReset))
+			content = append(content, clr(colors.Cyan)+fmt.Sprintf("  + %d more episodes", remaining)+clr(colors.Reset))
 		} else {
 			for j := showStart; j < showEnd; j++ {
-				content = append(content, formatEpisode(sortedItems[j], now, cfg, color, widthPerColumn))
+				content = append(content, formatEpisode(sortedItems[j], now, cfg, clr, widthPerColumn))
 			}
 		}
 
@@ -930,14 +891,14 @@ func buildDayContent(dayItems []CalendarItem, now time.Time, cfg CalendarToolCon
 	return content
 }
 
-func formatEpisode(ep CalendarItem, now time.Time, cfg CalendarToolConfig, color func(string) string, widthPerColumn int) string {
+func formatEpisode(ep CalendarItem, now time.Time, cfg ToolConfig, clr func(string) string, widthPerColumn int) string {
 	statusColor := getStatusColor(ep, now, cfg.NoColor)
 	timeStr := ep.AirTime.Format("15:04")
 
 	showTitle := ep.ShowTitle
 	episodeTitle := ep.Title
 
-	fixedCharsLine1 := len(timeStr) + 2 + 2 + 2 + 2 + 4 // "HH:MM  " + " - S##E##"
+	fixedCharsLine1 := len(timeStr) + 2 + 2 + 2 + 2 + 4
 	fixedCharsLine1 = 16
 	maxShowLen := widthPerColumn - fixedCharsLine1
 	if maxShowLen < minShowTitleLength {
@@ -959,21 +920,19 @@ func formatEpisode(ep CalendarItem, now time.Time, cfg CalendarToolConfig, color
 	}
 
 	line1 := fmt.Sprintf("%s %s%s - S%02dE%02d%s",
-		timeStr, statusColor, showTitle, ep.Season, ep.Episode, color(ColorReset))
+		timeStr, statusColor, showTitle, ep.Season, ep.Episode, clr(colors.Reset))
 	line2 := fmt.Sprintf("%s%s%s%s",
-		indentSpaces, statusColor, episodeTitle, color(ColorReset))
+		indentSpaces, statusColor, episodeTitle, clr(colors.Reset))
 
 	return line1 + "\n" + line2
 }
 
-func formatMovie(movie CalendarItem, now time.Time, cfg CalendarToolConfig, color func(string) string, widthPerColumn int) string {
+func formatMovie(movie CalendarItem, now time.Time, cfg ToolConfig, clr func(string) string, widthPerColumn int) string {
 	statusColor := getStatusColor(movie, now, cfg.NoColor)
 	timeStr := movie.AirTime.Format("15:04")
 
 	title := movie.Title
 
-	// Format: "HH:MM TITLE (YYYY)"
-	// Fixed chars: time(5) + space(1) + " ("(2) + year(4) + ")"(1) = len(timeStr) + 8
 	fixedChars := len(timeStr) + 8
 	maxTitleLen := widthPerColumn - fixedChars
 
@@ -986,11 +945,11 @@ func formatMovie(movie CalendarItem, now time.Time, cfg CalendarToolConfig, colo
 	}
 
 	return fmt.Sprintf("%s %s%s (%d)%s",
-		timeStr, statusColor, title, movie.Year, color(ColorReset))
+		timeStr, statusColor, title, movie.Year, clr(colors.Reset))
 }
 
-func displayVertical(items []CalendarItem, cfg CalendarToolConfig, now time.Time, start time.Time) error {
-	color := func(code string) string {
+func displayVertical(items []CalendarItem, cfg ToolConfig, now time.Time, start time.Time) error {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
@@ -1010,17 +969,17 @@ func displayVertical(items []CalendarItem, cfg CalendarToolConfig, now time.Time
 		dayItems := dayGroups[dayKey]
 
 		fmt.Printf("\n%s%s%s%s\n",
-			color(ColorBold), color(ColorCyan),
+			clr(colors.Bold), clr(colors.Cyan),
 			currentDay.Format("Mon 01/02"),
-			color(ColorReset))
+			clr(colors.Reset))
 		fmt.Printf("%s%s%s%s\n",
-			color(ColorBold), color(ColorCyan),
+			clr(colors.Bold), clr(colors.Cyan),
 			strings.Repeat("━", 40),
-			color(ColorReset))
+			clr(colors.Reset))
 
 		if len(dayItems) == 0 {
 			fmt.Printf("%sNo scheduled releases%s\n",
-				color(ColorGreen), color(ColorReset))
+				clr(colors.Green), clr(colors.Reset))
 			continue
 		}
 
@@ -1035,12 +994,19 @@ func displayVertical(items []CalendarItem, cfg CalendarToolConfig, now time.Time
 			}
 		}
 
-		for show, episodes := range showEpisodes {
-			for i, ep := range episodes {
+		showNames := make([]string, 0, len(showEpisodes))
+			for name := range showEpisodes {
+				showNames = append(showNames, name)
+			}
+			sort.Strings(showNames)
+
+			for _, show := range showNames {
+				episodes := showEpisodes[show]
+				for i, ep := range episodes {
 				if i >= maxDisplayPerShowVertical {
 					remaining := len(episodes) - maxDisplayPerShowVertical
 					fmt.Printf("  %s+ %d more episodes%s\n",
-						color(ColorCyan), remaining, color(ColorReset))
+						clr(colors.Cyan), remaining, clr(colors.Reset))
 					break
 				}
 
@@ -1048,10 +1014,10 @@ func displayVertical(items []CalendarItem, cfg CalendarToolConfig, now time.Time
 				timeStr := ep.AirTime.Format("15:04")
 
 				fmt.Printf("  %s%s%s %s%s - S%02dE%02d%s\n",
-					color(ColorBold), timeStr, color(ColorReset),
-					statusColor, show, ep.Season, ep.Episode, color(ColorReset))
+					clr(colors.Bold), timeStr, clr(colors.Reset),
+					statusColor, show, ep.Season, ep.Episode, clr(colors.Reset))
 				fmt.Printf("         %s%s%s\n",
-					statusColor, ep.Title, color(ColorReset))
+					statusColor, ep.Title, clr(colors.Reset))
 			}
 		}
 
@@ -1060,12 +1026,12 @@ func displayVertical(items []CalendarItem, cfg CalendarToolConfig, now time.Time
 			timeStr := movie.AirTime.Format("15:04")
 
 			fmt.Printf("  %s%s%s %s%s (%d)%s\n",
-				color(ColorBold), timeStr, color(ColorReset),
-				statusColor, movie.Title, movie.Year, color(ColorReset))
+				clr(colors.Bold), timeStr, clr(colors.Reset),
+				statusColor, movie.Title, movie.Year, clr(colors.Reset))
 		}
 	}
 
-	displaySummary(items, now, color)
+	displaySummary(items, now, clr)
 
 	return nil
 }
@@ -1076,16 +1042,16 @@ func getStatusColor(item CalendarItem, now time.Time, noColor bool) string {
 	}
 
 	if item.HasFile {
-		return ColorGreen
+		return colors.Green
 	}
 
 	if item.AirTime.Before(now) {
-		return ColorRed
+		return colors.Red
 	}
 
 	if item.IsPremiere {
-		return ColorOrange
+		return colors.Orange
 	}
 
-	return ColorBlue
+	return colors.Blue
 }

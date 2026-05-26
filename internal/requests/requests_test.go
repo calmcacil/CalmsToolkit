@@ -1,7 +1,4 @@
-//go:build mediarequests
-// +build mediarequests
-
-package main
+package requests
 
 import (
 	"encoding/json"
@@ -11,9 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
-// TestGetYear verifies year extraction from search results
 func TestGetYear(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -64,7 +62,6 @@ func TestGetYear(t *testing.T) {
 	}
 }
 
-// TestGetStatusText verifies REQUEST status code to text mapping
 func TestGetStatusText(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -87,7 +84,6 @@ func TestGetStatusText(t *testing.T) {
 	}
 }
 
-// TestFormatDate verifies date formatting
 func TestFormatDate(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -121,11 +117,10 @@ func TestFormatDate(t *testing.T) {
 	}
 }
 
-// TestBuildRequestsToolConfig verifies configuration builder
-func TestBuildRequestsToolConfig(t *testing.T) {
+func TestBuildToolConfig(t *testing.T) {
 	tests := []struct {
 		name            string
-		tk              *ToolkitConfig
+		tk              *config.ToolkitConfig
 		expectedURL     string
 		expectedKey     string
 		expectedTimeout time.Duration
@@ -139,13 +134,13 @@ func TestBuildRequestsToolConfig(t *testing.T) {
 			expectedTimeout: 10 * time.Second,
 		},
 		{
-			name: "RequestsToolConfig with all values",
-			tk: &ToolkitConfig{
-				General: GeneralConfig{
+			name: "ToolConfig with all values",
+			tk: &config.ToolkitConfig{
+				General: config.GeneralConfig{
 					Timeout: "45s",
 					NoColor: true,
 				},
-				MediaRequests: RequestsConfig{
+				MediaRequests: config.RequestsConfig{
 					OverseerrURL: "http://overseerr.example.com",
 					APIKey:       "test-key-123",
 					Verbose:      true,
@@ -159,8 +154,8 @@ func TestBuildRequestsToolConfig(t *testing.T) {
 		},
 		{
 			name: "Invalid timeout falls back to 10s",
-			tk: &ToolkitConfig{
-				General: GeneralConfig{
+			tk: &config.ToolkitConfig{
+				General: config.GeneralConfig{
 					Timeout: "not-a-duration",
 				},
 			},
@@ -169,8 +164,8 @@ func TestBuildRequestsToolConfig(t *testing.T) {
 		},
 		{
 			name: "Zero timeout falls back to 10s",
-			tk: &ToolkitConfig{
-				General: GeneralConfig{
+			tk: &config.ToolkitConfig{
+				General: config.GeneralConfig{
 					Timeout: "0s",
 				},
 			},
@@ -181,7 +176,7 @@ func TestBuildRequestsToolConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := BuildRequestsToolConfig(tt.tk)
+			cfg := BuildToolConfig(tt.tk)
 			if cfg.ServerURL != tt.expectedURL {
 				t.Errorf("ServerURL = %q, want %q", cfg.ServerURL, tt.expectedURL)
 			}
@@ -201,7 +196,6 @@ func TestBuildRequestsToolConfig(t *testing.T) {
 	}
 }
 
-// TestSearchMedia verifies media search API interaction
 func TestSearchMedia(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -253,16 +247,13 @@ func TestSearchMedia(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create mock server
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Verify request
 				if r.Method != "GET" {
 					t.Errorf("Expected GET request, got %s", r.Method)
 				}
 				if r.Header.Get("X-Api-Key") == "" {
 					t.Error("Expected X-Api-Key header")
 				}
-
 				w.WriteHeader(tt.mockStatusCode)
 				if tt.mockStatusCode == http.StatusOK {
 					json.NewEncoder(w).Encode(tt.mockResponse)
@@ -270,13 +261,13 @@ func TestSearchMedia(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			results, err := searchMedia(config, tt.query)
+			results, err := searchMedia(cfg, tt.query)
 
 			if tt.expectError {
 				if err == nil {
@@ -294,7 +285,6 @@ func TestSearchMedia(t *testing.T) {
 	}
 }
 
-// TestGetTVDetails verifies TV show details fetching
 func TestGetTVDetails(t *testing.T) {
 	mockTV := TVDetails{
 		ID:   1,
@@ -314,13 +304,13 @@ func TestGetTVDetails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	details, err := getTVDetails(config, 1)
+	details, err := getTVDetails(cfg, 1)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -333,7 +323,6 @@ func TestGetTVDetails(t *testing.T) {
 	}
 }
 
-// TestCreateRequest verifies media request creation
 func TestCreateRequest(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -386,13 +375,13 @@ func TestCreateRequest(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			_, err := createRequest(config, tt.media, nil, nil)
+			_, err := createRequest(cfg, tt.media, nil, nil)
 
 			if tt.expectError {
 				if err == nil {
@@ -407,7 +396,6 @@ func TestCreateRequest(t *testing.T) {
 	}
 }
 
-// TestGetPendingRequests verifies pending requests fetching
 func TestGetPendingRequests(t *testing.T) {
 	mockRequests := RequestsResponse{
 		PageInfo: PageInfo{
@@ -438,13 +426,13 @@ func TestGetPendingRequests(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -454,7 +442,6 @@ func TestGetPendingRequests(t *testing.T) {
 	}
 }
 
-// TestApproveRequest verifies request approval
 func TestApproveRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -467,19 +454,18 @@ func TestApproveRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	err := approveRequest(config, 123)
+	err := approveRequest(cfg, 123)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }
 
-// TestDeclineRequest verifies request decline
 func TestDeclineRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" {
@@ -492,19 +478,18 @@ func TestDeclineRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	err := declineRequest(config, 123)
+	err := declineRequest(cfg, 123)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 }
 
-// TestTestConnection verifies connection testing
 func TestTestConnection(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -536,13 +521,13 @@ func TestTestConnection(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			err := testConnection(config)
+			err := testConnection(cfg)
 
 			if tt.expectError {
 				if err == nil {
@@ -557,7 +542,6 @@ func TestTestConnection(t *testing.T) {
 	}
 }
 
-// TestFetchServiceInstances verifies service instance fetching
 func TestFetchServiceInstances(t *testing.T) {
 	mockInstances := []ServiceInstance{
 		{ID: 1, Name: "Radarr 4K", Is4k: true},
@@ -570,13 +554,13 @@ func TestFetchServiceInstances(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	instances, err := fetchServiceInstances(config, "radarr")
+	instances, err := fetchServiceInstances(cfg, "radarr")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -586,7 +570,6 @@ func TestFetchServiceInstances(t *testing.T) {
 	}
 }
 
-// TestFetchServiceDetails verifies service detail fetching
 func TestFetchServiceDetails(t *testing.T) {
 	mockDetails := ServiceDetails{
 		RootFolders: []ServiceRootFolder{
@@ -605,13 +588,13 @@ func TestFetchServiceDetails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	details, err := fetchServiceDetails(config, "radarr", 1)
+	details, err := fetchServiceDetails(cfg, "radarr", 1)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -624,17 +607,16 @@ func TestFetchServiceDetails(t *testing.T) {
 	}
 }
 
-// TestSearchMediaWithSpaces verifies that search queries with spaces are properly URL encoded
 func TestSearchMediaWithSpaces(t *testing.T) {
 	tests := []struct {
 		name          string
 		query         string
-		expectedQuery string // What we expect to see in the URL
+		expectedQuery string
 	}{
 		{
 			name:          "Query with single space",
 			query:         "The Matrix",
-			expectedQuery: "The+Matrix", // URL encoded space
+			expectedQuery: "The+Matrix",
 		},
 		{
 			name:          "Query with multiple spaces",
@@ -644,24 +626,20 @@ func TestSearchMediaWithSpaces(t *testing.T) {
 		{
 			name:          "Query with special characters",
 			query:         "Rick & Morty",
-			expectedQuery: "Rick+%26+Morty", // & becomes %26
+			expectedQuery: "Rick+%26+Morty",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Verify the query parameter is properly encoded
 				query := r.URL.Query().Get("query")
 				if query != tt.query {
 					t.Errorf("Query parameter = %q, want %q", query, tt.query)
 				}
-
-				// Verify URL encoding in raw query
 				if !strings.Contains(r.URL.RawQuery, tt.expectedQuery) {
 					t.Errorf("RawQuery = %q, should contain %q", r.URL.RawQuery, tt.expectedQuery)
 				}
-
 				w.WriteHeader(http.StatusOK)
 				json.NewEncoder(w).Encode(SearchResponse{
 					Page:         1,
@@ -672,13 +650,13 @@ func TestSearchMediaWithSpaces(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			_, err := searchMedia(config, tt.query)
+			_, err := searchMedia(cfg, tt.query)
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
@@ -686,7 +664,6 @@ func TestSearchMediaWithSpaces(t *testing.T) {
 	}
 }
 
-// TestSearchMediaErrorDiagnostics verifies that error messages include response body
 func TestSearchMediaErrorDiagnostics(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -722,18 +699,17 @@ func TestSearchMediaErrorDiagnostics(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			_, err := searchMedia(config, "test query")
+			_, err := searchMedia(cfg, "test query")
 			if err == nil {
 				t.Fatal("Expected error, got nil")
 			}
 
-			// Verify error message includes both status code and response body
 			errMsg := err.Error()
 			if !strings.Contains(errMsg, tt.expectErrorMsg) {
 				t.Errorf("Error message = %q, should contain %q", errMsg, tt.expectErrorMsg)
@@ -745,7 +721,6 @@ func TestSearchMediaErrorDiagnostics(t *testing.T) {
 	}
 }
 
-// TestCheckUserPermissions verifies permission checking
 func TestCheckUserPermissions(t *testing.T) {
 	const (
 		MANAGE_REQUESTS = 16
@@ -829,13 +804,13 @@ func TestCheckUserPermissions(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			authMe, err := checkUserPermissions(config)
+			authMe, err := checkUserPermissions(cfg)
 
 			if tt.expectError {
 				if err == nil {
@@ -863,7 +838,6 @@ func TestCheckUserPermissions(t *testing.T) {
 	}
 }
 
-// TestGetRequestCount verifies request count fetching
 func TestGetRequestCount(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -912,13 +886,13 @@ func TestGetRequestCount(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			count, err := getRequestCount(config)
+			count, err := getRequestCount(cfg)
 
 			if tt.expectError {
 				if err == nil {
@@ -942,7 +916,6 @@ func TestGetRequestCount(t *testing.T) {
 	}
 }
 
-// TestGetPendingRequestsHappyPath verifies the normal case where filter=pending works
 func TestGetPendingRequestsHappyPath(t *testing.T) {
 	mockCount := RequestCount{
 		Pending:  3,
@@ -1003,7 +976,6 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(mockCount)
 		case strings.Contains(r.URL.Path, "/request"):
-			// Verify the request uses filter=pending
 			if !strings.Contains(r.URL.RawQuery, "filter=pending") {
 				t.Errorf("Expected filter=pending in query, got %s", r.URL.RawQuery)
 			}
@@ -1015,13 +987,13 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1030,7 +1002,6 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 		t.Errorf("Got %d requests, want 3", len(requests))
 	}
 
-	// Verify all returned requests have pending status
 	for i, req := range requests {
 		if req.Status != StatusPending {
 			t.Errorf("Request %d has status %d, want %d (StatusPending)", i, req.Status, StatusPending)
@@ -1038,7 +1009,6 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 	}
 }
 
-// TestGetPendingRequestsNoPending verifies behavior when no pending requests exist
 func TestGetPendingRequestsNoPending(t *testing.T) {
 	mockCountResponse := RequestCount{
 		Pending:  0,
@@ -1067,13 +1037,13 @@ func TestGetPendingRequestsNoPending(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1083,10 +1053,9 @@ func TestGetPendingRequestsNoPending(t *testing.T) {
 	}
 }
 
-// TestGetPendingRequestsPagination verifies multi-page request fetching
 func TestGetPendingRequestsPagination(t *testing.T) {
 	requestCallCount := 0
-	totalResults := 125 // More than 50 to trigger pagination
+	totalResults := 125
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1102,14 +1071,12 @@ func TestGetPendingRequestsPagination(t *testing.T) {
 		case strings.Contains(r.URL.Path, "/request"):
 			requestCallCount++
 
-			// Parse skip parameter
 			skip := r.URL.Query().Get("skip")
 			skipNum := 0
 			if skip != "" {
 				fmt.Sscanf(skip, "%d", &skipNum)
 			}
 
-			// Calculate what to return for this page
 			pageStart := skipNum
 			pageEnd := skipNum + 50
 			if pageEnd > totalResults {
@@ -1140,18 +1107,17 @@ func TestGetPendingRequestsPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Should make 3 calls: skip=0 (50 results), skip=50 (50 results), skip=100 (25 results)
 	if requestCallCount != 3 {
 		t.Errorf("Made %d API calls to /request, want 3", requestCallCount)
 	}
@@ -1160,25 +1126,20 @@ func TestGetPendingRequestsPagination(t *testing.T) {
 		t.Errorf("Got %d requests, want %d", len(requests), totalResults)
 	}
 
-	// Verify request IDs are sequential
 	for i, req := range requests {
 		expectedID := i + 1
 		if req.ID != expectedID {
 			t.Errorf("Request %d has ID %d, want %d", i, req.ID, expectedID)
-			break // Only show first mismatch
+			break
 		}
 	}
 }
 
-// TestGetPendingRequestsWithFallback verifies the fallback logic when filter=pending returns 0 results
 func TestGetPendingRequestsWithFallback(t *testing.T) {
-	callCount := 0
 	pendingCallCount := 0
 	allCallCount := 0
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-
 		endpoint := r.URL.Path + "?" + r.URL.RawQuery
 
 		switch {
@@ -1226,13 +1187,13 @@ func TestGetPendingRequestsWithFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1263,7 +1224,6 @@ func TestGetPendingRequestsWithFallback(t *testing.T) {
 	}
 }
 
-// TestGetPendingRequestsNoFallbackNeeded verifies fallback is not triggered when primary fetch works
 func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
 	pendingCallCount := 0
 	allCallCount := 0
@@ -1302,13 +1262,13 @@ func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1326,22 +1286,20 @@ func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
 	}
 }
 
-// TestGetPendingRequestsFallbackPagination verifies fallback handles pagination correctly
 func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 	allPageCount := 0
-	totalResults := 120 // More than 50 to ensure pagination
+	totalResults := 120
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/request/count":
 			json.NewEncoder(w).Encode(RequestCount{
-				Pending:  60, // Half will be pending
+				Pending:  60,
 				Approved: 60,
 				Total:    totalResults,
 			})
 
 		case r.URL.Query().Get("filter") == "pending":
-			// Simulate the bug: filter=pending returns 0 even though count shows 60
 			json.NewEncoder(w).Encode(RequestsResponse{
 				PageInfo: PageInfo{
 					Pages:    0,
@@ -1360,7 +1318,6 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 				fmt.Sscanf(skip, "%d", &skipNum)
 			}
 
-			// Generate results for this page
 			pageStart := skipNum
 			pageEnd := skipNum + 50
 			if pageEnd > totalResults {
@@ -1369,7 +1326,6 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 
 			var results []MediaRequest
 			for i := pageStart; i < pageEnd; i++ {
-				// Alternate between pending and approved
 				status := StatusApproved
 				if i%2 == 0 {
 					status = StatusPending
@@ -1399,28 +1355,25 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(config)
+	requests, err := getPendingRequests(cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
-	// Should make 3 calls to filter=all to get all 120 results
 	if allPageCount != 3 {
 		t.Errorf("Made %d calls to filter=all, want 3 (should paginate through all pages)", allPageCount)
 	}
 
-	// Should have 60 pending requests (every even-indexed item)
 	if len(requests) != 60 {
 		t.Errorf("Got %d pending requests, want 60", len(requests))
 	}
 
-	// Verify all returned requests are pending
 	for _, req := range requests {
 		if req.Status != StatusPending {
 			t.Errorf("Request %d has status %d, want %d (StatusPending)", req.ID, req.Status, StatusPending)
@@ -1429,7 +1382,6 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 	}
 }
 
-// TestApproveRequestWithOverrides verifies approval with root folder override
 func TestApproveRequestWithOverrides(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -1526,7 +1478,6 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 					if r.Method != "PUT" {
 						t.Errorf("Expected PUT for update, got %s", r.Method)
 					}
-					// Decode body to verify rootFolder is set
 					json.NewDecoder(r.Body).Decode(&updateBody)
 					w.WriteHeader(tt.updateStatus)
 
@@ -1537,13 +1488,13 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := RequestsToolConfig{
+			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
 			}
 
-			err := approveRequestWithOverrides(config, tt.requestID, tt.overrides)
+			err := approveRequestWithOverrides(cfg, tt.requestID, tt.overrides)
 
 			if !approveCalled {
 				t.Error("Approve endpoint was not called")
@@ -1574,7 +1525,6 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 	}
 }
 
-// TestApproveRequestWithOverridesEndpoint verifies the correct API endpoints are called
 func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 	requestID := 456
 	rootFolder := "/tv/4k"
@@ -1593,7 +1543,7 @@ func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1605,7 +1555,7 @@ func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 		RootFolder: rootFolder,
 	}
 
-	err := approveRequestWithOverrides(config, requestID, overrides)
+	err := approveRequestWithOverrides(cfg, requestID, overrides)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1621,7 +1571,6 @@ func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 	}
 }
 
-// TestApproveRequestWithOverridesNilOverrides verifies nil overrides only calls approve
 func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 	approveCalled := false
 	updateCalled := false
@@ -1637,13 +1586,13 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := RequestsToolConfig{
+	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
 	}
 
-	err := approveRequestWithOverrides(config, 789, nil)
+	err := approveRequestWithOverrides(cfg, 789, nil)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1655,159 +1604,4 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 	if updateCalled {
 		t.Error("Update should not have been called with nil overrides")
 	}
-}
-
-// TestReadNumericInputSingleDigit verifies single-digit numeric input behavior
-func TestReadNumericInputSingleDigit(t *testing.T) {
-	// This test can't run in automated test environment as it requires terminal interaction
-	// It's documented here as a manual test case
-	t.Skip("Requires manual testing with terminal interaction")
-
-	// Manual test procedure:
-	// 1. Run media-requests interactively
-	// 2. Select "N" for new request
-	// 3. Search for a movie
-	// 4. When presented with results 1-9, press a single digit (e.g., "1")
-	// 5. Verify it selects immediately without requiring Enter
-}
-
-// TestReadNumericInputMultiDigit verifies multi-digit numeric input behavior
-func TestReadNumericInputMultiDigit(t *testing.T) {
-	// This test can't run in automated test environment as it requires terminal interaction
-	// It's documented here as a manual test case
-	t.Skip("Requires manual testing with terminal interaction")
-
-	// Manual test procedure:
-	// 1. Create a scenario with 10+ results
-	// 2. Try selecting result 10 or higher
-	// 3. Verify it requires typing full number and pressing Enter
-}
-
-// TestKeystrokeMenuNavigation verifies single keystroke menu navigation
-func TestKeystrokeMenuNavigation(t *testing.T) {
-	// This test can't run in automated test environment as it requires terminal interaction
-	// It's documented here as a manual test case
-	t.Skip("Requires manual testing with terminal interaction")
-
-	// Manual test procedure:
-	// 1. Run media-requests interactively
-	// 2. At main menu, press "N" without Enter - should enter New Request
-	// 3. Press "W" without Enter - should show pending requests
-	// 4. Press "Q" without Enter - should quit
-	// 5. Verify each keystroke is echoed and acts immediately
-}
-
-// TestKeystrokeYesNoPrompts verifies Y/N confirmation prompts
-func TestKeystrokeYesNoPrompts(t *testing.T) {
-	// This test can't run in automated test environment as it requires terminal interaction
-	// It's documented here as a manual test case
-	t.Skip("Requires manual testing with terminal interaction")
-
-	// Manual test procedure:
-	// 1. Create a new request and reach the "Submit request? (y/n):" prompt
-	// 2. Press "y" without Enter - should submit immediately
-	// 3. Try again and press "n" without Enter - should cancel immediately
-	// 4. In request detail view, try declining with "d" then "y" to confirm
-	// 5. Verify all single-key responses work without requiring Enter
-}
-
-// TestDisplayCurrentRootFolder verifies current root folder display in approval screen
-func TestDisplayCurrentRootFolder(t *testing.T) {
-	// This test verifies the logic but not the actual display
-	// Visual verification requires manual testing
-
-	tests := []struct {
-		name         string
-		request      MediaRequest
-		shouldShow   bool
-		expectedText string
-	}{
-		{
-			name: "Request with root folder set",
-			request: MediaRequest{
-				ID:         123,
-				Status:     StatusPending,
-				Type:       "movie",
-				RootFolder: "/movies/4k",
-			},
-			shouldShow:   true,
-			expectedText: "/movies/4k",
-		},
-		{
-			name: "Request without root folder",
-			request: MediaRequest{
-				ID:         456,
-				Status:     StatusPending,
-				Type:       "tv",
-				RootFolder: "",
-			},
-			shouldShow:   false,
-			expectedText: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Verify the RootFolder field is correctly set
-			if tt.shouldShow && tt.request.RootFolder != tt.expectedText {
-				t.Errorf("RootFolder = %q, want %q", tt.request.RootFolder, tt.expectedText)
-			}
-			if !tt.shouldShow && tt.request.RootFolder != "" {
-				t.Errorf("RootFolder should be empty, got %q", tt.request.RootFolder)
-			}
-		})
-	}
-
-	// Manual testing procedure documented here:
-	t.Log("Manual test: Navigate to View Requests > Select a request > Press 'A' to approve")
-	t.Log("Verify that the approval screen shows:")
-	t.Log("1. 'Current Root Folder: /path/to/folder' if set")
-	t.Log("2. 'Current Root Folder: Not set (will use server default)' if empty")
-	t.Log("3. The text should appear between request details and the Y/N/B prompt")
-}
-
-// TestKeystrokeFallbackToBuffered verifies graceful fallback when terminal mode unavailable
-func TestKeystrokeFallbackToBuffered(t *testing.T) {
-	// This test can't fully test the fallback as it requires specific terminal conditions
-	t.Skip("Requires specific terminal conditions (e.g., piped input)")
-
-	// Manual test procedure:
-	// 1. Run: echo "n" | ./bin/media-requests -url ... -token ...
-	// 2. Verify the program doesn't crash
-	// 3. Verify it falls back to buffered input (requires Enter)
-	// 4. Check that term.IsTerminal() correctly detects non-terminal stdin
-}
-
-// TestDisplayCurrentRootFolderManual documents the manual test procedure
-func TestDisplayCurrentRootFolderManual(t *testing.T) {
-	t.Skip("Manual test - see test log for procedure")
-
-	t.Log("\n=== Manual Test: Current Root Folder Display ===")
-	t.Log("\nPrerequisites:")
-	t.Log("- Running Overseerr/Jellyseerr instance")
-	t.Log("- At least one pending request with a root folder set")
-	t.Log("- At least one pending request without a root folder set")
-	t.Log("\nTest Procedure:")
-	t.Log("1. Run: ./bin/media-requests -url <server> -token <key>")
-	t.Log("2. Press 'W' (without Enter) to view requests")
-	t.Log("3. Select a request that HAS a root folder set")
-	t.Log("4. Press 'A' (without Enter) to approve")
-	t.Log("5. Verify the approval screen shows:")
-	t.Log("   - Request details (ID, TMDB ID, Type, etc.)")
-	t.Log("   - Current Root Folder: <path>  (highlighted in cyan)")
-	t.Log("   - Would you like to override... prompt")
-	t.Log("6. Press 'B' to go back")
-	t.Log("7. Select a request that does NOT have a root folder")
-	t.Log("8. Press 'A' to approve")
-	t.Log("9. Verify the approval screen shows:")
-	t.Log("   - Current Root Folder: Not set (will use server default)  (in gray)")
-	t.Log("10. Test single-keystroke responses:")
-	t.Log("    - Press 'N' (should proceed with default)")
-	t.Log("    - Press 'Y' (should show server selection)")
-	t.Log("    - Press 'B' (should cancel)")
-	t.Log("\nExpected Results:")
-	t.Log("- All keypresses work without requiring Enter")
-	t.Log("- Current root folder is clearly displayed")
-	t.Log("- Color coding helps distinguish set vs. unset folders")
-	t.Log("- User can easily see and optionally change the root folder")
 }

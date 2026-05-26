@@ -1,27 +1,25 @@
-//go:build arrfeed
-
-package main
+package feed
 
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/signal"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
-type FeedToolConfig struct {
-	SonarrInstances []ArrInstance
-	RadarrInstances []ArrInstance
+type ToolConfig struct {
+	SonarrInstances []config.ArrInstance
+	RadarrInstances []config.ArrInstance
 	PollInterval    time.Duration
 	HistoryWindow   time.Duration
 	Timeout         time.Duration
@@ -134,8 +132,8 @@ type RadarrMovie struct {
 	Year  int    `json:"year"`
 }
 
-func BuildFeedToolConfig(tk *ToolkitConfig) FeedToolConfig {
-	cfg := FeedToolConfig{}
+func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
+	cfg := ToolConfig{}
 	if tk == nil {
 		cfg.Timeout = 10 * time.Second
 		cfg.PollInterval = 5 * time.Second
@@ -184,42 +182,7 @@ func BuildFeedToolConfig(tk *ToolkitConfig) FeedToolConfig {
 	return cfg
 }
 
-func main() {
-	tk, err := LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	cfg := BuildFeedToolConfig(tk)
-
-	poll := flag.Duration("poll", cfg.PollInterval, "Poll interval for watch mode")
-	duration := flag.Duration("duration", cfg.HistoryWindow, "History lookback window")
-	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP request timeout")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
-	json := flag.Bool("json", false, "Output JSON instead of table")
-	watch := flag.Bool("watch", false, "Continuous monitoring mode")
-	showGrabbed := flag.Bool("show-grabbed", cfg.ShowGrabbed, "Show grabbed events")
-	showImported := flag.Bool("show-imported", cfg.ShowImported, "Show imported events")
-	showFailed := flag.Bool("show-failed", cfg.ShowFailed, "Show failed events")
-	showDeleted := flag.Bool("show-deleted", cfg.ShowDeleted, "Show deleted events")
-	showIgnored := flag.Bool("show-ignored", cfg.ShowIgnored, "Show ignored events")
-	maxEvents := flag.Int("events", cfg.MaxEvents, "Maximum number of events to display (1-100)")
-	quiet := flag.Bool("quiet", false, "Suppress error output in watch mode")
-	flag.Parse()
-
-	cfg.PollInterval = *poll
-	cfg.HistoryWindow = *duration
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *json
-	cfg.JSON = *json
-	cfg.Watch = *watch
-	cfg.ShowGrabbed = *showGrabbed
-	cfg.ShowImported = *showImported
-	cfg.ShowFailed = *showFailed
-	cfg.ShowDeleted = *showDeleted
-	cfg.ShowIgnored = *showIgnored
-	cfg.MaxEvents = *maxEvents
-	cfg.Quiet = *quiet
-
+func Run(cfg ToolConfig) {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
 		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
 		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
@@ -227,7 +190,7 @@ func main() {
 	}
 
 	client := &http.Client{Timeout: cfg.Timeout}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	if cfg.Watch {
@@ -237,30 +200,7 @@ func main() {
 	}
 }
 
-func validateConfig(cfg FeedToolConfig) error {
-	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
-		return fmt.Errorf("at least one Sonarr or Radarr instance must be configured")
-	}
-	for i, inst := range cfg.SonarrInstances {
-		if inst.URL == "" {
-			return fmt.Errorf("Sonarr instance %d: url is required", i)
-		}
-		if inst.APIKey == "" {
-			return fmt.Errorf("Sonarr instance %d: api_key is required", i)
-		}
-	}
-	for i, inst := range cfg.RadarrInstances {
-		if inst.URL == "" {
-			return fmt.Errorf("Radarr instance %d: url is required", i)
-		}
-		if inst.APIKey == "" {
-			return fmt.Errorf("Radarr instance %d: api_key is required", i)
-		}
-	}
-	return nil
-}
-
-func runSingleMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) {
+func runSingleMode(ctx context.Context, cfg ToolConfig, client *http.Client) {
 	since := time.Now().Add(-cfg.HistoryWindow)
 	events, err := fetchAllHistory(ctx, client, cfg, since)
 	if err != nil {
@@ -277,10 +217,10 @@ func runSingleMode(ctx context.Context, cfg FeedToolConfig, client *http.Client)
 	}
 }
 
-func runWatchMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) {
+func runWatchMode(ctx context.Context, cfg ToolConfig, client *http.Client) {
 	if !cfg.JSON {
-		fmt.Print(AnsiHideCursor)
-		defer fmt.Print(AnsiShowCursor)
+		fmt.Print(colors.HideCursor)
+		defer fmt.Print(colors.ShowCursor)
 	}
 
 	eventCache := make([]HistoryEvent, 0, 100)
@@ -290,9 +230,9 @@ func runWatchMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) 
 		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
 		if err != nil {
 			if !cfg.JSON {
-				fmt.Print(AnsiClearScreen + AnsiHomeCursor)
-				color := getColorFunc(cfg)
-				fmt.Printf("%sERROR: %v%s\n", color(ColorRed), err, color(ColorReset))
+				fmt.Print(colors.ClearScreen + colors.HomeCursor)
+				clr := getColorFunc(cfg)
+				fmt.Printf("%sERROR: %v%s\n", clr(colors.Red), err, clr(colors.Reset))
 				fmt.Printf("Retrying in %v...\n", cfg.PollInterval)
 			}
 		} else {
@@ -313,7 +253,7 @@ func runWatchMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) 
 			if cfg.JSON {
 				renderJSON(filteredEvents)
 			} else {
-				fmt.Print(AnsiClearScreen + AnsiHomeCursor)
+				fmt.Print(colors.ClearScreen + colors.HomeCursor)
 				renderTable(filteredEvents, cfg)
 			}
 
@@ -325,7 +265,7 @@ func runWatchMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) 
 		select {
 		case <-ctx.Done():
 			if !cfg.JSON {
-				fmt.Print(AnsiShowCursor)
+				fmt.Print(colors.ShowCursor)
 			}
 			return
 		case <-time.After(cfg.PollInterval):
@@ -333,14 +273,14 @@ func runWatchMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) 
 	}
 }
 
-func fetchAllHistory(ctx context.Context, client *http.Client, cfg FeedToolConfig, since time.Time) ([]HistoryEvent, error) {
+func fetchAllHistory(ctx context.Context, client *http.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
 	var wg sync.WaitGroup
 	eventsChan := make(chan []HistoryEvent, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
 	errorsChan := make(chan error, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
 
 	for _, inst := range cfg.SonarrInstances {
 		wg.Add(1)
-		go func(inst ArrInstance) {
+		go func(inst config.ArrInstance) {
 			defer wg.Done()
 			events, err := fetchSonarrHistory(ctx, client, inst, since)
 			if err != nil {
@@ -353,7 +293,7 @@ func fetchAllHistory(ctx context.Context, client *http.Client, cfg FeedToolConfi
 
 	for _, inst := range cfg.RadarrInstances {
 		wg.Add(1)
-		go func(inst ArrInstance) {
+		go func(inst config.ArrInstance) {
 			defer wg.Done()
 			events, err := fetchRadarrHistory(ctx, client, inst, since)
 			if err != nil {
@@ -389,7 +329,7 @@ func fetchAllHistory(ctx context.Context, client *http.Client, cfg FeedToolConfi
 	return allEvents, nil
 }
 
-func fetchSonarrHistory(ctx context.Context, client *http.Client, inst ArrInstance, since time.Time) ([]HistoryEvent, error) {
+func fetchSonarrHistory(ctx context.Context, client *http.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", inst.URL, sinceStr)
 
@@ -433,7 +373,7 @@ func fetchSonarrHistory(ctx context.Context, client *http.Client, inst ArrInstan
 	return events, nil
 }
 
-func fetchRadarrHistory(ctx context.Context, client *http.Client, inst ArrInstance, since time.Time) ([]HistoryEvent, error) {
+func fetchRadarrHistory(ctx context.Context, client *http.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", inst.URL, sinceStr)
 
@@ -629,7 +569,7 @@ func formatRelativeTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04")
 }
 
-func filterEvents(events []HistoryEvent, cfg FeedToolConfig) []HistoryEvent {
+func filterEvents(events []HistoryEvent, cfg ToolConfig) []HistoryEvent {
 	filtered := make([]HistoryEvent, 0, len(events))
 
 	for _, event := range events {
@@ -662,21 +602,21 @@ func filterEvents(events []HistoryEvent, cfg FeedToolConfig) []HistoryEvent {
 	return filtered
 }
 
-func renderTable(events []HistoryEvent, cfg FeedToolConfig) {
+func renderTable(events []HistoryEvent, cfg ToolConfig) {
 	color := getColorFunc(cfg)
 
 	fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s%s\n",
-		color(ColorBold),
+		color(colors.Bold),
 		"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats",
-		color(ColorReset))
+		color(colors.Reset))
 
 	fmt.Printf("%s%s%s\n",
-		color(ColorBold),
+		color(colors.Bold),
 		strings.Repeat("-", 160),
-		color(ColorReset))
+		color(colors.Reset))
 
 	if len(events) == 0 {
-		fmt.Printf("%sNo events found%s\n", color(ColorGray), color(ColorReset))
+		fmt.Printf("%sNo events found%s\n", color(colors.Gray), color(colors.Reset))
 		return
 	}
 
@@ -692,7 +632,7 @@ func renderTable(events []HistoryEvent, cfg FeedToolConfig) {
 			timeStr,
 			color(actionColor),
 			center(event.Action, 10),
-			color(ColorReset),
+			color(colors.Reset),
 			center(title, 30),
 			center(event.Episode, 10),
 			center(episodeTitle, 40),
@@ -700,7 +640,7 @@ func renderTable(events []HistoryEvent, cfg FeedToolConfig) {
 			center(formats, 20))
 	}
 
-	fmt.Printf("\n%sTotal events: %d%s\n", color(ColorBold), len(events), color(ColorReset))
+	fmt.Printf("\n%sTotal events: %d%s\n", color(colors.Bold), len(events), color(colors.Reset))
 }
 
 func renderJSON(events []HistoryEvent) {
@@ -712,23 +652,23 @@ func renderJSON(events []HistoryEvent) {
 func getActionColor(action string) string {
 	switch action {
 	case "Imported", "Bulk Import":
-		return ColorGreen
+		return colors.Green
 	case "Grabbed":
-		return ColorCyan
+		return colors.Cyan
 	case "Failed":
-		return ColorRed
+		return colors.Red
 	case "Deleted":
-		return ColorYellow
+		return colors.Yellow
 	case "Ignored":
-		return ColorGray
+		return colors.Gray
 	case "Renamed":
-		return ColorBlue
+		return colors.Blue
 	default:
-		return ColorReset
+		return colors.Reset
 	}
 }
 
-func getColorFunc(cfg FeedToolConfig) func(string) string {
+func getColorFunc(cfg ToolConfig) func(string) string {
 	if cfg.NoColor || cfg.JSON {
 		return func(s string) string { return "" }
 	}
