@@ -1,132 +1,17 @@
 //go:build mediacalendar
-// +build mediacalendar
 
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-// TestParseCommaSeparated verifies comma-separated string parsing
-func TestParseCommaSeparated(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected []string
-	}{
-		{
-			name:     "Single item",
-			input:    "http://sonarr1",
-			expected: []string{"http://sonarr1"},
-		},
-		{
-			name:     "Multiple items",
-			input:    "http://sonarr1,http://sonarr2,http://sonarr3",
-			expected: []string{"http://sonarr1", "http://sonarr2", "http://sonarr3"},
-		},
-		{
-			name:     "Empty string",
-			input:    "",
-			expected: nil,
-		},
-		{
-			name:     "Items with spaces",
-			input:    " http://sonarr1 , http://sonarr2 ",
-			expected: []string{"http://sonarr1", "http://sonarr2"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseCommaSeparated(tt.input)
-			if len(got) != len(tt.expected) {
-				t.Errorf("parseCommaSeparated() length = %d, want %d", len(got), len(tt.expected))
-				return
-			}
-			for i := range got {
-				if got[i] != tt.expected[i] {
-					t.Errorf("parseCommaSeparated()[%d] = %v, want %v", i, got[i], tt.expected[i])
-				}
-			}
-		})
-	}
-}
-
-// TestLoadEnvFile verifies environment file loading for media-calendar
-func TestLoadEnvFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	content := `SONARR_URLS=http://sonarr1.example.com,http://sonarr2.example.com
-SONARR_TOKENS=token1,token2
-RADARR_URLS=http://radarr1.example.com
-RADARR_TOKENS=token3
-# Comment line
-IGNORED_VAR=value
-`
-	err := os.WriteFile(envFile, []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test .env file: %v", err)
-	}
-
-	config := &Config{}
-	loadEnvFile(envFile, config)
-
-	if len(config.SonarrURLs) != 2 {
-		t.Errorf("SonarrURLs count = %d, want 2", len(config.SonarrURLs))
-	}
-	if len(config.SonarrTokens) != 2 {
-		t.Errorf("SonarrTokens count = %d, want 2", len(config.SonarrTokens))
-	}
-	if len(config.RadarrURLs) != 1 {
-		t.Errorf("RadarrURLs count = %d, want 1", len(config.RadarrURLs))
-	}
-	if len(config.RadarrTokens) != 1 {
-		t.Errorf("RadarrTokens count = %d, want 1", len(config.RadarrTokens))
-	}
-}
-
-// TestLoadConfig verifies configuration loading
-func TestLoadConfig(t *testing.T) {
-	config := loadConfig(
-		"http://sonarr1,http://sonarr2",
-		"token1,token2",
-		"http://radarr1",
-		"token3",
-		10*time.Second,
-		7,
-		0,
-		false,
-		false,
-		false,
-		30,
-		false,
-	)
-
-	if len(config.SonarrURLs) != 2 {
-		t.Errorf("SonarrURLs count = %d, want 2", len(config.SonarrURLs))
-	}
-	if config.SonarrURLs[0] != "http://sonarr1" {
-		t.Errorf("SonarrURLs[0] = %v, want %v", config.SonarrURLs[0], "http://sonarr1")
-	}
-	if len(config.SonarrTokens) != 2 {
-		t.Errorf("SonarrTokens count = %d, want 2", len(config.SonarrTokens))
-	}
-	if config.Days != 7 {
-		t.Errorf("Days = %d, want 7", config.Days)
-	}
-	if config.WatchMode != false {
-		t.Errorf("WatchMode = %v, want false", config.WatchMode)
-	}
-}
-
-// TestFetchSonarrCalendar verifies Sonarr calendar fetching
 func TestFetchSonarrCalendar(t *testing.T) {
 	mockResponse := []SonarrEpisode{
 		{
@@ -154,10 +39,13 @@ func TestFetchSonarrCalendar(t *testing.T) {
 	}))
 	defer server.Close()
 
+	client := &http.Client{Timeout: 5 * time.Second}
+	inst := ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	start := time.Now()
 	end := start.Add(7 * 24 * time.Hour)
 
-	episodes, err := fetchSonarrCalendar(server.URL, "test-token", start, end, false)
+	ctx := context.Background()
+	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -179,7 +67,6 @@ func TestFetchSonarrCalendar(t *testing.T) {
 	}
 }
 
-// TestFetchRadarrCalendar verifies Radarr calendar fetching
 func TestFetchRadarrCalendar(t *testing.T) {
 	mockResponse := []RadarrMovie{
 		{
@@ -203,10 +90,13 @@ func TestFetchRadarrCalendar(t *testing.T) {
 	}))
 	defer server.Close()
 
+	client := &http.Client{Timeout: 5 * time.Second}
+	inst := ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	start := time.Now()
 	end := start.Add(7 * 24 * time.Hour)
 
-	movies, err := fetchRadarrCalendar(server.URL, "test-token", start, end, false)
+	ctx := context.Background()
+	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -228,7 +118,6 @@ func TestFetchRadarrCalendar(t *testing.T) {
 	}
 }
 
-// TestFetchQueue verifies queue fetching
 func TestFetchQueue(t *testing.T) {
 	mockResponse := QueueResponse{
 		TotalRecords: 2,
@@ -262,7 +151,11 @@ func TestFetchQueue(t *testing.T) {
 	}))
 	defer server.Close()
 
-	queue, err := fetchQueue(server.URL, "test-token", false)
+	client := &http.Client{Timeout: 5 * time.Second}
+	inst := ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
+	ctx := context.Background()
+
+	queue, err := fetchQueue(ctx, client, inst, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -282,7 +175,6 @@ func TestFetchQueue(t *testing.T) {
 	}
 }
 
-// TestCalculateColumnLayout verifies column layout calculation
 func TestCalculateColumnLayout(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -295,22 +187,22 @@ func TestCalculateColumnLayout(t *testing.T) {
 			name:                "Wide terminal, 7 days",
 			termWidth:           160,
 			totalDays:           7,
-			expectedColumns:     3, // minComfortableColumnWidth=45, so 3 cols @ 50 width
+			expectedColumns:     3,
 			expectedWidthPerCol: 50,
 		},
 		{
 			name:                "Narrow terminal, 7 days",
 			termWidth:           80,
 			totalDays:           7,
-			expectedColumns:     1,  // Only 1 column fits with minComfortableColumnWidth=45
-			expectedWidthPerCol: 76, // (80 - 1 - 3) / 1 = 76
+			expectedColumns:     1,
+			expectedWidthPerCol: 76,
 		},
 		{
 			name:                "Very narrow terminal",
 			termWidth:           40,
 			totalDays:           7,
-			expectedColumns:     1,  // Only 1 column fits
-			expectedWidthPerCol: 36, // (40 - 1 - 3) / 1 = 36
+			expectedColumns:     1,
+			expectedWidthPerCol: 36,
 		},
 	}
 
@@ -327,7 +219,6 @@ func TestCalculateColumnLayout(t *testing.T) {
 	}
 }
 
-// TestTruncateText verifies text truncation
 func TestTruncateText(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -359,6 +250,12 @@ func TestTruncateText(t *testing.T) {
 			maxLen:   5,
 			expected: "He...",
 		},
+		{
+			name:     "Max length less than 3",
+			text:     "Hello World",
+			maxLen:   2,
+			expected: "He",
+		},
 	}
 
 	for _, tt := range tests {
@@ -371,9 +268,7 @@ func TestTruncateText(t *testing.T) {
 	}
 }
 
-// TestAggregateCalendar verifies calendar aggregation and deduplication
 func TestAggregateCalendar(t *testing.T) {
-	// Create mock servers for Sonarr and Radarr
 	sonarrResponse := []SonarrEpisode{
 		{
 			Title:         "Episode 5",
@@ -415,35 +310,38 @@ func TestAggregateCalendar(t *testing.T) {
 	}
 
 	sonarrServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v3/calendar" {
+		if strings.HasSuffix(r.URL.Path, "/calendar") {
 			json.NewEncoder(w).Encode(sonarrResponse)
-		} else if r.URL.Path == "/api/v3/queue" {
+		} else if strings.HasSuffix(r.URL.Path, "/queue") {
 			json.NewEncoder(w).Encode(queueResponse)
 		}
 	}))
 	defer sonarrServer.Close()
 
 	radarrServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v3/calendar" {
+		if strings.HasSuffix(r.URL.Path, "/calendar") {
 			json.NewEncoder(w).Encode(radarrResponse)
-		} else if r.URL.Path == "/api/v3/queue" {
+		} else if strings.HasSuffix(r.URL.Path, "/queue") {
 			json.NewEncoder(w).Encode(QueueResponse{TotalRecords: 0})
 		}
 	}))
 	defer radarrServer.Close()
 
-	config := Config{
-		SonarrURLs:   []string{sonarrServer.URL},
-		SonarrTokens: []string{"test-token"},
-		RadarrURLs:   []string{radarrServer.URL},
-		RadarrTokens: []string{"test-token"},
-		Days:         7,
-		DaysPast:     0,
-		Timeout:      5 * time.Second,
-		Debug:        false,
+	cfg := CalendarToolConfig{
+		SonarrInstances: []ArrInstance{
+			{Name: "Sonarr", URL: sonarrServer.URL, APIKey: "test-token"},
+		},
+		RadarrInstances: []ArrInstance{
+			{Name: "Radarr", URL: radarrServer.URL, APIKey: "test-token"},
+		},
+		Days:       7,
+		DaysPast:   0,
+		Timeout:    5 * time.Second,
+		Debug:      false,
 	}
 
-	items, issues, err := aggregateCalendar(config)
+	ctx := context.Background()
+	items, issues, err := aggregateCalendar(ctx, cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -456,7 +354,6 @@ func TestAggregateCalendar(t *testing.T) {
 		t.Errorf("Expected at least 1 queue issue, got %d", len(issues))
 	}
 
-	// Verify Sonarr episode is present
 	foundEpisode := false
 	for _, item := range items {
 		if item.ShowTitle == "Test Show" && item.Type == "episode" {
@@ -468,7 +365,6 @@ func TestAggregateCalendar(t *testing.T) {
 		t.Error("Expected to find Sonarr episode in calendar items")
 	}
 
-	// Verify Radarr movie is present
 	foundMovie := false
 	for _, item := range items {
 		if item.Title == "Test Movie" && item.Type == "movie" {
@@ -481,7 +377,6 @@ func TestAggregateCalendar(t *testing.T) {
 	}
 }
 
-// TestGetStatusColor verifies status color selection
 func TestGetStatusColor(t *testing.T) {
 	now := time.Now()
 
@@ -525,24 +420,17 @@ func TestGetStatusColor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Just verify the function doesn't panic
 			_ = getStatusColor(tt.item, tt.now, tt.noColor)
 		})
 	}
 }
 
-// TestBuildDayContentSorting verifies that episodes are sorted by air time, not alphabetically by show name
 func TestBuildDayContentSorting(t *testing.T) {
 	now := time.Date(2025, 10, 16, 12, 0, 0, 0, time.UTC)
 	baseTime := now.Truncate(24 * time.Hour)
 
-	config := Config{
-		NoColor: true,
-	}
+	cfg := CalendarToolConfig{NoColor: true}
 
-	// Create items with different air times and show names
-	// Shows are alphabetically: Alpha, Beta, Zulu
-	// But air times should be: 14:00 (Zulu), 16:00 (Alpha), 18:00 (Beta)
 	dayItems := []CalendarItem{
 		{
 			Type:      "episode",
@@ -550,7 +438,7 @@ func TestBuildDayContentSorting(t *testing.T) {
 			Title:     "Episode 1",
 			Season:    1,
 			Episode:   1,
-			AirTime:   baseTime.Add(16 * time.Hour), // 16:00
+			AirTime:   baseTime.Add(16 * time.Hour),
 			HasFile:   false,
 		},
 		{
@@ -559,7 +447,7 @@ func TestBuildDayContentSorting(t *testing.T) {
 			Title:     "Episode 1",
 			Season:    1,
 			Episode:   1,
-			AirTime:   baseTime.Add(14 * time.Hour), // 14:00 - should be first
+			AirTime:   baseTime.Add(14 * time.Hour),
 			HasFile:   false,
 		},
 		{
@@ -568,36 +456,31 @@ func TestBuildDayContentSorting(t *testing.T) {
 			Title:     "Episode 1",
 			Season:    1,
 			Episode:   1,
-			AirTime:   baseTime.Add(18 * time.Hour), // 18:00
+			AirTime:   baseTime.Add(18 * time.Hour),
 			HasFile:   false,
 		},
 	}
 
 	colorFunc := func(s string) string { return "" }
-	content := buildDayContent(dayItems, now, config, colorFunc, 80)
+	content := buildDayContent(dayItems, now, cfg, colorFunc, 80)
 
-	// Verify we got content (3 episodes)
 	if len(content) < 3 {
 		t.Fatalf("Expected at least 3 content lines, got %d", len(content))
 	}
 
-	// The content should be in time order: Zulu (14:00), Alpha (16:00), Beta (18:00)
-	// Check that the time strings appear in the correct order
 	foundZulu := false
 	foundAlpha := false
 	foundBeta := false
 
 	for i, line := range content {
-		if !foundZulu && (contains(line, "Zulu Show") || contains(line, "14:00")) {
+		if !foundZulu && (strings.Contains(line, "Zulu Show") || strings.Contains(line, "14:00")) {
 			foundZulu = true
-			// Alpha and Beta should not have been found yet
 			if foundAlpha || foundBeta {
 				t.Errorf("Found Zulu Show at position %d, but Alpha or Beta was already found", i)
 			}
 		}
-		if !foundAlpha && (contains(line, "Alpha Show") || contains(line, "16:00")) {
+		if !foundAlpha && (strings.Contains(line, "Alpha Show") || strings.Contains(line, "16:00")) {
 			foundAlpha = true
-			// Zulu should have been found, Beta should not
 			if !foundZulu {
 				t.Errorf("Found Alpha Show at position %d before Zulu Show", i)
 			}
@@ -605,9 +488,8 @@ func TestBuildDayContentSorting(t *testing.T) {
 				t.Errorf("Found Alpha Show at position %d after Beta Show", i)
 			}
 		}
-		if !foundBeta && (contains(line, "Beta Show") || contains(line, "18:00")) {
+		if !foundBeta && (strings.Contains(line, "Beta Show") || strings.Contains(line, "18:00")) {
 			foundBeta = true
-			// Both Zulu and Alpha should have been found
 			if !foundZulu || !foundAlpha {
 				t.Errorf("Found Beta Show at position %d, but Zulu or Alpha was not found yet", i)
 			}
@@ -619,16 +501,12 @@ func TestBuildDayContentSorting(t *testing.T) {
 	}
 }
 
-// TestBuildDayContentTruncation verifies truncation works with time-sorted episodes
 func TestBuildDayContentTruncation(t *testing.T) {
 	now := time.Date(2025, 10, 16, 12, 0, 0, 0, time.UTC)
 	baseTime := now.Truncate(24 * time.Hour)
 
-	config := Config{
-		NoColor: true,
-	}
+	cfg := CalendarToolConfig{NoColor: true}
 
-	// Create 4 consecutive episodes from the same show
 	dayItems := []CalendarItem{
 		{
 			Type:      "episode",
@@ -669,18 +547,16 @@ func TestBuildDayContentTruncation(t *testing.T) {
 	}
 
 	colorFunc := func(s string) string { return "" }
-	content := buildDayContent(dayItems, now, config, colorFunc, 80)
+	content := buildDayContent(dayItems, now, cfg, colorFunc, 80)
 
-	// Should show 2 episodes + 1 truncation line = 3 lines
-	// (First 2 episodes shown, "+ 2 more episodes" for the rest)
 	foundTruncation := false
 	episodeCount := 0
 
 	for _, line := range content {
-		if contains(line, "+ 2 more episodes") {
+		if strings.Contains(line, "+ 2 more episodes") {
 			foundTruncation = true
 		}
-		if contains(line, "Episode") {
+		if strings.Contains(line, "Episode") {
 			episodeCount++
 		}
 	}
@@ -690,21 +566,17 @@ func TestBuildDayContentTruncation(t *testing.T) {
 	}
 }
 
-// TestBuildDayContentMixedTypes verifies movies and episodes are sorted by time
 func TestBuildDayContentMixedTypes(t *testing.T) {
 	now := time.Date(2025, 10, 16, 12, 0, 0, 0, time.UTC)
 	baseTime := now.Truncate(24 * time.Hour)
 
-	config := Config{
-		NoColor: true,
-	}
+	cfg := CalendarToolConfig{NoColor: true}
 
-	// Mix movies and episodes with different air times
 	dayItems := []CalendarItem{
 		{
 			Type:    "movie",
 			Title:   "Movie B",
-			AirTime: baseTime.Add(17 * time.Hour), // 17:00
+			AirTime: baseTime.Add(17 * time.Hour),
 			HasFile: false,
 		},
 		{
@@ -713,33 +585,32 @@ func TestBuildDayContentMixedTypes(t *testing.T) {
 			Title:     "Episode 1",
 			Season:    1,
 			Episode:   1,
-			AirTime:   baseTime.Add(15 * time.Hour), // 15:00 - should be first
+			AirTime:   baseTime.Add(15 * time.Hour),
 			HasFile:   false,
 		},
 		{
 			Type:    "movie",
 			Title:   "Movie A",
-			AirTime: baseTime.Add(19 * time.Hour), // 19:00
+			AirTime: baseTime.Add(19 * time.Hour),
 			HasFile: false,
 		},
 	}
 
 	colorFunc := func(s string) string { return "" }
-	content := buildDayContent(dayItems, now, config, colorFunc, 80)
+	content := buildDayContent(dayItems, now, cfg, colorFunc, 80)
 
-	// Should be in order: Episode (15:00), Movie B (17:00), Movie A (19:00)
 	foundEpisode := false
 	foundMovieB := false
 	foundMovieA := false
 
 	for i, line := range content {
-		if !foundEpisode && contains(line, "Show A") {
+		if !foundEpisode && strings.Contains(line, "Show A") {
 			foundEpisode = true
 			if foundMovieB || foundMovieA {
 				t.Errorf("Found episode at position %d after a movie", i)
 			}
 		}
-		if !foundMovieB && contains(line, "Movie B") {
+		if !foundMovieB && strings.Contains(line, "Movie B") {
 			foundMovieB = true
 			if !foundEpisode {
 				t.Errorf("Found Movie B at position %d before episode", i)
@@ -748,7 +619,7 @@ func TestBuildDayContentMixedTypes(t *testing.T) {
 				t.Errorf("Found Movie B at position %d after Movie A", i)
 			}
 		}
-		if !foundMovieA && contains(line, "Movie A") {
+		if !foundMovieA && strings.Contains(line, "Movie A") {
 			foundMovieA = true
 			if !foundEpisode || !foundMovieB {
 				t.Errorf("Found Movie A at position %d before episode or Movie B", i)
@@ -761,16 +632,97 @@ func TestBuildDayContentMixedTypes(t *testing.T) {
 	}
 }
 
-// Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+func TestBuildCalendarToolConfig(t *testing.T) {
+	tk := DefaultToolkitConfig()
+	tk.Sonarr = []ArrInstance{
+		{Name: "Sonarr HD", URL: "http://sonarr:8989", APIKey: "token1"},
+	}
+	tk.Radarr = []ArrInstance{
+		{Name: "Radarr HD", URL: "http://radarr:7878", APIKey: "token2"},
+	}
+	tk.MediaCalendar.Days = 7
+	tk.MediaCalendar.DaysPast = 1
+	tk.MediaCalendar.WatchInterval = 600
+	tk.General.Timeout = "30s"
+
+	cfg := BuildCalendarToolConfig(tk)
+
+	if len(cfg.SonarrInstances) != 1 {
+		t.Errorf("SonarrInstances = %d, want 1", len(cfg.SonarrInstances))
+	}
+	if cfg.SonarrInstances[0].Name != "Sonarr HD" {
+		t.Errorf("SonarrInstances[0].Name = %q, want %q", cfg.SonarrInstances[0].Name, "Sonarr HD")
+	}
+	if cfg.Days != 7 {
+		t.Errorf("Days = %d, want 7", cfg.Days)
+	}
+	if cfg.DaysPast != 1 {
+		t.Errorf("DaysPast = %d, want 1", cfg.DaysPast)
+	}
+	if cfg.Timeout != 30*time.Second {
+		t.Errorf("Timeout = %v, want 30s", cfg.Timeout)
+	}
+	if cfg.WatchSeconds != 600 {
+		t.Errorf("WatchSeconds = %d, want 600", cfg.WatchSeconds)
+	}
 }
 
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+func TestBuildCalendarToolConfigNil(t *testing.T) {
+	cfg := BuildCalendarToolConfig(nil)
+
+	if cfg.Days != 1 {
+		t.Errorf("Days = %d, want 1", cfg.Days)
 	}
-	return false
+	if cfg.Timeout != 10*time.Second {
+		t.Errorf("Timeout = %v, want 10s", cfg.Timeout)
+	}
+	if len(cfg.SonarrInstances) != 0 {
+		t.Errorf("Expected no Sonarr instances, got %d", len(cfg.SonarrInstances))
+	}
+}
+
+func TestCalculateDateRange(t *testing.T) {
+	start, end := calculateDateRange(1, 0)
+	if end.Sub(start) != 24*time.Hour {
+		t.Errorf("Expected 1 day range, got %v", end.Sub(start))
+	}
+
+	start, end = calculateDateRange(7, 1)
+	if end.Sub(start) != 8*24*time.Hour {
+		t.Errorf("Expected 8 day range (7+1), got %v", end.Sub(start))
+	}
+}
+
+func TestApplyFilters(t *testing.T) {
+	now := time.Now()
+	items := []CalendarItem{
+		{Title: "Available Movie", HasFile: true, Monitored: true, AirTime: now.Add(-24 * time.Hour)},
+		{Title: "Missing Movie", HasFile: false, Monitored: true, AirTime: now.Add(-24 * time.Hour)},
+		{Title: "Premiere Episode", HasFile: false, IsPremiere: true, Monitored: true, AirTime: now.Add(24 * time.Hour)},
+		{Title: "Unmonitored Movie", HasFile: false, Monitored: false, AirTime: now.Add(24 * time.Hour)},
+	}
+
+	tests := []struct {
+		name     string
+		cfg      CalendarToolConfig
+		expected int
+	}{
+		{"no filter", CalendarToolConfig{}, 4},
+		{"monitored only", CalendarToolConfig{MonitoredOnly: true}, 3},
+		{"filter available", CalendarToolConfig{Filter: "available"}, 1},
+		{"filter missing", CalendarToolConfig{Filter: "missing"}, 1},
+		{"filter premieres", CalendarToolConfig{Filter: "premieres"}, 1},
+		{"filter monitored", CalendarToolConfig{Filter: "monitored"}, 3},
+		{"filter missing+premieres", CalendarToolConfig{Filter: "missing,premieres"}, 2},
+		{"monitored+filter available", CalendarToolConfig{MonitoredOnly: true, Filter: "available"}, 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := applyFilters(items, tt.cfg)
+			if len(result) != tt.expected {
+				t.Errorf("got %d items, want %d", len(result), tt.expected)
+			}
+		})
+	}
 }

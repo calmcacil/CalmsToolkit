@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -123,104 +121,81 @@ func TestFormatDate(t *testing.T) {
 	}
 }
 
-// TestLoadEnvFile verifies environment file loading
-func TestLoadEnvFile(t *testing.T) {
-	// Create temporary directory
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
-
-	// Create test .env file
-	content := `OVERSEERR_URL=http://test.example.com
-OVERSEERR_TOKEN=test-api-key-123
-# This is a comment
-SOME_OTHER_VAR=ignored
-`
-	err := os.WriteFile(envFile, []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test .env file: %v", err)
-	}
-
-	// Test loading
-	config := &Config{}
-	loadEnvFile(envFile, config)
-
-	// Verify values were loaded
-	if config.ServerURL != "http://test.example.com" {
-		t.Errorf("ServerURL = %v, want %v", config.ServerURL, "http://test.example.com")
-	}
-	if config.APIKey != "test-api-key-123" {
-		t.Errorf("APIKey = %v, want %v", config.APIKey, "test-api-key-123")
-	}
-}
-
-// TestLoadEnvFileMissing verifies behavior when .env file doesn't exist
-func TestLoadEnvFileMissing(t *testing.T) {
-	config := &Config{
-		ServerURL: "http://original.example.com",
-		APIKey:    "original-key",
-	}
-
-	// Should not panic when file doesn't exist
-	loadEnvFile("/nonexistent/path/.env", config)
-
-	// Config should remain unchanged
-	if config.ServerURL != "http://original.example.com" {
-		t.Errorf("ServerURL changed when it shouldn't: %v", config.ServerURL)
-	}
-}
-
-// TestLoadConfig verifies configuration loading with precedence
-func TestLoadConfig(t *testing.T) {
+// TestBuildRequestsToolConfig verifies configuration builder
+func TestBuildRequestsToolConfig(t *testing.T) {
 	tests := []struct {
 		name            string
-		serverURL       string
-		apiKey          string
-		timeout         time.Duration
-		noColor         bool
+		tk              *ToolkitConfig
 		expectedURL     string
 		expectedKey     string
 		expectedTimeout time.Duration
 		expectedNoColor bool
+		expectedVerbose bool
 	}{
 		{
-			name:            "All parameters provided",
-			serverURL:       "http://cli.example.com",
-			apiKey:          "cli-key",
-			timeout:         45 * time.Second,
-			noColor:         true,
-			expectedURL:     "http://cli.example.com",
-			expectedKey:     "cli-key",
-			expectedTimeout: 45 * time.Second,
-			expectedNoColor: true,
+			name:            "Nil config returns defaults",
+			tk:              nil,
+			expectedURL:     "http://localhost:5055",
+			expectedTimeout: 10 * time.Second,
 		},
 		{
-			name:            "Zero timeout stays zero",
-			serverURL:       "http://test.example.com",
-			apiKey:          "test-key",
-			timeout:         0,
-			noColor:         false,
-			expectedURL:     "http://test.example.com",
-			expectedKey:     "test-key",
-			expectedTimeout: 0,
-			expectedNoColor: false,
+			name: "RequestsToolConfig with all values",
+			tk: &ToolkitConfig{
+				General: GeneralConfig{
+					Timeout: "45s",
+					NoColor: true,
+				},
+				MediaRequests: RequestsConfig{
+					OverseerrURL: "http://overseerr.example.com",
+					APIKey:       "test-key-123",
+					Verbose:      true,
+				},
+			},
+			expectedURL:     "http://overseerr.example.com",
+			expectedKey:     "test-key-123",
+			expectedTimeout: 45 * time.Second,
+			expectedNoColor: true,
+			expectedVerbose: true,
+		},
+		{
+			name: "Invalid timeout falls back to 10s",
+			tk: &ToolkitConfig{
+				General: GeneralConfig{
+					Timeout: "not-a-duration",
+				},
+			},
+			expectedURL:     "",
+			expectedTimeout: 10 * time.Second,
+		},
+		{
+			name: "Zero timeout falls back to 10s",
+			tk: &ToolkitConfig{
+				General: GeneralConfig{
+					Timeout: "0s",
+				},
+			},
+			expectedURL:     "",
+			expectedTimeout: 10 * time.Second,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := loadConfig(tt.serverURL, tt.apiKey, tt.timeout, tt.noColor)
-
-			if config.ServerURL != tt.expectedURL {
-				t.Errorf("ServerURL = %v, want %v", config.ServerURL, tt.expectedURL)
+			cfg := BuildRequestsToolConfig(tt.tk)
+			if cfg.ServerURL != tt.expectedURL {
+				t.Errorf("ServerURL = %q, want %q", cfg.ServerURL, tt.expectedURL)
 			}
-			if config.APIKey != tt.expectedKey {
-				t.Errorf("APIKey = %v, want %v", config.APIKey, tt.expectedKey)
+			if cfg.APIKey != tt.expectedKey {
+				t.Errorf("APIKey = %q, want %q", cfg.APIKey, tt.expectedKey)
 			}
-			if config.Timeout != tt.expectedTimeout {
-				t.Errorf("Timeout = %v, want %v", config.Timeout, tt.expectedTimeout)
+			if cfg.Timeout != tt.expectedTimeout {
+				t.Errorf("Timeout = %v, want %v", cfg.Timeout, tt.expectedTimeout)
 			}
-			if config.NoColor != tt.expectedNoColor {
-				t.Errorf("NoColor = %v, want %v", config.NoColor, tt.expectedNoColor)
+			if cfg.NoColor != tt.expectedNoColor {
+				t.Errorf("NoColor = %v, want %v", cfg.NoColor, tt.expectedNoColor)
+			}
+			if cfg.Verbose != tt.expectedVerbose {
+				t.Errorf("Verbose = %v, want %v", cfg.Verbose, tt.expectedVerbose)
 			}
 		})
 	}
@@ -295,7 +270,7 @@ func TestSearchMedia(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -339,7 +314,7 @@ func TestGetTVDetails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -411,7 +386,7 @@ func TestCreateRequest(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -463,7 +438,7 @@ func TestGetPendingRequests(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -492,7 +467,7 @@ func TestApproveRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -517,7 +492,7 @@ func TestDeclineRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -561,7 +536,7 @@ func TestTestConnection(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -595,7 +570,7 @@ func TestFetchServiceInstances(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -630,7 +605,7 @@ func TestFetchServiceDetails(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -697,7 +672,7 @@ func TestSearchMediaWithSpaces(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -747,7 +722,7 @@ func TestSearchMediaErrorDiagnostics(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -854,7 +829,7 @@ func TestCheckUserPermissions(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -937,7 +912,7 @@ func TestGetRequestCount(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -1040,7 +1015,7 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1092,7 +1067,7 @@ func TestGetPendingRequestsNoPending(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1165,7 +1140,7 @@ func TestGetPendingRequestsPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1251,7 +1226,7 @@ func TestGetPendingRequestsWithFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1327,7 +1302,7 @@ func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1424,7 +1399,7 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1562,7 +1537,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{
+			config := RequestsToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
 				Timeout:   5 * time.Second,
@@ -1618,7 +1593,7 @@ func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,
@@ -1662,7 +1637,7 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	config := RequestsToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
 		Timeout:   5 * time.Second,

@@ -1,4 +1,4 @@
-.PHONY: all build clean install test help
+.PHONY: all build clean install test help setup setup-install
 
 # Installation parameters
 prefix?=/usr/local
@@ -10,6 +10,7 @@ BINARY_STREAMSTOOL=media-streams
 BINARY_CALENDAR=media-calendar
 BINARY_REQUESTS=media-requests
 BINARY_ARRFEED=arr-feed
+BINARY_SETUP=calmstoolkit-setup
 
 # Go parameters
 GOCMD=go
@@ -29,6 +30,8 @@ help:
 	@echo "  make build         - Build for current platform"
 	@echo "  make build-all     - Build for all platforms"
 	@echo "  make install       - Install to $(INSTALL_DIR) (Linux/macOS)"
+	@echo "  make setup         - Interactive config wizard"
+	@echo "  make setup-install - Install setup binary to $(BUILD_DIR)"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make test          - Run tests"
 	@echo "  make tidy          - Tidy go.mod"
@@ -36,10 +39,10 @@ help:
 build:
 	@echo "Building binaries..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -tags mediastreams -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) media-streams.go
-	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) media-calendar.go
-	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) media-requests.go
-	$(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) arr-feed.go
+	$(GOBUILD) $(LDFLAGS) -tags mediastreams -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) .
+	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) .
+	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) .
+	$(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) .
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -58,7 +61,7 @@ build-all:
 					arr-feed) TAG=arrfeed ;; \
 				esac; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
-				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT $$SRC.go || exit 1; \
+				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT . || exit 1; \
 			done; \
 		done; \
 	done
@@ -81,7 +84,19 @@ clean:
 	rm -rf $(BUILD_DIR)
 	@echo "Clean complete!"
 
+setup:
+	@echo "=== CalmsToolkit Configuration Setup ==="
+	@go run ./cmd/calmstoolkit-setup/
+
+setup-install:
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_SETUP) ./cmd/calmstoolkit-setup/
+	@echo "Installed: $(BUILD_DIR)/$(BINARY_SETUP)"
+
 test:
+	@echo "Running shared tests..."
+	$(GOTEST) -v ./...
+	@echo ""
 	@echo "Running media-requests tests..."
 	$(GOTEST) -tags mediarequests -v ./...
 	@echo ""
