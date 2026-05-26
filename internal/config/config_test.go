@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"os"
@@ -75,7 +75,6 @@ func TestConfigSaveLoadRoundTrip(t *testing.T) {
 		t.Errorf("DaysPast = %d, want 1", loaded.MediaCalendar.DaysPast)
 	}
 
-	// Verify URL normalization stripped trailing slashes
 	if loaded.Radarr[0].URL != "http://radarr:7878" {
 		t.Errorf("URL should not have trailing slash, got %q", loaded.Radarr[0].URL)
 	}
@@ -171,7 +170,6 @@ func TestConfigURLNormalization(t *testing.T) {
 		{Name: "Test", URL: "http://example.com/", APIKey: "key"},
 	}
 
-	// Save with trailing slash
 	origHome := os.Getenv("HOME")
 	os.Setenv("HOME", dir)
 	defer os.Setenv("HOME", origHome)
@@ -180,7 +178,6 @@ func TestConfigURLNormalization(t *testing.T) {
 		t.Fatalf("Save() error: %v", err)
 	}
 
-	// Load should strip it
 	loaded, err := LoadToolkitConfig()
 	if err != nil {
 		t.Fatalf("LoadToolkitConfig() error: %v", err)
