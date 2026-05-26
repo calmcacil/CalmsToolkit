@@ -11,34 +11,28 @@
 Main event structure for unified display:
 ```go
 type HistoryEvent struct {
-    Server        string    // "sonarr" or "radarr"
-    When          time.Time // Event timestamp
-    Action        string    // Human-readable action (Imported, Grabbed, Failed, etc.)
-    Title         string    // Series or Movie name
-    Episode       string    // "S01E05" format (TV only, empty for movies)
-    EpisodeTitle  string    // Episode name (TV only, empty for movies)
-    Quality       string    // Quality profile name
-    Formats       []string  // Custom format names
-    SourceTitle   string    // Release name for grabbed/imported events
-    EventType     string    // Raw eventType from API
-    ID            int       // History record ID
+    Server       string    // "sonarr" or "radarr"
+    When         time.Time // Event timestamp
+    Action       string    // Human-readable action (Imported, Grabbed, Failed, etc.)
+    Title        string    // Series or Movie name
+    Episode      string    // "S01E05" format (TV only, empty for movies)
+    EpisodeTitle string    // Episode name (TV only, empty for movies)
+    Quality      string    // Quality profile name
+    Formats      []string  // Custom format names
+    SourceTitle  string    // Release name for grabbed/imported events
+    EventType    string    // Raw eventType from API
+    ID           int       // History record ID
 }
 ```
 
 #### Sonarr API Structures
 ```go
-type SonarrHistoryResponse struct {
-    Page          int              `json:"page"`
-    PageSize      int              `json:"pageSize"`
-    TotalRecords  int              `json:"totalRecords"`
-    Records       []SonarrHistory  `json:"records"`
-}
-
 type SonarrHistory struct {
     EpisodeID     int                    `json:"episodeId"`
     SeriesID      int                    `json:"seriesId"`
     SourceTitle   string                 `json:"sourceTitle"`
     Quality       SonarrQuality          `json:"quality"`
+    CustomFormats []CustomFormat         `json:"customFormats,omitempty"`
     QualityCutoff bool                   `json:"qualityCutoffNotMet"`
     Date          string                 `json:"date"`
     EventType     string                 `json:"eventType"`
@@ -87,17 +81,11 @@ type SonarrSeries struct {
 
 #### Radarr API Structures
 ```go
-type RadarrHistoryResponse struct {
-    Page         int             `json:"page"`
-    PageSize     int             `json:"pageSize"`
-    TotalRecords int             `json:"totalRecords"`
-    Records      []RadarrHistory `json:"records"`
-}
-
 type RadarrHistory struct {
     MovieID       int                    `json:"movieId"`
     SourceTitle   string                 `json:"sourceTitle"`
     Quality       RadarrQuality          `json:"quality"`
+    CustomFormats []CustomFormat         `json:"customFormats,omitempty"`
     QualityCutoff bool                   `json:"qualityCutoffNotMet"`
     Date          string                 `json:"date"`
     EventType     string                 `json:"eventType"`
@@ -130,35 +118,49 @@ type RadarrMovie struct {
 
 #### Config Structure
 ```go
-type Config struct {
-    SonarrURLs    []string
-    SonarrTokens  []string
-    RadarrURLs    []string
-    RadarrTokens  []string
-    PollInterval  time.Duration
-    HistoryWindow time.Duration
-    Timeout       time.Duration
-    NoColor       bool
+type FeedToolConfig struct {
+    SonarrInstances []config.ArrInstance
+    RadarrInstances []config.ArrInstance
+    PollInterval    time.Duration
+    HistoryWindow   time.Duration
+    Timeout         time.Duration
+    NoColor         bool
+    JSON            bool
+    Watch           bool
+    ShowGrabbed     bool
+    ShowImported    bool
+    ShowFailed      bool
+    ShowDeleted     bool
+    ShowIgnored     bool
+    MaxEvents       int
+    Quiet           bool
 }
 ```
 
-#### Environment Variables
-```
-SONARR_URLS          # Comma-separated URLs
-SONARR_TOKENS        # Comma-separated API tokens (matching order)
-RADARR_URLS          # Comma-separated URLs
-RADARR_TOKENS        # Comma-separated API tokens (matching order)
-ARR_FEED_POLL_INTERVAL     # Default: 5s
-ARR_FEED_HISTORY_DURATION  # Default: 1h
-ARR_FEED_TIMEOUT           # Default: 30s
+#### JSON Configuration
+
+Configuration lives in `~/.config/calmstoolkit/config.json`:
+
+```json
+{
+  "version": 1,
+  "sonarr_instances": [...],
+  "radarr_instances": [...],
+  "arr_feed": {
+    "poll_interval": "5s",
+    "history_window": "1h",
+    "show_grabbed": true,
+    "show_imported": true,
+    "show_failed": true,
+    "show_deleted": false,
+    "show_ignored": false,
+    "max_events": 50
+  }
+}
 ```
 
 #### CLI Flags
 ```
--sonarr-urls     string   Sonarr URLs (comma-separated)
--sonarr-tokens   string   Sonarr API tokens (comma-separated)
--radarr-urls     string   Radarr URLs (comma-separated)
--radarr-tokens   string   Radarr API tokens (comma-separated)
 -poll            duration Poll interval (watch mode)
 -duration        duration History lookback window
 -timeout         duration HTTP request timeout
@@ -168,8 +170,10 @@ ARR_FEED_TIMEOUT           # Default: 30s
 -show-grabbed    bool     Show grabbed events (default: true)
 -show-imported   bool     Show imported events (default: true)
 -show-failed     bool     Show failed events (default: true)
--show-deleted    bool     Show deleted events (default: true)
+-show-deleted    bool     Show deleted events (default: false)
 -show-ignored    bool     Show ignored events (default: false)
+-events          int      Max events to display (1-100, default: 50)
+-quiet           bool     Suppress error output in watch mode
 ```
 
 ### 3. API Integration
@@ -242,10 +246,9 @@ Colors:
 ### 5. Implementation Flow
 
 #### Initialization
-1. Load configuration (3-tier: .env → env vars → flags)
-2. Validate URLs and tokens match in count
-3. Test connectivity to all configured instances
-4. Initialize last-seen timestamp (now - history window)
+1. Load configuration from `~/.config/calmstoolkit/config.json`
+2. Override with CLI flags
+3. Initialize last-seen timestamp (now - history window)
 
 #### Single Run Mode (Default)
 1. Fetch history from all Sonarr instances (parallel goroutines)
@@ -285,45 +288,36 @@ Format relative timestamps:
 ### 7. Testing Strategy
 
 #### Unit Tests (arr-feed_test.go)
-- Config loading from env/flags/file
 - Event type mapping (Sonarr/Radarr → Action)
 - Time formatting (relative time display)
 - Episode formatting (S##E##)
 - Quality extraction
 - Custom format extraction
 - Event merging and sorting
+- Event filtering by type
 
 #### Mock HTTP Responses
 - Sonarr history with various event types
 - Radarr history with various event types
 - Error responses (401, 404, 500)
-- Timeout scenarios
-
-#### Integration Tests
-- Multi-instance configuration
-- Event deduplication across instances
-- Filter flag combinations
-- Watch mode polling logic
+- Multi-instance fetching
+- Partial failure handling
 
 ### 8. Build Integration
 
-#### Makefile Updates
+#### Makefile
 ```makefile
-BINARY_ARRFEED=arr-feed
-
 build:
-    $(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) arr-feed.go
+    go build -o bin/arr-feed ./cmd/arr-feed/
 
 test:
-    $(GOTEST) -tags arrfeed -v ./...
+    go test ./internal/feed/...
 ```
-
-#### .env.example Updates
-Add Sonarr/Radarr configuration examples as shown in Configuration section above.
 
 ## Dependencies
 
-All stdlib except:
-- `golang.org/x/term` (already in go.mod for terminal handling)
+stdlib only. No external dependencies required.
 
-No additional external dependencies required.
+### See Also
+
+- [README_ARR_FEED.md](README_ARR_FEED.md) - Usage guide

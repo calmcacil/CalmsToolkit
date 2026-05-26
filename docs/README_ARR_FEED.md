@@ -41,44 +41,47 @@ Installs to `/usr/local/bin` (customize with `prefix=/path/to/install`).
 
 ## Configuration
 
-arr-feed uses a 3-tier configuration system: `.env` file → environment variables → CLI flags (highest priority).
+arr-feed uses a shared JSON configuration file at `~/.config/calmstoolkit/config.json`.
 
-### Environment Variables
+Run `make setup` to generate your configuration interactively.
 
-```bash
-# Sonarr Configuration (reuses SONARR_URLS and SONARR_TOKENS from media-calendar)
-SONARR_URLS="http://localhost:8989,http://sonarr2:8989"
-SONARR_TOKENS="your-api-key-1,your-api-key-2"
+### JSON Configuration
 
-# Radarr Configuration (reuses RADARR_URLS and RADARR_TOKENS from media-calendar)
-RADARR_URLS="http://localhost:7878"
-RADARR_TOKENS="your-api-key-3"
-
-# Optional: arr-feed specific settings
-ARR_FEED_POLL_INTERVAL=5s          # Watch mode refresh rate
-ARR_FEED_HISTORY_DURATION=1h       # How far back to look
-ARR_FEED_TIMEOUT=30s               # HTTP request timeout
+```json
+{
+  "version": 1,
+  "sonarr_instances": [
+    {"name": "Sonarr HD", "url": "http://localhost:8989", "api_key": "your-key"}
+  ],
+  "radarr_instances": [
+    {"name": "Radarr HD", "url": "http://localhost:7878", "api_key": "your-key"}
+  ],
+  "general": {
+    "timeout": "30s"
+  },
+  "arr_feed": {
+    "poll_interval": "5s",
+    "history_window": "1h",
+    "show_grabbed": true,
+    "show_imported": true,
+    "show_failed": true,
+    "show_deleted": false,
+    "show_ignored": false,
+    "max_events": 50
+  }
+}
 ```
 
 ### CLI Flags
 
-All environment variables can be overridden via flags:
+All configuration values can be overridden via flags:
 
 ```bash
-arr-feed -sonarr-urls "http://localhost:8989" \
-         -sonarr-tokens "your-api-key" \
-         -radarr-urls "http://localhost:7878" \
-         -radarr-tokens "your-api-key" \
-         -duration 24h \
-         -watch
+arr-feed -watch -duration 24h -poll 2s
 ```
 
 Full flag list:
 
-- `-sonarr-urls` - Sonarr instance URLs (comma-separated)
-- `-sonarr-tokens` - Sonarr API tokens (comma-separated, matching order)
-- `-radarr-urls` - Radarr instance URLs (comma-separated)
-- `-radarr-tokens` - Radarr API tokens (comma-separated, matching order)
 - `-poll` - Poll interval for watch mode (default: 5s)
 - `-duration` - History lookback window (default: 1h)
 - `-timeout` - HTTP request timeout (default: 30s)
@@ -88,8 +91,10 @@ Full flag list:
 - `-show-grabbed` - Show grabbed events (default: true)
 - `-show-imported` - Show imported events (default: true)
 - `-show-failed` - Show failed events (default: true)
-- `-show-deleted` - Show deleted events (default: true)
+- `-show-deleted` - Show deleted events (default: false)
 - `-show-ignored` - Show ignored events (default: false)
+- `-events` - Maximum number of events to display (1-100, default: 50)
+- `-quiet` - Suppress error output in watch mode
 
 ## Usage Examples
 
@@ -125,29 +130,12 @@ Show only failed downloads:
 arr-feed -show-grabbed=false -show-imported=false -show-deleted=false
 ```
 
-Show only imports and grabs (hide failures):
-
-```bash
-arr-feed -show-failed=false
-```
-
 ### JSON Output
 
 Get machine-readable output for scripting:
 
 ```bash
 arr-feed -json | jq '.[] | select(.action == "Failed")'
-```
-
-### Multi-Instance Monitoring
-
-Monitor multiple Sonarr and Radarr instances:
-
-```bash
-arr-feed -sonarr-urls "http://sonarr1:8989,http://sonarr2:8989" \
-         -sonarr-tokens "token1,token2" \
-         -radarr-urls "http://radarr1:7878,http://radarr2:7878" \
-         -radarr-tokens "token3,token4"
 ```
 
 ### Custom Poll Interval
@@ -163,12 +151,12 @@ arr-feed -watch -poll 2s
 ### Table Mode (Default)
 
 ```
-When            | Action   | Series/Movie                   | Episode | Episode Title        | Quality         | Formats            
+When            | Action   | Series/Movie                   | Episode | Episode Title        | Quality         | Formats
 ------------------------------------------------------------------------------------------------------------------------------------
-5 minutes ago   | Imported | Breaking Bad                   | S01E05  | Gray Matter          | Bluray-720p     | AMZN, DV           
-12 hours ago    | Grabbed  | The Matrix (1999)              |         |                      | Bluray-1080p    | IMAX               
-1 day ago       | Failed   | Better Call Saul               | S03E02  | Witness              | WEB-DL-1080p    |                    
-2 days ago      | Deleted  | Game of Thrones                | S08E06  | The Iron Throne      | HDTV-720p       |                    
+5 minutes ago   | Imported | Breaking Bad                   | S01E05  | Gray Matter          | Bluray-720p     | AMZN, DV
+12 hours ago    | Grabbed  | The Matrix (1999)              |         |                      | Bluray-1080p    | IMAX
+1 day ago       | Failed   | Better Call Saul               | S03E02  | Witness              | WEB-DL-1080p    |
+2 days ago      | Deleted  | Game of Thrones                | S08E06  | The Iron Throne      | HDTV-720p       |
 
 Total events: 4
 ```
@@ -253,12 +241,6 @@ Total events: 4
 3. Confirm API endpoint: `http://your-server:8989/api/v3/history/since`
 4. Test with: `curl -H "X-Api-Key: YOUR_KEY" "http://localhost:8989/api/v3/system/status"`
 
-### Missing data in output
-
-1. Check your filter flags (e.g., `-show-ignored=true` to see ignored events)
-2. Verify Sonarr/Radarr is configured to include episode/series data
-3. Some fields may be empty for certain event types
-
 ### Watch mode not updating
 
 1. Verify poll interval is reasonable (not too fast)
@@ -295,12 +277,6 @@ arr-feed -watch -json >> /var/log/arr-feed.log
 arr-feed -duration 24h -json | jq -r '.[].action' | sort | uniq -c
 ```
 
-### Monitor for Specific Show
-
-```bash
-arr-feed -watch -json | jq -r 'select(.title | contains("Breaking Bad"))'
-```
-
 ## Development
 
 ### Run Tests
@@ -311,30 +287,16 @@ make test
 
 Runs the full test suite including arr-feed tests.
 
-### Test Individual Components
-
-```bash
-go test -tags arrfeed -v ./arr-feed_test.go ./arr-feed.go
-```
-
-### Build for Development
-
-```bash
-go build -tags arrfeed -o bin/arr-feed arr-feed.go
-```
-
 ## Technical Details
 
-- **Build Tag**: `arrfeed`
 - **Dependencies**: stdlib only
 - **API Version**: Sonarr/Radarr v3 API (`/api/v3/history/since`)
-- **Test Coverage**: 10 test functions covering core functionality
 - **Architecture**: Concurrent fetching with goroutines, event deduplication, time-based sorting
 
 ## See Also
 
 - [ARR_FEED_SPEC.md](ARR_FEED_SPEC.md) - Complete technical specification
-- [media-calendar](README.md) - Related tool for calendar view
+- [media-calendar](../README.md) - Related tool for calendar view
 - [Sonarr API Docs](https://github.com/Sonarr/Sonarr/wiki/API)
 - [Radarr API Docs](https://github.com/Radarr/Radarr/wiki/API)
 

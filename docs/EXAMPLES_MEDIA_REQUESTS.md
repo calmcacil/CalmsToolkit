@@ -12,426 +12,215 @@ This document provides practical examples for using the `media-requests` interac
 
 ## Initial Setup
 
-### Quick Setup (Environment Variables)
+### Setup Wizard (Recommended)
 
 ```bash
-# For Overseerr
-export OVERSEERR_URL="http://localhost:5055"
-export OVERSEERR_TOKEN="your-api-key-from-settings"
+# Generate configuration interactively
+make setup
 
-# For Jellyseerr
-export JELLYSEERR_URL="http://localhost:5055"
-export JELLYSEERR_TOKEN="your-api-key-from-settings"
+# Build the tool
+make build
 
 # Run the tool
 ./bin/media-requests
 ```
 
-### Docker/Compose Setup
-
-If you're using Docker Compose, add to your `.env` file:
-
-```env
-# /opt/apps/compose/.env
-OVERSEERR_URL=http://overseerr:5055
-OVERSEERR_TOKEN=REMOVED_SECRET
-```
-
-The tool will automatically read this file.
-
-### Remote Server Setup
+### Command-Line Flags
 
 ```bash
-# Connect to remote Overseerr instance
+# Quick connection to local Overseerr
 ./bin/media-requests \
-  -url "https://overseerr.yourdomain.com" \
+  -url "http://localhost:5055" \
   -token "your-api-key"
 ```
 
+### Getting Your API Key
+
+1. Log into Overseerr/Jellyseerr web interface
+2. Navigate to **Settings** > **General**
+3. Find the **API Key** section
+4. Copy the generated key
+
 ## Basic Workflows
 
-### Example 1: Request a Popular Movie
+### Request a Movie
 
 ```
-1. Launch the tool:
-   $ ./bin/media-requests
+$ ./bin/media-requests
 
-2. Select [N] for New Request
+╔══════════════════════════════════════════╗
+║    Media Requests - Interactive Menu    ║
+╚══════════════════════════════════════════╝
 
-3. Search for a movie:
-   Enter search query: avengers endgame
+[N] New Request
+[W] View Requests
+[Q] Quit
 
-4. Review results:
-   1. 🎬 Avengers: Endgame (2019)
-      After the devastating events of Avengers: Infinity War...
-      Rating: 8.3/10
+Select an option: n
 
-5. Select the movie:
-   Select a number (1-10): 1
+=== New Media Request ===
 
-6. Confirm request:
-   Media: Avengers: Endgame (2019)
-   Type: Movie
+Enter search query (or 'back' to return): inception
 
-   Submit request? (y/n): y
+=== Search Results ===
 
-7. Success!
-   ✓ Request submitted successfully!
-   Request ID: 123
-   Status: Pending Approval
+1. 🎬 Inception (2010)
+   A thief who steals corporate secrets...
+   Rating: 8.4/10
+
+2. 🎬 Inception: The Documentary (2016)
+   ...
+
+Select a number (1-10) or 'back' to cancel: 1
+
+=== Confirm Request ===
+
+Media: Inception (2010)
+Type: Movie
+
+Submit request? (y/n): y
+
+✓ Request submitted successfully!
+Request ID: 42
+Status: Pending Approval
 ```
 
-### Example 2: Request All Seasons of a TV Show
+### Request a TV Show
 
 ```
-1. Launch the tool and select [N]
+$ ./bin/media-requests
 
-2. Search:
-   Enter search query: breaking bad
+[N] New Request
+Enter search query: breaking bad
 
-3. Select the show:
-   1. 📺 Breaking Bad (2008)
-   Select a number: 1
+=== Search Results ===
 
-4. Choose season option:
-   [A] Request all seasons
-   [S] Select specific seasons
-   [B] Back
+1. 📺 Breaking Bad (2008)
+2. 🎬 Breaking Bad: El Camino (2019)
 
-   Select option: a
+Select: 1
 
-5. Confirm:
-   Media: Breaking Bad (2008)
-   Type: Tv
-   Seasons: All
+=== Select Seasons ===
 
-   Submit request? (y/n): y
-```
+TV Show: Breaking Bad
+Total Seasons: 5
 
-### Example 3: Request Specific Seasons
+[A] Request all seasons
+[S] Select specific seasons
+[B] Back
 
-```
-1. Launch and select [N]
+Select option: s
+Enter season numbers: 1,2,3,4,5
 
-2. Search: the office
+=== Confirm Request ===
 
-3. Select: 1 (US version)
+Media: Breaking Bad (2008)
+Type: Tv
+Seasons: [1 2 3 4 5]
 
-4. Choose specific seasons:
-   Select option: s
-
-   Enter season numbers (comma-separated): 1,2,3,4,5
-
-5. Confirm:
-   Media: The Office (2005)
-   Type: Tv
-   Seasons: [1 2 3 4 5]
-
-   Submit request? (y/n): y
-```
-
-### Example 4: Approve Pending Requests
-
-```
-1. Launch and select [W] for View Requests
-
-2. Review pending requests:
-   === Pending Requests ===
-
-   1. [TV Show] Request ID: 42 (TMDB: 1396)
-      Requested by: john_doe  Created: 2025-01-15 10:30
-
-   2. [Movie] Request ID: 43 (TMDB: 550)
-      Requested by: jane_smith  Created: 2025-01-15 11:45
-
-3. Select a request:
-   Select a request (1-2): 1
-
-4. View details:
-   === Request Details ===
-
-   Request ID: 42
-   TMDB ID: 1396
-   Type: TV Show
-   Requested by: john_doe
-   Created: 2025-01-15 10:30
-   Status: Pending Approval
-   Seasons requested: 3
-
-5. Take action:
-   [A] Approve    [D] Decline    [B] Back
-
-   Select action: a
-
-6. Confirmation:
-   ✓ Request approved!
-```
-
-### Example 5: Decline a Request
-
-```
-1. Launch and select [W]
-
-2. Select a request: 2
-
-3. Choose decline:
-   Select action: d
-
-4. Confirm:
-   Are you sure you want to decline this request? (y/n): y
-
-   Declining request...
-   ✓ Request declined.
+Submit request? (y/n): y
 ```
 
 ## Advanced Scenarios
 
-### Scenario 1: Check if Media is Already Available
+### Approving a Request with a Root Folder Override
 
-When you search, the tool shows status indicators:
-
-```
-Search results for "inception":
-
-1. 🎬 Inception (2010) [AVAILABLE]
-   A thief who steals corporate secrets...
-
-2. 🎬 Inception: The Making (2010) [REQUESTED]
-   Documentary about the making of...
-```
-
-- `[AVAILABLE]` - Already on your server, no need to request
-- `[REQUESTED]` - Already requested by someone
-- No indicator - Available to request
-
-### Scenario 2: Request 4K Content
-
-Currently, the tool submits requests with default settings. To request 4K:
-
-1. Submit the request normally through the tool
-2. Have an admin modify the request in Overseerr web UI to set `is4k: true`
-3. Or modify the code to add 4K selection (see [Contributing](#contributing))
-
-### Scenario 3: Batch Request Management
-
-For managing multiple requests:
-
-```bash
-# Create a simple script
-#!/bin/bash
-
-# Approve all pending requests (requires admin access)
-# Note: This would need to be automated separately as the tool is interactive
-
-# Instead, use the tool's interactive mode:
-./bin/media-requests
-
-# Then in the menu:
-# [W] -> Review each request -> [A] to approve
-```
-
-### Scenario 4: Search with Special Characters
+When approving a request, you can override the destination root folder:
 
 ```
-Search queries work well with special characters:
+=== Pending Requests ===
 
-- "lord of the rings"
-- "star wars: episode v"
-- "2001: a space odyssey"
-- "amélie"
-```
+1. [Movie] Request ID: 42 (TMDB: 27205)
+   Requested by: jane_smith  Created: 2025-01-15 11:45
 
-### Scenario 5: Cancel a Search
+Select a request (1-1): 1
 
-At any point during a search or request:
+=== Request Details ===
 
-```
-Enter search query (or 'back' to return): back
+Request ID: 42
+TMDB ID: 27205
+Type: Movie
+Requested by: jane_smith
+Created: 2025-01-15 11:45
+Status: Pending Approval
 
-# Or press Enter on an empty line to cancel
-Select a number (1-10) or 'back' to cancel: [Enter]
+Actions:
+[A] Approve    [D] Decline    [B] Back
+
+Select action: a
+
+=== Approve Request - Root Folder Override ===
+
+...request details...
+Current Root Folder: Not set (will use server default)
+
+Would you like to override the root folder for this request?
+[Y] Yes, select root folder
+[N] No, use default (proceed with approval)
+[B] Back (cancel approval)
+
+Select option: y
+
+=== Select Root Folder ===
+
+Server: Radarr HD
+
+Root folders:
+1. /data/movies/4k
+2. /data/movies/hd
+
+Select a root folder (1-2): 1
+
+✓ Request approved!
+  Root folder set to: /data/movies/4k
 ```
 
 ## Integration Examples
 
-### Example 1: Systemd Service (Auto-start)
+### Non-Interactive Mode
 
-```ini
-# /etc/systemd/system/media-requests.service
-[Unit]
-Description=Media Requests Interactive Tool
-After=network.target
-
-[Service]
-Type=simple
-User=mediauser
-Environment="OVERSEERR_URL=http://localhost:5055"
-Environment="OVERSEERR_TOKEN=your-token"
-ExecStart=/usr/local/bin/media-requests
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Example 2: Docker Container
-
-```dockerfile
-FROM alpine:latest
-
-COPY bin/media-requests /usr/local/bin/media-requests
-RUN chmod +x /usr/local/bin/media-requests
-
-ENV OVERSEERR_URL=http://overseerr:5055
-ENV OVERSEERR_TOKEN=your-token
-
-ENTRYPOINT ["/usr/local/bin/media-requests"]
-```
-
-### Example 3: SSH Remote Access
+While the primary interface is interactive, you can pipe input for basic automation:
 
 ```bash
-# Access from remote machine
-ssh user@server -t "./bin/media-requests"
-
-# Or with port forwarding
-ssh user@server -L 5055:overseerr:5055
-./bin/media-requests -url "http://localhost:5055" -token "your-token"
+echo -e "n\nThe Matrix\n1\ny\nq" | ./bin/media-requests -url "http://localhost:5055" -token "key"
 ```
 
-### Example 4: Scheduled Request Review
+### Container/Docker
 
 ```bash
-#!/bin/bash
-# review-requests.sh
+docker run -it --rm \
+  -v ~/.config/calmstoolkit:/root/.config/calmstoolkit \
+  calmstoolkit/media-requests
+```
 
-# Send notification when new requests are pending
-# (This would need custom scripting to parse request counts)
+### SSH Tunnel
 
-source /opt/apps/compose/.env
-
-# You could extend the tool to support --list-pending-count flag
-# for automation purposes
+```bash
+ssh -L 5055:localhost:5055 user@remote-server
+./bin/media-requests
 ```
 
 ## Common Issues
 
-### Issue 1: "API key is not set"
+### "ERROR: API key is not set"
 
-**Solution:**
-```bash
-# Verify your environment variables
-echo $OVERSEERR_TOKEN
+Set your API key in the config file (`~/.config/calmstoolkit/config.json`) or use `-token` flag.
 
-# Or set them:
-export OVERSEERR_TOKEN="your-key-here"
+### "ERROR: Failed to connect to server"
 
-# Or use flags:
-./bin/media-requests -token "your-key-here"
-```
+- Verify the server is running
+- Check the URL is correct (including http:// or https://)
+- Ensure no firewall is blocking the connection
 
-### Issue 2: Search Returns No Results
+### "Invalid API key"
 
-**Possible causes:**
-- Typo in search query
-- TMDB database doesn't have the content
-- Network/API timeout
+Generate a new API key in Overseerr/Jellyseerr Settings > General.
 
-**Solution:**
-```bash
-# Try different search terms:
-# Instead of: "lotr"
-# Try: "lord of the rings"
+### Overseerr API Bug Warning
 
-# Check if Overseerr is accessible:
-curl http://localhost:5055/api/v1/status
-```
+If you see a warning about an Overseerr API bug, this is the tool automatically working around a known issue. No action needed.
 
-### Issue 3: "Permission denied" When Approving
+### Output Doesn't Look Right
 
-**Cause:** User doesn't have `MANAGE_REQUESTS` or `ADMIN` permission in Overseerr.
-
-**Solution:**
-1. Log into Overseerr web UI as admin
-2. Go to Settings > Users
-3. Grant user appropriate permissions
-
-### Issue 4: Colors Not Displaying
-
-**Solution:**
-```bash
-# Disable colors explicitly:
-./bin/media-requests -no-color
-
-# Or check terminal support:
-echo $TERM  # Should be xterm-256color or similar
-```
-
-### Issue 5: Connection Timeout
-
-**Solution:**
-```bash
-# Increase timeout:
-./bin/media-requests -timeout 60s
-
-# Check network:
-ping overseerr-host
-curl http://overseerr:5055/api/v1/status
-```
-
-## Tips and Tricks
-
-### Tip 1: Quick Navigation
-
-Memorize the hotkeys:
-- `N` - New request (fast access to search)
-- `W` - View/manage requests
-- `Q` - Quit
-- `back` - Cancel any operation
-
-### Tip 2: Efficient TV Show Requests
-
-For ongoing series, request all seasons first. You can always add new seasons later as they're released.
-
-### Tip 3: Search Precision
-
-Be specific with search terms:
-- Good: "breaking bad"
-- Less good: "bb" or "break"
-
-Include year for disambiguation:
-- "dune 2021" vs "dune 1984"
-
-### Tip 4: Batch Approvals
-
-If you have many pending requests:
-1. Open the tool
-2. Press `W` to view requests
-3. Quickly review and approve/decline each one
-4. Use hotkeys `A` and `D` for speed
-
-### Tip 5: Status Indicators
-
-Pay attention to status indicators in search results:
-- `[AVAILABLE]` - Don't waste time requesting
-- `[REQUESTED]` - Someone already asked for it
-- No indicator - Safe to request
-
-## Contributing
-
-Want to add features? The code is open source!
-
-Ideas for contributions:
-- Add 4K request option during request creation
-- Add ability to request specific episodes (not just seasons)
-- Add request history/statistics
-- Add user profile management
-- Add search filters (genre, year, rating)
-
-See the main repository for contribution guidelines.
-
-## More Information
-
-- [README_MEDIA_REQUESTS.md](README_MEDIA_REQUESTS.md) - Full documentation
-- [OVERSEERR_API_RESEARCH.md](docs/OVERSEERR_API_RESEARCH.md) - API reference
-- [GitHub Issues](https://github.com/calmcacil/CalmsToolkit/issues) - Report bugs or request features
+- Use `-no-color` if ANSI colors don't display correctly
+- Use `-json` for machine-readable output

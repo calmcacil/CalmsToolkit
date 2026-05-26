@@ -1,12 +1,13 @@
-## TODO
-TODO: Make short README.md file explaining the project and its purpose
-TODO: Add documentation for each program
+## Completed
 
-## COMPLETED
-- ✅ Unit tests (Completed Oct 2025)
-  - `media-requests_test.go`: 15 test functions, 649 lines, 24.4% coverage
-  - `media-streams_test.go`: 12 test functions, 538 lines, 39.4% coverage
-  - `media-calendar_test.go`: 10 test functions, 532 lines, 38.3% coverage
-  - Total: 37 test functions, 1,719 lines of test code
-  - All tests passing via `make test`
+- ✅ Unit tests for all tools
+- ✅ README.md for project overview
+- ✅ Documentation for each tool (docs/README_MEDIA_REQUESTS.md, docs/README_ARR_FEED.md)
 
+## Known Issues
+
+- API tokens passed in query strings for Plex (`X-Plex-Token`) and Jellyfin (`api_key`) — should use header-based auth where possible
+- Several error messages print to stdout instead of stderr
+- HTTP response handling boilerplate is duplicated across API fetchers
+- CLI input validation is inconsistent across tools
+- Skipped manual tests in internal/requests could be converted to proper test tooling
