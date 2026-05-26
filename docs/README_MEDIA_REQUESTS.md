@@ -19,8 +19,9 @@ This tool communicates directly with the Overseerr/Jellyseerr API, providing a s
 - **Smart Season Selection**: For TV shows, select all seasons or specific ones
 - **Request Management**: View, approve, and decline pending requests
 - **Status Indicators**: Visual feedback for available/requested/pending media
+- **Root Folder Override**: Select custom root folders when approving requests
 - **Colored Output**: ANSI colors for better readability (can be disabled)
-- **Flexible Configuration**: Environment variables, .env files, or command-line flags
+- **JSON Config**: Configuration via `~/.config/calmstoolkit/config.json`
 
 ## Installation
 
@@ -45,37 +46,44 @@ Download pre-built binaries from the [Releases](https://github.com/calmcacil/Cal
 
 ## Configuration
 
-### Environment Variables
+### Setup Wizard (Recommended)
 
-The tool supports configuration via environment variables:
+Run the interactive setup wizard to generate your configuration:
 
 ```bash
-# Overseerr configuration
-export OVERSEERR_URL="http://localhost:5055"
-export OVERSEERR_TOKEN="your-api-key-here"
-
-# OR Jellyseerr configuration
-export JELLYSEERR_URL="http://localhost:5055"
-export JELLYSEERR_TOKEN="your-api-key-here"
+make setup
 ```
 
-### Configuration File
+This creates `~/.config/calmstoolkit/config.json`.
 
-You can also use a `.env` file at `/opt/apps/compose/.env`:
+### JSON Configuration File
 
-```bash
-OVERSEERR_URL=http://overseerr:5055
-OVERSEERR_TOKEN=your-api-key-here
+The tool reads configuration from `~/.config/calmstoolkit/config.json`:
+
+```json
+{
+  "version": 1,
+  "general": {
+    "timeout": "10s",
+    "no_color": false
+  },
+  "media_requests": {
+    "overseerr_url": "http://localhost:5055",
+    "api_key": "your-api-key-here",
+    "verbose": false
+  }
+}
 ```
 
 ### Command-Line Flags
 
-Flags override environment variables:
+Flags override config file values:
 
 ```bash
 ./bin/media-requests \
   -url "http://overseerr:5055" \
-  -token "your-api-key-here"
+  -token "your-api-key-here" \
+  -verbose
 ```
 
 ### Getting Your API Key
@@ -90,11 +98,14 @@ Flags override environment variables:
 ### Basic Usage
 
 ```bash
-# Run with environment variables
+# Run with config file
 ./bin/media-requests
 
 # Run with command-line flags
 ./bin/media-requests -url "http://overseerr:5055" -token "your-token"
+
+# Enable verbose diagnostics
+./bin/media-requests -verbose
 
 # Disable colored output
 ./bin/media-requests -no-color
@@ -206,18 +217,23 @@ Usage of media-requests:
   -token string
         API key/token
   -timeout duration
-        Connection timeout (default 30s)
+        Connection timeout (default 10s)
   -no-color
         Disable colored output
+  -verbose
+        Enable verbose diagnostic output
+  -json
+        Output in JSON format
+  -quiet
+        Suppress warnings
 ```
 
 ## Configuration Priority
 
 Configuration is loaded in the following order (highest priority last):
 
-1. `.env` file at `/opt/apps/compose/.env`
-2. Environment variables (`OVERSEERR_URL`, `OVERSEERR_TOKEN`)
-3. Command-line flags (`-url`, `-token`)
+1. `~/.config/calmstoolkit/config.json` (via `make setup`)
+2. Command-line flags (`-url`, `-token`)
 
 ## API Endpoints Used
 
@@ -231,6 +247,10 @@ The tool interacts with the following Overseerr/Jellyseerr API endpoints:
 - `GET /api/v1/request/count` - Count pending requests
 - `POST /api/v1/request/{id}/approve` - Approve request
 - `POST /api/v1/request/{id}/decline` - Decline request
+- `GET /api/v1/service/sonarr` - List Sonarr service instances
+- `GET /api/v1/service/radarr` - List Radarr service instances
+- `GET /api/v1/service/{type}/{id}` - Get service details (profiles, root folders)
+- `PUT /api/v1/request/{id}` - Update request (root folder override)
 
 ### Overseerr API Bug Workaround
 
@@ -244,7 +264,7 @@ This tool includes automatic fallback logic for a known Overseerr API bug where 
    - Client-side filtering extracts only pending requests (status === 1)
    - Success message confirms the correct number of pending requests found
 
-This happens transparently with no user intervention required. The fallback ensures reliable operation regardless of API quirks, and includes proper pagination support for large request lists.
+This happens transparently with no user intervention required.
 
 ## Permissions
 
@@ -308,10 +328,9 @@ $ ./bin/media-requests
 
 ### "ERROR: API key is not set"
 
-Make sure you've set either:
-- `OVERSEERR_TOKEN` or `JELLYSEERR_TOKEN` environment variable
+Make sure you've either:
+- Set `api_key` in `~/.config/calmstoolkit/config.json`
 - Provided `-token` flag
-- Added the token to `/opt/apps/compose/.env`
 
 ### "ERROR: Failed to connect to server"
 
@@ -325,10 +344,6 @@ Verify that:
 
 Your API key may be incorrect or expired. Generate a new one from Settings > General in the web UI.
 
-### "search failed: status 404"
-
-The search endpoint couldn't be reached. Verify your server URL includes the protocol (http:// or https://).
-
 ### Seeing "WARNING: Overseerr API bug detected!" messages
 
 This is normal and indicates the tool is working around a known Overseerr API issue. The warning appears when:
@@ -336,7 +351,7 @@ This is normal and indicates the tool is working around a known Overseerr API is
 - But the filtered endpoint returns 0 results
 - The tool automatically fetches all requests and filters them client-side
 
-No action is needed - this is handled automatically and your pending requests will be displayed correctly.
+No action is needed — this is handled automatically.
 
 ### Colorized Output Not Working
 
@@ -353,7 +368,7 @@ If colors aren't displaying correctly, use the `-no-color` flag.
 - **Single Binary**: No external dependencies, uses only Go stdlib
 - **Interactive CLI**: Menu-driven interface with stdin/stdout
 - **ANSI Colors**: Supports color-coded output for clarity
-- **HTTP Client**: 30-second default timeout for API calls
+- **HTTP Client**: Configurable timeout for API calls
 - **Error Handling**: Comprehensive error messages with context
 
 ### Media Status Codes
@@ -396,12 +411,13 @@ If colors aren't displaying correctly, use the `-no-color` flag.
 
 - **media-streams**: Monitor active Plex/Jellyfin streams
 - **media-calendar**: Display upcoming media releases
+- **arr-feed**: Monitor Sonarr/Radarr activity feed
 
 ## Support
 
 For issues, feature requests, or questions:
 - GitHub Issues: [CalmsToolkit Issues](https://github.com/calmcacil/CalmsToolkit/issues)
-- See also: [OVERSEERR_API_RESEARCH.md](docs/OVERSEERR_API_RESEARCH.md)
+- See also: [OVERSEERR_API_RESEARCH.md](OVERSEERR_API_RESEARCH.md)
 
 ## License
 

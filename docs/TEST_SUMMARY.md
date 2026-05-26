@@ -2,16 +2,18 @@
 
 ## Overview
 
-Comprehensive test suites have been implemented for all three CLI binaries in the CalmsToolkit project. All tests are passing with good coverage of core functionality.
+Comprehensive test suites have been implemented for all tools in the CalmsToolkit project. All tests are passing with good coverage of core functionality.
 
-## Test Statistics
+## Test Coverage by Package
 
-| Binary | Test File | Functions | Test Cases | Coverage |
-|--------|-----------|-----------|------------|----------|
-| media-requests | `media-requests_test.go` | 23 | ~60+ | 24.4% |
-| media-streams | `media-streams_test.go` | 12 | ~30+ | 39.4% |
-| media-calendar | `media-calendar_test.go` | 10 | ~25+ | 38.3% |
-| **Total** | | **45** | **~115+** | **~34%** |
+| Package | File | Functions | Test Cases | Coverage |
+|---------|------|-----------|------------|----------|
+| internal/requests | `requests_test.go` | 24 | ~80+ | ~28% |
+| internal/streams | `streams_test.go` | 12 | ~30+ | ~42% |
+| internal/calendar | `calendar_test.go` | 15 | ~40+ | ~40% |
+| internal/feed | `feed_test.go` | 18 | ~40+ | ~54% |
+| internal/config | `config_test.go` | 5 | ~20+ | ~65% |
+| **Total** | | **74** | **~210+** | |
 
 ## Running Tests
 
@@ -20,37 +22,21 @@ Comprehensive test suites have been implemented for all three CLI binaries in th
 make test
 ```
 
-### Individual Test Suites
-```bash
-# Media Requests
-go test -tags mediarequests -v
-
-# Media Streams
-go test -tags mediastreams -v
-
-# Media Calendar
-go test -tags mediacalendar -v
-```
-
 ### With Coverage
 ```bash
-go test -tags mediarequests -cover
-go test -tags mediastreams -cover
-go test -tags mediacalendar -cover
+go test -v -cover ./...
 ```
 
-## Test Coverage by Binary
+## Test Coverage by Package
 
-### media-requests (23 tests)
+### internal/requests
 **Utility Functions:**
 - `TestGetYear` - Extract year from media dates (4 cases)
 - `TestGetStatusText` - Status text formatting (4 cases)
 - `TestFormatDate` - Date formatting (3 cases)
 
 **Configuration:**
-- `TestLoadEnvFile` - Environment file loading
-- `TestLoadEnvFileMissing` - Missing env file handling
-- `TestLoadConfig` - Configuration loading (2 cases)
+- `TestBuildToolConfig` - Config builder (4 cases)
 
 **API Operations:**
 - `TestSearchMedia` - TMDB search functionality (3 cases)
@@ -61,12 +47,15 @@ go test -tags mediacalendar -cover
 - `TestGetPendingRequests` - Pending request listing (basic)
 - `TestApproveRequest` - Request approval
 - `TestDeclineRequest` - Request decline
+- `TestTestConnection` - Connection testing (3 cases)
+- `TestFetchServiceInstances` - Service instance discovery
+- `TestFetchServiceDetails` - Service detail retrieval
 
 **Permission & Count Operations:**
 - `TestCheckUserPermissions` - Permission validation (5 cases)
 - `TestGetRequestCount` - Request count retrieval (3 cases)
 
-**Pending Requests with Fallback Logic (Overseerr Bug #3949):**
+**Pending Requests with Fallback Logic:**
 - `TestGetPendingRequestsHappyPath` - Normal filter=pending operation
 - `TestGetPendingRequestsNoPending` - Zero pending requests edge case
 - `TestGetPendingRequestsPagination` - Multi-page fetching (125 requests)
@@ -74,21 +63,21 @@ go test -tags mediacalendar -cover
 - `TestGetPendingRequestsNoFallbackNeeded` - Fallback doesn't trigger when unnecessary
 - `TestGetPendingRequestsFallbackPagination` - Fallback with pagination (125 requests, 3 pages)
 
-**Service Management:**
-- `TestTestConnection` - Connection testing (3 cases)
-- `TestFetchServiceInstances` - Service instance discovery
-- `TestFetchServiceDetails` - Service detail retrieval
+**Approval with Overrides:**
+- `TestApproveRequestWithOverrides` - Approval with root folder override (5 cases)
+- `TestApproveRequestWithOverridesEndpoint` - Verifies correct API endpoints
+- `TestApproveRequestWithOverridesNilOverrides` - Nil overrides only calls approve
 
-### media-streams (12 tests)
+### internal/streams
 **Utility Functions:**
-- `TestFormatTimeSince` - Time since formatting (6 cases)
-- `TestFormatDuration` - Duration formatting (6 cases)
-- `TestGetResolutionName` - Resolution naming (7 cases)
+- `TestFormatTimeSince` - Time since formatting (4 cases)
+- `TestFormatDuration` - Duration formatting (5 cases)
+- `TestGetResolutionName` - Resolution naming (6 cases)
 - `TestGenerateSessionID` - Session ID generation
 
 **Configuration:**
-- `TestLoadEnvFile` - Environment file loading
-- `TestLoadConfig` - Configuration loading
+- `TestBuildToolConfig` - Config builder
+- `TestBuildToolConfigDefaults` - Default and edge cases
 
 **API Operations:**
 - `TestFetchPlexStreams` - Plex stream fetching
@@ -102,14 +91,16 @@ go test -tags mediacalendar -cover
 - `TestUpdateHistory` - Session history updates
 - `TestGetActiveAndEndedSessions` - Session filtering
 
-### media-calendar (10 tests)
+### internal/calendar
 **Utility Functions:**
-- `TestParseCommaSeparated` - Comma-separated string parsing (4 cases)
-- `TestTruncateText` - Text truncation (4 cases)
+- `TestTruncateText` - Text truncation (5 cases)
+- `TestCalculateColumnLayout` - Terminal column layout (3 cases)
+- `TestCalculateDateRange` - Date range calculation
+- `TestGetStatusColor` - Status color determination (3 cases)
 
 **Configuration:**
-- `TestLoadEnvFile` - Environment file loading
-- `TestLoadConfig` - Configuration loading
+- `TestBuildToolConfig` - Config builder
+- `TestBuildToolConfigNil` - Nil config handling
 
 **API Operations:**
 - `TestFetchSonarrCalendar` - Sonarr calendar API
@@ -118,67 +109,71 @@ go test -tags mediacalendar -cover
 
 **Calendar Logic:**
 - `TestAggregateCalendar` - Calendar aggregation and deduplication
-- `TestCalculateColumnLayout` - Terminal column layout (3 cases)
-- `TestGetStatusColor` - Status color determination (3 cases)
+- `TestApplyFilters` - Filter combinations (8 cases)
+- `TestBuildDayContentSorting` - Episode sort order
+- `TestBuildDayContentTruncation` - Episode truncation for same show
+- `TestBuildDayContentMixedTypes` - Episode/movie interleaving
+
+### internal/feed
+**Utility Functions:**
+- `TestMapSonarrEventType` - Sonarr event mapping (8 cases)
+- `TestMapRadarrEventType` - Radarr event mapping (7 cases)
+- `TestFormatEpisode` - Episode number formatting (4 cases)
+- `TestFormatRelativeTime` - Relative time display (8 cases)
+- `TestTruncate` - String truncation (5 cases)
+- `TestCenter` - String centering (4 cases)
+- `TestGetActionColor` - Action color mapping (8 cases)
+
+**Configuration:**
+- `TestBuildToolConfig` - Config builder
+- `TestBuildToolConfigNil` - Nil config handling
+- `TestBuildToolConfigDefaults` - Default value handling
+
+**Data Transformation:**
+- `TestSonarrToHistoryEvent` - Sonarr to event conversion
+- `TestRadarrToHistoryEvent` - Radarr to event conversion
+
+**API Operations:**
+- `TestFetchSonarrHistory` - Sonarr history API
+- `TestFetchRadarrHistory` - Radarr history API
+- `TestFetchAllHistory` - Multi-instance fetching
+- `TestCustomFormatsInSonarrHistory` - Custom format extraction
+- `TestCustomFormatsInRadarrHistory` - Custom format extraction
+- `TestFetchAllHistoryErrorHandling` - Partial failure handling
+
+**Event Processing:**
+- `TestFilterEvents` - Event type filtering (4 cases)
+- `TestEventSortOrder` - Event sort order verification
+
+### internal/config
+- `TestDefaultToolkitConfig` - Default values
+- `TestConfigSaveLoadRoundTrip` - File I/O round trip
+- `TestLoadToolkitConfigFileNotFound` - Missing config handling
+- `TestConfigValidate` - Validation rules (7 cases)
+- `TestConfigURLNormalization` - Trailing slash stripping
+- `TestConfigPath` - Config path construction
 
 ## Test Patterns Used
 
 1. **Table-Driven Tests**: Most tests use table-driven approach for multiple test cases
 2. **HTTP Mock Servers**: `httptest.NewServer` for API testing
-3. **Temporary Files**: `os.CreateTemp` for file I/O tests
+3. **Temporary Directories**: `t.TempDir()` for file I/O tests
 4. **Subtests**: `t.Run()` for organized test execution
 5. **Error Handling**: Comprehensive error case coverage
 
 ## Key Test Achievements
 
-### Overseerr Bug #3949 Fallback Implementation
+### Overseerr API Bug Workaround
 
 **Problem**: Overseerr API has a known bug where `/request/count` shows pending requests exist, but querying `/request?filter=pending` returns zero results.
-
-**Solution**: Implemented comprehensive fallback logic in `getPendingRequests()`:
-1. Fetch `/request/count` to get expected pending count
-2. Attempt primary fetch with `filter=pending`
-3. **Detect mismatch**: if count shows pending > 0 but results are empty
-4. **Activate fallback**: fetch `filter=all` with pagination
-5. **Client-side filter**: keep only requests with `status=1` (StatusPending)
-6. Return filtered results
 
 **Test Coverage**:
 - `TestGetPendingRequestsHappyPath` - Verifies normal operation when filter=pending works
 - `TestGetPendingRequestsWithFallback` - Verifies fallback triggers correctly and filters mixed-status results
 - `TestGetPendingRequestsNoFallbackNeeded` - Ensures fallback doesn't trigger unnecessarily
-- `TestGetPendingRequestsFallbackPagination` - Tests fallback with 125 requests across 3 pages (50/page)
+- `TestGetPendingRequestsFallbackPagination` - Tests fallback with 125 requests across 3 pages
 - `TestGetPendingRequestsPagination` - Tests normal pagination (125 requests, 3 pages)
 - `TestGetPendingRequestsNoPending` - Edge case with zero pending requests
-
-**Implementation Details**:
-- Fallback uses same `pageSize=50` as primary fetch
-- Proper pagination with `skip` parameter
-- Verbose logging shows when fallback activates
-- Color-coded warnings for user visibility
-- Status constants: `StatusPending=1`, `StatusApproved=2`, `StatusDeclined=3`
-
-### Issues Fixed During Implementation
-
-**media-streams_test.go:**
-- Fixed struct field mismatches (JellyfinNowPlayingItem, SessionHistory.Records)
-- Corrected authentication methods (Plex query param vs Jellyfin header)
-- Updated expected outputs to match implementations
-
-**media-calendar_test.go:**
-- Fixed `AirDate` → `AirTime` field name
-- Corrected `calculateColumnLayout` expectations based on `minComfortableColumnWidth=45`
-- Fixed time format incompatibility (RFC3339 vs custom format)
-- Updated episode filtering to use `ShowTitle` instead of `Title`
-
-## Coverage Notes
-
-The test coverage percentages (24-39%) are appropriate for CLI tools because:
-- Tests focus on business logic and API interactions
-- Main functions, CLI flag parsing, and output formatting are not heavily tested
-- Error handling paths and edge cases are well covered
-- HTTP client and API logic have comprehensive coverage
-- Critical utility functions have 100% coverage
 
 ## Next Steps
 
@@ -186,15 +181,13 @@ To increase coverage (optional):
 1. Add integration tests with real API endpoints (use environment flags)
 2. Test CLI argument parsing and validation
 3. Add tests for output formatting functions
-4. Test error scenarios more exhaustively
-5. Add benchmark tests for performance-critical functions
+4. Add benchmark tests for performance-critical functions
 
 ## Maintenance
 
 All tests are:
 - ✅ Passing consistently
-- ✅ Using proper build tags
-- ✅ Integrated with Makefile
+- ✅ Integrated with Makefile (`make test`)
 - ✅ Following Go best practices
-- ✅ Using table-driven approach
+- ✅ Table-driven where appropriate
 - ✅ Properly isolated with mocks
