@@ -3,53 +3,38 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
-const (
-	ColorReset  = "\033[0m"
-	ColorRed    = "\033[0;31m"
-	ColorGreen  = "\033[0;32m"
-	ColorYellow = "\033[0;33m"
-	ColorBlue   = "\033[0;34m"
-	ColorCyan   = "\033[0;36m"
-	ColorGray   = "\033[0;90m"
-	ColorBold   = "\033[1m"
-)
-
-const (
-	AnsiClearScreen = "\033[2J"
-	AnsiHomeCursor  = "\033[H"
-	AnsiHideCursor  = "\033[?25l"
-	AnsiShowCursor  = "\033[?25h"
-)
-
-type Config struct {
-	SonarrURLs    []string
-	SonarrTokens  []string
-	RadarrURLs    []string
-	RadarrTokens  []string
-	PollInterval  time.Duration
-	HistoryWindow time.Duration
-	Timeout       time.Duration
-	NoColor       bool
-	JSON          bool
-	Watch         bool
-	ShowGrabbed   bool
-	ShowImported  bool
-	ShowFailed    bool
-	ShowDeleted   bool
-	ShowIgnored   bool
-	MaxEvents     int
+type FeedToolConfig struct {
+	SonarrInstances []ArrInstance
+	RadarrInstances []ArrInstance
+	PollInterval    time.Duration
+	HistoryWindow   time.Duration
+	Timeout         time.Duration
+	NoColor         bool
+	JSON            bool
+	Watch           bool
+	ShowGrabbed     bool
+	ShowImported    bool
+	ShowFailed      bool
+	ShowDeleted     bool
+	ShowIgnored     bool
+	MaxEvents       int
+	Quiet           bool
 }
 
 type HistoryEvent struct {
@@ -149,257 +134,166 @@ type RadarrMovie struct {
 	Year  int    `json:"year"`
 }
 
+func BuildFeedToolConfig(tk *ToolkitConfig) FeedToolConfig {
+	cfg := FeedToolConfig{}
+	if tk == nil {
+		cfg.Timeout = 10 * time.Second
+		cfg.PollInterval = 5 * time.Second
+		cfg.HistoryWindow = 1 * time.Hour
+		cfg.MaxEvents = 50
+		cfg.ShowGrabbed = true
+		cfg.ShowImported = true
+		cfg.ShowFailed = true
+		return cfg
+	}
+
+	dur, _ := time.ParseDuration(tk.General.Timeout)
+	if dur <= 0 {
+		dur = 10 * time.Second
+	}
+	cfg.Timeout = dur
+	cfg.NoColor = tk.General.NoColor
+	cfg.SonarrInstances = slices.Clone(tk.Sonarr)
+	cfg.RadarrInstances = slices.Clone(tk.Radarr)
+
+	dur, _ = time.ParseDuration(tk.ArrFeed.PollInterval)
+	if dur > 0 {
+		cfg.PollInterval = dur
+	} else {
+		cfg.PollInterval = 5 * time.Second
+	}
+	dur, _ = time.ParseDuration(tk.ArrFeed.HistoryWindow)
+	if dur > 0 {
+		cfg.HistoryWindow = dur
+	} else {
+		cfg.HistoryWindow = 1 * time.Hour
+	}
+
+	cfg.MaxEvents = tk.ArrFeed.MaxEvents
+	if cfg.MaxEvents <= 0 {
+		cfg.MaxEvents = 50
+	}
+	if cfg.MaxEvents > 100 {
+		cfg.MaxEvents = 100
+	}
+	cfg.ShowGrabbed = tk.ArrFeed.ShowGrabbed
+	cfg.ShowImported = tk.ArrFeed.ShowImported
+	cfg.ShowFailed = tk.ArrFeed.ShowFailed
+	cfg.ShowDeleted = tk.ArrFeed.ShowDeleted
+	cfg.ShowIgnored = tk.ArrFeed.ShowIgnored
+	return cfg
+}
+
 func main() {
-	var (
-		sonarrURLs    = flag.String("sonarr-urls", "", "Sonarr URLs (comma-separated)")
-		sonarrTokens  = flag.String("sonarr-tokens", "", "Sonarr API tokens (comma-separated)")
-		radarrURLs    = flag.String("radarr-urls", "", "Radarr URLs (comma-separated)")
-		radarrTokens  = flag.String("radarr-tokens", "", "Radarr API tokens (comma-separated)")
-		pollInterval  = flag.Duration("poll", 5*time.Second, "Poll interval for watch mode")
-		historyWindow = flag.Duration("duration", 1*time.Hour, "History lookback window")
-		timeout       = flag.Duration("timeout", 30*time.Second, "HTTP request timeout")
-		noColor       = flag.Bool("no-color", false, "Disable colored output")
-		jsonOutput    = flag.Bool("json", false, "Output JSON instead of table")
-		watch         = flag.Bool("watch", false, "Continuous monitoring mode")
-		showGrabbed   = flag.Bool("show-grabbed", true, "Show grabbed events")
-		showImported  = flag.Bool("show-imported", true, "Show imported events")
-		showFailed    = flag.Bool("show-failed", true, "Show failed events")
-		showDeleted   = flag.Bool("show-deleted", true, "Show deleted events")
-		showIgnored   = flag.Bool("show-ignored", false, "Show ignored events")
-		maxEvents     = flag.Int("events", 40, "Maximum number of events to display (1-100)")
-	)
+	tk, err := LoadToolkitConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+	cfg := BuildFeedToolConfig(tk)
+
+	poll := flag.Duration("poll", cfg.PollInterval, "Poll interval for watch mode")
+	duration := flag.Duration("duration", cfg.HistoryWindow, "History lookback window")
+	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP request timeout")
+	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
+	json := flag.Bool("json", false, "Output JSON instead of table")
+	watch := flag.Bool("watch", false, "Continuous monitoring mode")
+	showGrabbed := flag.Bool("show-grabbed", cfg.ShowGrabbed, "Show grabbed events")
+	showImported := flag.Bool("show-imported", cfg.ShowImported, "Show imported events")
+	showFailed := flag.Bool("show-failed", cfg.ShowFailed, "Show failed events")
+	showDeleted := flag.Bool("show-deleted", cfg.ShowDeleted, "Show deleted events")
+	showIgnored := flag.Bool("show-ignored", cfg.ShowIgnored, "Show ignored events")
+	maxEvents := flag.Int("events", cfg.MaxEvents, "Maximum number of events to display (1-100)")
+	quiet := flag.Bool("quiet", false, "Suppress error output in watch mode")
 	flag.Parse()
 
-	config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens, *pollInterval, *historyWindow, *timeout, *noColor, *jsonOutput, *watch, *showGrabbed, *showImported, *showFailed, *showDeleted, *showIgnored, *maxEvents)
+	cfg.PollInterval = *poll
+	cfg.HistoryWindow = *duration
+	cfg.Timeout = *timeout
+	cfg.NoColor = *noColor || *json
+	cfg.JSON = *json
+	cfg.Watch = *watch
+	cfg.ShowGrabbed = *showGrabbed
+	cfg.ShowImported = *showImported
+	cfg.ShowFailed = *showFailed
+	cfg.ShowDeleted = *showDeleted
+	cfg.ShowIgnored = *showIgnored
+	cfg.MaxEvents = *maxEvents
+	cfg.Quiet = *quiet
 
-	if err := validateConfig(config); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
+		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
 		os.Exit(1)
 	}
 
-	// Validate and clamp MaxEvents to acceptable range
-	if config.MaxEvents < 1 {
-		config.MaxEvents = 1
-	} else if config.MaxEvents > 100 {
-		config.MaxEvents = 100
-	}
+	client := &http.Client{Timeout: cfg.Timeout}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
-	if config.Watch {
-		runWatchMode(config)
+	if cfg.Watch {
+		runWatchMode(ctx, cfg, client)
 	} else {
-		runSingleMode(config)
+		runSingleMode(ctx, cfg, client)
 	}
 }
 
-func loadConfig(sonarrURLs, sonarrTokens, radarrURLs, radarrTokens string, pollInterval, historyWindow, timeout time.Duration, noColor, jsonOutput, watch, showGrabbed, showImported, showFailed, showDeleted, showIgnored bool, maxEvents int) Config {
-	config := Config{
-		SonarrURLs:    []string{},
-		SonarrTokens:  []string{},
-		RadarrURLs:    []string{},
-		RadarrTokens:  []string{},
-		PollInterval:  pollInterval,
-		HistoryWindow: historyWindow,
-		Timeout:       timeout,
-		NoColor:       noColor,
-		JSON:          jsonOutput,
-		Watch:         watch,
-		ShowGrabbed:   showGrabbed,
-		ShowImported:  showImported,
-		ShowFailed:    showFailed,
-		ShowDeleted:   showDeleted,
-		ShowIgnored:   showIgnored,
-		MaxEvents:     maxEvents,
-	}
-
-	envPath := "/opt/apps/compose/.env"
-	if _, err := os.Stat(envPath); err == nil {
-		loadEnvFile(envPath, &config)
-	}
-
-	if envSonarrURLs := os.Getenv("SONARR_URLS"); envSonarrURLs != "" {
-		config.SonarrURLs = strings.Split(envSonarrURLs, ",")
-		for i := range config.SonarrURLs {
-			config.SonarrURLs[i] = strings.TrimSpace(config.SonarrURLs[i])
-		}
-	}
-	if envSonarrTokens := os.Getenv("SONARR_TOKENS"); envSonarrTokens != "" {
-		config.SonarrTokens = strings.Split(envSonarrTokens, ",")
-		for i := range config.SonarrTokens {
-			config.SonarrTokens[i] = strings.TrimSpace(config.SonarrTokens[i])
-		}
-	}
-	if envRadarrURLs := os.Getenv("RADARR_URLS"); envRadarrURLs != "" {
-		config.RadarrURLs = strings.Split(envRadarrURLs, ",")
-		for i := range config.RadarrURLs {
-			config.RadarrURLs[i] = strings.TrimSpace(config.RadarrURLs[i])
-		}
-	}
-	if envRadarrTokens := os.Getenv("RADARR_TOKENS"); envRadarrTokens != "" {
-		config.RadarrTokens = strings.Split(envRadarrTokens, ",")
-		for i := range config.RadarrTokens {
-			config.RadarrTokens[i] = strings.TrimSpace(config.RadarrTokens[i])
-		}
-	}
-
-	if envPoll := os.Getenv("ARR_FEED_POLL_INTERVAL"); envPoll != "" {
-		if d, err := time.ParseDuration(envPoll); err == nil {
-			config.PollInterval = d
-		}
-	}
-	if envDuration := os.Getenv("ARR_FEED_HISTORY_DURATION"); envDuration != "" {
-		if d, err := time.ParseDuration(envDuration); err == nil {
-			config.HistoryWindow = d
-		}
-	}
-	if envTimeout := os.Getenv("ARR_FEED_TIMEOUT"); envTimeout != "" {
-		if d, err := time.ParseDuration(envTimeout); err == nil {
-			config.Timeout = d
-		}
-	}
-
-	if sonarrURLs != "" {
-		config.SonarrURLs = strings.Split(sonarrURLs, ",")
-		for i := range config.SonarrURLs {
-			config.SonarrURLs[i] = strings.TrimSpace(config.SonarrURLs[i])
-		}
-	}
-	if sonarrTokens != "" {
-		config.SonarrTokens = strings.Split(sonarrTokens, ",")
-		for i := range config.SonarrTokens {
-			config.SonarrTokens[i] = strings.TrimSpace(config.SonarrTokens[i])
-		}
-	}
-	if radarrURLs != "" {
-		config.RadarrURLs = strings.Split(radarrURLs, ",")
-		for i := range config.RadarrURLs {
-			config.RadarrURLs[i] = strings.TrimSpace(config.RadarrURLs[i])
-		}
-	}
-	if radarrTokens != "" {
-		config.RadarrTokens = strings.Split(radarrTokens, ",")
-		for i := range config.RadarrTokens {
-			config.RadarrTokens[i] = strings.TrimSpace(config.RadarrTokens[i])
-		}
-	}
-
-	for i := range config.SonarrURLs {
-		config.SonarrURLs[i] = strings.TrimSuffix(config.SonarrURLs[i], "/")
-	}
-	for i := range config.RadarrURLs {
-		config.RadarrURLs[i] = strings.TrimSuffix(config.RadarrURLs[i], "/")
-	}
-
-	return config
-}
-
-func loadEnvFile(path string, config *Config) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-
-		key := strings.TrimSpace(parts[0])
-		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
-
-		switch key {
-		case "SONARR_URLS":
-			config.SonarrURLs = strings.Split(value, ",")
-			for i := range config.SonarrURLs {
-				config.SonarrURLs[i] = strings.TrimSpace(config.SonarrURLs[i])
-			}
-		case "SONARR_TOKENS":
-			config.SonarrTokens = strings.Split(value, ",")
-			for i := range config.SonarrTokens {
-				config.SonarrTokens[i] = strings.TrimSpace(config.SonarrTokens[i])
-			}
-		case "RADARR_URLS":
-			config.RadarrURLs = strings.Split(value, ",")
-			for i := range config.RadarrURLs {
-				config.RadarrURLs[i] = strings.TrimSpace(config.RadarrURLs[i])
-			}
-		case "RADARR_TOKENS":
-			config.RadarrTokens = strings.Split(value, ",")
-			for i := range config.RadarrTokens {
-				config.RadarrTokens[i] = strings.TrimSpace(config.RadarrTokens[i])
-			}
-		case "ARR_FEED_POLL_INTERVAL":
-			if d, err := time.ParseDuration(value); err == nil {
-				config.PollInterval = d
-			}
-		case "ARR_FEED_HISTORY_DURATION":
-			if d, err := time.ParseDuration(value); err == nil {
-				config.HistoryWindow = d
-			}
-		case "ARR_FEED_TIMEOUT":
-			if d, err := time.ParseDuration(value); err == nil {
-				config.Timeout = d
-			}
-		}
-	}
-}
-
-func validateConfig(config Config) error {
-	if len(config.SonarrURLs) == 0 && len(config.RadarrURLs) == 0 {
+func validateConfig(cfg FeedToolConfig) error {
+	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
 		return fmt.Errorf("at least one Sonarr or Radarr instance must be configured")
 	}
-
-	if len(config.SonarrURLs) != len(config.SonarrTokens) {
-		return fmt.Errorf("number of Sonarr URLs (%d) must match number of tokens (%d)", len(config.SonarrURLs), len(config.SonarrTokens))
+	for i, inst := range cfg.SonarrInstances {
+		if inst.URL == "" {
+			return fmt.Errorf("Sonarr instance %d: url is required", i)
+		}
+		if inst.APIKey == "" {
+			return fmt.Errorf("Sonarr instance %d: api_key is required", i)
+		}
 	}
-
-	if len(config.RadarrURLs) != len(config.RadarrTokens) {
-		return fmt.Errorf("number of Radarr URLs (%d) must match number of tokens (%d)", len(config.RadarrURLs), len(config.RadarrTokens))
+	for i, inst := range cfg.RadarrInstances {
+		if inst.URL == "" {
+			return fmt.Errorf("Radarr instance %d: url is required", i)
+		}
+		if inst.APIKey == "" {
+			return fmt.Errorf("Radarr instance %d: api_key is required", i)
+		}
 	}
-
 	return nil
 }
 
-func runSingleMode(config Config) {
-	since := time.Now().Add(-config.HistoryWindow)
-	events, err := fetchAllHistory(config, since)
+func runSingleMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) {
+	since := time.Now().Add(-cfg.HistoryWindow)
+	events, err := fetchAllHistory(ctx, client, cfg, since)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
 
-	events = filterEvents(events, config)
+	events = filterEvents(events, cfg)
 
-	if config.JSON {
+	if cfg.JSON {
 		renderJSON(events)
 	} else {
-		renderTable(events, config)
+		renderTable(events, cfg)
 	}
 }
 
-func runWatchMode(config Config) {
-	if !config.JSON {
+func runWatchMode(ctx context.Context, cfg FeedToolConfig, client *http.Client) {
+	if !cfg.JSON {
 		fmt.Print(AnsiHideCursor)
 		defer fmt.Print(AnsiShowCursor)
 	}
 
 	eventCache := make([]HistoryEvent, 0, 100)
-	lastFetch := time.Now().Add(-config.HistoryWindow)
+	lastFetch := time.Now().Add(-cfg.HistoryWindow)
 
 	for {
-		newEvents, err := fetchAllHistory(config, lastFetch)
+		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
 		if err != nil {
-			if !config.JSON {
-				clearScreen()
-				color := getColorFunc(config)
+			if !cfg.JSON {
+				fmt.Print(AnsiClearScreen + AnsiHomeCursor)
+				color := getColorFunc(cfg)
 				fmt.Printf("%sERROR: %v%s\n", color(ColorRed), err, color(ColorReset))
-				fmt.Printf("Retrying in %v...\n", config.PollInterval)
+				fmt.Printf("Retrying in %v...\n", cfg.PollInterval)
 			}
 		} else {
 			for _, event := range newEvents {
@@ -410,18 +304,17 @@ func runWatchMode(config Config) {
 				eventCache = eventCache[len(eventCache)-100:]
 			}
 
-			filteredEvents := filterEvents(eventCache, config)
+			filteredEvents := filterEvents(eventCache, cfg)
 
-			// Limit to MaxEvents
-			if len(filteredEvents) > config.MaxEvents {
-				filteredEvents = filteredEvents[:config.MaxEvents]
+			if len(filteredEvents) > cfg.MaxEvents {
+				filteredEvents = filteredEvents[:cfg.MaxEvents]
 			}
 
-			if config.JSON {
+			if cfg.JSON {
 				renderJSON(filteredEvents)
 			} else {
-				clearScreen()
-				renderTable(filteredEvents, config)
+				fmt.Print(AnsiClearScreen + AnsiHomeCursor)
+				renderTable(filteredEvents, cfg)
 			}
 
 			if len(newEvents) > 0 {
@@ -429,39 +322,46 @@ func runWatchMode(config Config) {
 			}
 		}
 
-		time.Sleep(config.PollInterval)
+		select {
+		case <-ctx.Done():
+			if !cfg.JSON {
+				fmt.Print(AnsiShowCursor)
+			}
+			return
+		case <-time.After(cfg.PollInterval):
+		}
 	}
 }
 
-func fetchAllHistory(config Config, since time.Time) ([]HistoryEvent, error) {
+func fetchAllHistory(ctx context.Context, client *http.Client, cfg FeedToolConfig, since time.Time) ([]HistoryEvent, error) {
 	var wg sync.WaitGroup
-	eventsChan := make(chan []HistoryEvent, len(config.SonarrURLs)+len(config.RadarrURLs))
-	errorsChan := make(chan error, len(config.SonarrURLs)+len(config.RadarrURLs))
+	eventsChan := make(chan []HistoryEvent, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
+	errorsChan := make(chan error, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
 
-	for i := range config.SonarrURLs {
+	for _, inst := range cfg.SonarrInstances {
 		wg.Add(1)
-		go func(url, token string) {
+		go func(inst ArrInstance) {
 			defer wg.Done()
-			events, err := fetchSonarrHistory(config, url, token, since)
+			events, err := fetchSonarrHistory(ctx, client, inst, since)
 			if err != nil {
-				errorsChan <- fmt.Errorf("Sonarr (%s): %v", url, err)
+				errorsChan <- fmt.Errorf("Sonarr %s: %v", inst.Name, err)
 				return
 			}
 			eventsChan <- events
-		}(config.SonarrURLs[i], config.SonarrTokens[i])
+		}(inst)
 	}
 
-	for i := range config.RadarrURLs {
+	for _, inst := range cfg.RadarrInstances {
 		wg.Add(1)
-		go func(url, token string) {
+		go func(inst ArrInstance) {
 			defer wg.Done()
-			events, err := fetchRadarrHistory(config, url, token, since)
+			events, err := fetchRadarrHistory(ctx, client, inst, since)
 			if err != nil {
-				errorsChan <- fmt.Errorf("Radarr (%s): %v", url, err)
+				errorsChan <- fmt.Errorf("Radarr %s: %v", inst.Name, err)
 				return
 			}
 			eventsChan <- events
-		}(config.RadarrURLs[i], config.RadarrTokens[i])
+		}(inst)
 	}
 
 	wg.Wait()
@@ -489,17 +389,16 @@ func fetchAllHistory(config Config, since time.Time) ([]HistoryEvent, error) {
 	return allEvents, nil
 }
 
-func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]HistoryEvent, error) {
+func fetchSonarrHistory(ctx context.Context, client *http.Client, inst ArrInstance, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
-	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", url, sinceStr)
+	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", inst.URL, sinceStr)
 
-	client := &http.Client{Timeout: config.Timeout}
-	req, err := http.NewRequest("GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("X-Api-Key", inst.APIKey)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -534,17 +433,16 @@ func fetchSonarrHistory(config Config, url, token string, since time.Time) ([]Hi
 	return events, nil
 }
 
-func fetchRadarrHistory(config Config, url, token string, since time.Time) ([]HistoryEvent, error) {
+func fetchRadarrHistory(ctx context.Context, client *http.Client, inst ArrInstance, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
-	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", url, sinceStr)
+	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", inst.URL, sinceStr)
 
-	client := &http.Client{Timeout: config.Timeout}
-	req, err := http.NewRequest("GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("X-Api-Key", inst.APIKey)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -731,29 +629,29 @@ func formatRelativeTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04")
 }
 
-func filterEvents(events []HistoryEvent, config Config) []HistoryEvent {
+func filterEvents(events []HistoryEvent, cfg FeedToolConfig) []HistoryEvent {
 	filtered := make([]HistoryEvent, 0, len(events))
 
 	for _, event := range events {
 		switch event.Action {
 		case "Grabbed":
-			if !config.ShowGrabbed {
+			if !cfg.ShowGrabbed {
 				continue
 			}
 		case "Imported", "Bulk Import":
-			if !config.ShowImported {
+			if !cfg.ShowImported {
 				continue
 			}
 		case "Failed":
-			if !config.ShowFailed {
+			if !cfg.ShowFailed {
 				continue
 			}
 		case "Deleted":
-			if !config.ShowDeleted {
+			if !cfg.ShowDeleted {
 				continue
 			}
 		case "Ignored":
-			if !config.ShowIgnored {
+			if !cfg.ShowIgnored {
 				continue
 			}
 		}
@@ -764,8 +662,8 @@ func filterEvents(events []HistoryEvent, config Config) []HistoryEvent {
 	return filtered
 }
 
-func renderTable(events []HistoryEvent, config Config) {
-	color := getColorFunc(config)
+func renderTable(events []HistoryEvent, cfg FeedToolConfig) {
+	color := getColorFunc(cfg)
 
 	fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s%s\n",
 		color(ColorBold),
@@ -830,16 +728,11 @@ func getActionColor(action string) string {
 	}
 }
 
-func getColorFunc(config Config) func(string) string {
-	if config.NoColor || config.JSON {
+func getColorFunc(cfg FeedToolConfig) func(string) string {
+	if cfg.NoColor || cfg.JSON {
 		return func(s string) string { return "" }
 	}
 	return func(s string) string { return s }
-}
-
-func clearScreen() {
-	fmt.Print(AnsiHomeCursor)
-	fmt.Print(AnsiClearScreen)
 }
 
 func truncate(s string, maxLen int) string {

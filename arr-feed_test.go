@@ -3,9 +3,9 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -171,12 +171,12 @@ func TestFilterEvents(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		config   Config
+		config   FeedToolConfig
 		expected int
 	}{
 		{
 			name: "all enabled",
-			config: Config{
+			config: FeedToolConfig{
 				ShowGrabbed:  true,
 				ShowImported: true,
 				ShowFailed:   true,
@@ -187,7 +187,7 @@ func TestFilterEvents(t *testing.T) {
 		},
 		{
 			name: "no ignored",
-			config: Config{
+			config: FeedToolConfig{
 				ShowGrabbed:  true,
 				ShowImported: true,
 				ShowFailed:   true,
@@ -198,7 +198,7 @@ func TestFilterEvents(t *testing.T) {
 		},
 		{
 			name: "only grabbed",
-			config: Config{
+			config: FeedToolConfig{
 				ShowGrabbed:  true,
 				ShowImported: false,
 				ShowFailed:   false,
@@ -209,7 +209,7 @@ func TestFilterEvents(t *testing.T) {
 		},
 		{
 			name: "none enabled",
-			config: Config{
+			config: FeedToolConfig{
 				ShowGrabbed:  false,
 				ShowImported: false,
 				ShowFailed:   false,
@@ -233,53 +233,68 @@ func TestFilterEvents(t *testing.T) {
 func TestValidateConfig(t *testing.T) {
 	tests := []struct {
 		name      string
-		config    Config
+		config    FeedToolConfig
 		shouldErr bool
 	}{
 		{
 			name: "valid sonarr only",
-			config: Config{
-				SonarrURLs:   []string{"http://localhost:8989"},
-				SonarrTokens: []string{"token"},
+			config: FeedToolConfig{
+				SonarrInstances: []ArrInstance{
+					{Name: "sonarr1", URL: "http://localhost:8989", APIKey: "token"},
+				},
 			},
 			shouldErr: false,
 		},
 		{
 			name: "valid radarr only",
-			config: Config{
-				RadarrURLs:   []string{"http://localhost:7878"},
-				RadarrTokens: []string{"token"},
+			config: FeedToolConfig{
+				RadarrInstances: []ArrInstance{
+					{Name: "radarr1", URL: "http://localhost:7878", APIKey: "token"},
+				},
 			},
 			shouldErr: false,
 		},
 		{
 			name: "valid both",
-			config: Config{
-				SonarrURLs:   []string{"http://localhost:8989"},
-				SonarrTokens: []string{"token1"},
-				RadarrURLs:   []string{"http://localhost:7878"},
-				RadarrTokens: []string{"token2"},
+			config: FeedToolConfig{
+				SonarrInstances: []ArrInstance{
+					{Name: "sonarr1", URL: "http://localhost:8989", APIKey: "token1"},
+				},
+				RadarrInstances: []ArrInstance{
+					{Name: "radarr1", URL: "http://localhost:7878", APIKey: "token2"},
+				},
 			},
 			shouldErr: false,
 		},
 		{
 			name:      "no instances",
-			config:    Config{},
+			config:    FeedToolConfig{},
 			shouldErr: true,
 		},
 		{
-			name: "sonarr url/token mismatch",
-			config: Config{
-				SonarrURLs:   []string{"http://localhost:8989", "http://localhost:8990"},
-				SonarrTokens: []string{"token"},
+			name: "sonarr missing url",
+			config: FeedToolConfig{
+				SonarrInstances: []ArrInstance{
+					{Name: "sonarr1", URL: "", APIKey: "token"},
+				},
 			},
 			shouldErr: true,
 		},
 		{
-			name: "radarr url/token mismatch",
-			config: Config{
-				RadarrURLs:   []string{"http://localhost:7878"},
-				RadarrTokens: []string{"token1", "token2"},
+			name: "sonarr missing api_key",
+			config: FeedToolConfig{
+				SonarrInstances: []ArrInstance{
+					{Name: "sonarr1", URL: "http://localhost:8989", APIKey: ""},
+				},
+			},
+			shouldErr: true,
+		},
+		{
+			name: "radarr missing url",
+			config: FeedToolConfig{
+				RadarrInstances: []ArrInstance{
+					{Name: "radarr1", URL: "", APIKey: "token"},
+				},
 			},
 			shouldErr: true,
 		},
@@ -493,10 +508,11 @@ func TestFetchSonarrHistory(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{Timeout: 5 * time.Second}
+			client := &http.Client{Timeout: 5 * time.Second}
+			inst := ArrInstance{URL: server.URL, APIKey: "test-token"}
 			since := time.Now().Add(-1 * time.Hour)
 
-			events, err := fetchSonarrHistory(config, server.URL, "test-token", since)
+			events, err := fetchSonarrHistory(context.Background(), client, inst, since)
 
 			if (err != nil) != tt.expectedErr {
 				t.Errorf("fetchSonarrHistory() error = %v, expectedErr = %v", err, tt.expectedErr)
@@ -610,10 +626,11 @@ func TestFetchRadarrHistory(t *testing.T) {
 			}))
 			defer server.Close()
 
-			config := Config{Timeout: 5 * time.Second}
+			client := &http.Client{Timeout: 5 * time.Second}
+			inst := ArrInstance{URL: server.URL, APIKey: "test-token"}
 			since := time.Now().Add(-1 * time.Hour)
 
-			events, err := fetchRadarrHistory(config, server.URL, "test-token", since)
+			events, err := fetchRadarrHistory(context.Background(), client, inst, since)
 
 			if (err != nil) != tt.expectedErr {
 				t.Errorf("fetchRadarrHistory() error = %v, expectedErr = %v", err, tt.expectedErr)
@@ -646,16 +663,19 @@ func TestFetchAllHistory(t *testing.T) {
 	}))
 	defer radarrServer.Close()
 
-	config := Config{
-		SonarrURLs:   []string{sonarrServer.URL},
-		SonarrTokens: []string{"sonarr-token"},
-		RadarrURLs:   []string{radarrServer.URL},
-		RadarrTokens: []string{"radarr-token"},
-		Timeout:      5 * time.Second,
+	cfg := FeedToolConfig{
+		SonarrInstances: []ArrInstance{
+			{Name: "sonarr1", URL: sonarrServer.URL, APIKey: "sonarr-token"},
+		},
+		RadarrInstances: []ArrInstance{
+			{Name: "radarr1", URL: radarrServer.URL, APIKey: "radarr-token"},
+		},
+		Timeout: 5 * time.Second,
 	}
 
+	client := &http.Client{Timeout: cfg.Timeout}
 	since := time.Now().Add(-1 * time.Hour)
-	events, err := fetchAllHistory(config, since)
+	events, err := fetchAllHistory(context.Background(), client, cfg, since)
 
 	if err != nil {
 		t.Fatalf("fetchAllHistory() error = %v", err)
@@ -701,16 +721,19 @@ func TestFetchAllHistoryPartialFailure(t *testing.T) {
 	}))
 	defer radarrServer.Close()
 
-	config := Config{
-		SonarrURLs:   []string{sonarrServer.URL},
-		SonarrTokens: []string{"sonarr-token"},
-		RadarrURLs:   []string{radarrServer.URL},
-		RadarrTokens: []string{"radarr-token"},
-		Timeout:      5 * time.Second,
+	cfg := FeedToolConfig{
+		SonarrInstances: []ArrInstance{
+			{Name: "sonarr1", URL: sonarrServer.URL, APIKey: "sonarr-token"},
+		},
+		RadarrInstances: []ArrInstance{
+			{Name: "radarr1", URL: radarrServer.URL, APIKey: "radarr-token"},
+		},
+		Timeout: 5 * time.Second,
 	}
 
+	client := &http.Client{Timeout: cfg.Timeout}
 	since := time.Now().Add(-1 * time.Hour)
-	events, err := fetchAllHistory(config, since)
+	events, err := fetchAllHistory(context.Background(), client, cfg, since)
 
 	if err != nil {
 		t.Fatalf("fetchAllHistory() should not error on partial failure, got: %v", err)
@@ -738,16 +761,19 @@ func TestFetchAllHistoryCompleteFailure(t *testing.T) {
 	}))
 	defer radarrServer.Close()
 
-	config := Config{
-		SonarrURLs:   []string{sonarrServer.URL},
-		SonarrTokens: []string{"bad-token"},
-		RadarrURLs:   []string{radarrServer.URL},
-		RadarrTokens: []string{"bad-token"},
-		Timeout:      5 * time.Second,
+	cfg := FeedToolConfig{
+		SonarrInstances: []ArrInstance{
+			{Name: "sonarr1", URL: sonarrServer.URL, APIKey: "bad-token"},
+		},
+		RadarrInstances: []ArrInstance{
+			{Name: "radarr1", URL: radarrServer.URL, APIKey: "bad-token"},
+		},
+		Timeout: 5 * time.Second,
 	}
 
+	client := &http.Client{Timeout: cfg.Timeout}
 	since := time.Now().Add(-1 * time.Hour)
-	events, err := fetchAllHistory(config, since)
+	events, err := fetchAllHistory(context.Background(), client, cfg, since)
 
 	if err == nil {
 		t.Errorf("fetchAllHistory() should error when all instances fail")
@@ -758,146 +784,107 @@ func TestFetchAllHistoryCompleteFailure(t *testing.T) {
 	}
 }
 
-func TestLoadConfig(t *testing.T) {
-	tests := []struct {
-		name           string
-		sonarrURLs     string
-		sonarrTokens   string
-		radarrURLs     string
-		radarrTokens   string
-		envVars        map[string]string
-		validateConfig func(*testing.T, Config)
-	}{
-		{
-			name:         "flags only",
-			sonarrURLs:   "http://sonarr1:8989,http://sonarr2:8989",
-			sonarrTokens: "token1,token2",
-			radarrURLs:   "http://radarr1:7878",
-			radarrTokens: "token3",
-			validateConfig: func(t *testing.T, c Config) {
-				if len(c.SonarrURLs) != 2 {
-					t.Errorf("len(SonarrURLs) = %d, want 2", len(c.SonarrURLs))
-				}
-				if c.SonarrURLs[0] != "http://sonarr1:8989" {
-					t.Errorf("SonarrURLs[0] = %q, want %q", c.SonarrURLs[0], "http://sonarr1:8989")
-				}
-				if len(c.SonarrTokens) != 2 {
-					t.Errorf("len(SonarrTokens) = %d, want 2", len(c.SonarrTokens))
-				}
-				if len(c.RadarrURLs) != 1 {
-					t.Errorf("len(RadarrURLs) = %d, want 1", len(c.RadarrURLs))
-				}
-			},
-		},
-		{
-			name:       "env vars override defaults",
-			sonarrURLs: "",
-			envVars: map[string]string{
-				"SONARR_URLS":               "http://env-sonarr:8989",
-				"SONARR_TOKENS":             "env-token",
-				"ARR_FEED_POLL_INTERVAL":    "10s",
-				"ARR_FEED_HISTORY_DURATION": "2h",
-				"ARR_FEED_TIMEOUT":          "60s",
-			},
-			validateConfig: func(t *testing.T, c Config) {
-				if len(c.SonarrURLs) != 1 {
-					t.Errorf("len(SonarrURLs) = %d, want 1", len(c.SonarrURLs))
-				}
-				if c.SonarrURLs[0] != "http://env-sonarr:8989" {
-					t.Errorf("SonarrURLs[0] = %q, want %q", c.SonarrURLs[0], "http://env-sonarr:8989")
-				}
-				if c.PollInterval != 10*time.Second {
-					t.Errorf("PollInterval = %v, want %v", c.PollInterval, 10*time.Second)
-				}
-				if c.HistoryWindow != 2*time.Hour {
-					t.Errorf("HistoryWindow = %v, want %v", c.HistoryWindow, 2*time.Hour)
-				}
-				if c.Timeout != 60*time.Second {
-					t.Errorf("Timeout = %v, want %v", c.Timeout, 60*time.Second)
-				}
-			},
-		},
-		{
-			name:         "flags override env vars",
-			sonarrURLs:   "http://flag-sonarr:8989",
-			sonarrTokens: "flag-token",
-			envVars: map[string]string{
-				"SONARR_URLS":   "http://env-sonarr:8989",
-				"SONARR_TOKENS": "env-token",
-			},
-			validateConfig: func(t *testing.T, c Config) {
-				if c.SonarrURLs[0] != "http://flag-sonarr:8989" {
-					t.Errorf("SonarrURLs[0] = %q, want %q (flags should override env)", c.SonarrURLs[0], "http://flag-sonarr:8989")
-				}
-				if c.SonarrTokens[0] != "flag-token" {
-					t.Errorf("SonarrTokens[0] = %q, want %q (flags should override env)", c.SonarrTokens[0], "flag-token")
-				}
-			},
-		},
-		{
-			name:         "trailing slashes trimmed",
-			sonarrURLs:   "http://sonarr:8989/",
-			sonarrTokens: "token",
-			radarrURLs:   "http://radarr:7878/",
-			radarrTokens: "token",
-			validateConfig: func(t *testing.T, c Config) {
-				if c.SonarrURLs[0] != "http://sonarr:8989" {
-					t.Errorf("SonarrURLs[0] = %q, want trailing slash removed", c.SonarrURLs[0])
-				}
-				if c.RadarrURLs[0] != "http://radarr:7878" {
-					t.Errorf("RadarrURLs[0] = %q, want trailing slash removed", c.RadarrURLs[0])
-				}
-			},
-		},
-		{
-			name:         "whitespace trimmed",
-			sonarrURLs:   " http://sonarr:8989 , http://sonarr2:8989 ",
-			sonarrTokens: " token1 , token2 ",
-			validateConfig: func(t *testing.T, c Config) {
-				if c.SonarrURLs[0] != "http://sonarr:8989" {
-					t.Errorf("SonarrURLs[0] = %q, want whitespace trimmed", c.SonarrURLs[0])
-				}
-				if c.SonarrTokens[0] != "token1" {
-					t.Errorf("SonarrTokens[0] = %q, want whitespace trimmed", c.SonarrTokens[0])
-				}
-			},
-		},
+func TestBuildFeedToolConfig(t *testing.T) {
+	// nil config returns defaults
+	cfg := BuildFeedToolConfig(nil)
+	if cfg.Timeout != 10*time.Second {
+		t.Errorf("nil config: Timeout = %v, want 10s", cfg.Timeout)
+	}
+	if cfg.PollInterval != 5*time.Second {
+		t.Errorf("nil config: PollInterval = %v, want 5s", cfg.PollInterval)
+	}
+	if cfg.HistoryWindow != 1*time.Hour {
+		t.Errorf("nil config: HistoryWindow = %v, want 1h", cfg.HistoryWindow)
+	}
+	if cfg.MaxEvents != 50 {
+		t.Errorf("nil config: MaxEvents = %d, want 50", cfg.MaxEvents)
+	}
+	if !cfg.ShowGrabbed {
+		t.Errorf("nil config: ShowGrabbed = false, want true")
+	}
+	if !cfg.ShowImported {
+		t.Errorf("nil config: ShowImported = false, want true")
+	}
+	if !cfg.ShowFailed {
+		t.Errorf("nil config: ShowFailed = false, want true")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			for k, v := range tt.envVars {
-				os.Setenv(k, v)
-			}
-			defer func() {
-				for k := range tt.envVars {
-					os.Unsetenv(k)
-				}
-			}()
+	// full config
+	tk := &ToolkitConfig{
+		General: GeneralConfig{
+			Timeout: "30s",
+			NoColor: true,
+		},
+		Sonarr: []ArrInstance{
+			{Name: "sonarr1", URL: "http://sonarr:8989", APIKey: "token1"},
+		},
+		Radarr: []ArrInstance{
+			{Name: "radarr1", URL: "http://radarr:7878", APIKey: "token2"},
+		},
+		ArrFeed: FeedConfig{
+			PollInterval:  "10s",
+			HistoryWindow: "2h",
+			ShowGrabbed:   false,
+			ShowImported:  true,
+			ShowFailed:    false,
+			ShowDeleted:   true,
+			ShowIgnored:   true,
+			MaxEvents:     25,
+		},
+	}
+	cfg = BuildFeedToolConfig(tk)
+	if cfg.Timeout != 30*time.Second {
+		t.Errorf("Timeout = %v, want 30s", cfg.Timeout)
+	}
+	if !cfg.NoColor {
+		t.Errorf("NoColor = false, want true")
+	}
+	if len(cfg.SonarrInstances) != 1 {
+		t.Errorf("len(SonarrInstances) = %d, want 1", len(cfg.SonarrInstances))
+	}
+	if cfg.SonarrInstances[0].Name != "sonarr1" {
+		t.Errorf("SonarrInstances[0].Name = %q, want %q", cfg.SonarrInstances[0].Name, "sonarr1")
+	}
+	if len(cfg.RadarrInstances) != 1 {
+		t.Errorf("len(RadarrInstances) = %d, want 1", len(cfg.RadarrInstances))
+	}
+	if cfg.PollInterval != 10*time.Second {
+		t.Errorf("PollInterval = %v, want 10s", cfg.PollInterval)
+	}
+	if cfg.HistoryWindow != 2*time.Hour {
+		t.Errorf("HistoryWindow = %v, want 2h", cfg.HistoryWindow)
+	}
+	if cfg.ShowGrabbed {
+		t.Errorf("ShowGrabbed = true, want false")
+	}
+	if !cfg.ShowImported {
+		t.Errorf("ShowImported = false, want true")
+	}
+	if cfg.ShowFailed {
+		t.Errorf("ShowFailed = true, want false")
+	}
+	if !cfg.ShowDeleted {
+		t.Errorf("ShowDeleted = false, want true")
+	}
+	if !cfg.ShowIgnored {
+		t.Errorf("ShowIgnored = false, want true")
+	}
+	if cfg.MaxEvents != 25 {
+		t.Errorf("MaxEvents = %d, want 25", cfg.MaxEvents)
+	}
 
-			config := loadConfig(
-				tt.sonarrURLs,
-				tt.sonarrTokens,
-				tt.radarrURLs,
-				tt.radarrTokens,
-				5*time.Second,
-				1*time.Hour,
-				30*time.Second,
-				false,
-				false,
-				false,
-				true,
-				true,
-				true,
-				true,
-				false,
-				40,
-			)
+	// max events clamped to 100
+	tk.ArrFeed.MaxEvents = 150
+	cfg = BuildFeedToolConfig(tk)
+	if cfg.MaxEvents != 100 {
+		t.Errorf("MaxEvents = %d, want 100 (clamped)", cfg.MaxEvents)
+	}
 
-			if tt.validateConfig != nil {
-				tt.validateConfig(t, config)
-			}
-		})
+	// invalid duration falls back to default
+	tk.General.Timeout = "invalid"
+	cfg = BuildFeedToolConfig(tk)
+	if cfg.Timeout != 10*time.Second {
+		t.Errorf("invalid Timeout = %v, want 10s (fallback)", cfg.Timeout)
 	}
 }
 
@@ -938,22 +925,22 @@ func TestEventSorting(t *testing.T) {
 func TestGetColorFunc(t *testing.T) {
 	tests := []struct {
 		name     string
-		config   Config
+		config   FeedToolConfig
 		expected string
 	}{
 		{
 			name:     "color enabled",
-			config:   Config{NoColor: false, JSON: false},
+			config:   FeedToolConfig{NoColor: false, JSON: false},
 			expected: ColorRed,
 		},
 		{
 			name:     "no-color flag",
-			config:   Config{NoColor: true, JSON: false},
+			config:   FeedToolConfig{NoColor: true, JSON: false},
 			expected: "",
 		},
 		{
 			name:     "json mode",
-			config:   Config{NoColor: false, JSON: true},
+			config:   FeedToolConfig{NoColor: false, JSON: true},
 			expected: "",
 		},
 	}
