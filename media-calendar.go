@@ -1,48 +1,38 @@
 //go:build mediacalendar
-// +build mediacalendar
 
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
+	"os/signal"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/olekukonko/tablewriter"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 )
 
-// ANSI color codes
 const (
-	ColorReset   = "\033[0m"
-	ColorRed     = "\033[0;31m"
-	ColorGreen   = "\033[0;32m"
-	ColorYellow  = "\033[0;33m"
-	ColorBlue    = "\033[0;34m"
-	ColorMagenta = "\033[0;35m"
-	ColorCyan    = "\033[0;36m"
-	ColorBold    = "\033[1m"
-	ColorOrange  = "\033[0;33m" // Using yellow as orange approximation
+	minComfortableColumnWidth = 45
+	minShowTitleLength        = 15
+	minEpisodeTitleLength     = 10
+	minMovieTitleLength       = 20
+	minTerminalWidth          = 40
+	maxDisplayPerShow         = 2
+	maxDisplayPerShowVertical = 3
 )
 
-// Layout and formatting constants
-const (
-	minComfortableColumnWidth = 45 // Minimum column width for readable content
-	minShowTitleLength        = 15 // Minimum show title length before truncation
-	minEpisodeTitleLength     = 10 // Minimum episode title length before truncation
-	minMovieTitleLength       = 20 // Minimum movie title length before truncation
-	minTerminalWidth          = 40 // Minimum terminal width before falling back to vertical layout
-)
-
-// Sonarr API structures
 type SonarrEpisode struct {
 	SeriesID      int       `json:"seriesId"`
 	EpisodeID     int       `json:"id"`
@@ -62,7 +52,6 @@ type Series struct {
 	SeasonCount int    `json:"seasonCount"`
 }
 
-// Radarr API structures
 type RadarrMovie struct {
 	ID          int    `json:"id"`
 	Title       string `json:"title"`
@@ -74,7 +63,6 @@ type RadarrMovie struct {
 	HasFile     bool   `json:"hasFile"`
 }
 
-// Queue structures (shared between Sonarr/Radarr)
 type QueueResponse struct {
 	TotalRecords int         `json:"totalRecords"`
 	Records      []QueueItem `json:"records"`
@@ -92,11 +80,10 @@ type StatusMessage struct {
 	Messages []string `json:"messages"`
 }
 
-// Unified calendar item
 type CalendarItem struct {
-	Type           string // "episode" or "movie"
-	Title          string // Episode or movie title
-	ShowTitle      string // For episodes: series name
+	Type           string
+	Title          string
+	ShowTitle      string
 	Year           int
 	Season         int
 	Episode        int
@@ -104,33 +91,32 @@ type CalendarItem struct {
 	HasFile        bool
 	Monitored      bool
 	IsPremiere     bool
-	SourceInstance string // Which Sonarr/Radarr instance
+	SourceInstance string
 }
 
-// Config holds the application configuration
-type Config struct {
-	SonarrURLs   []string
-	SonarrTokens []string
-	RadarrURLs   []string
-	RadarrTokens []string
-	Timeout      time.Duration
-	Days         int
-	DaysPast     int
-	NoColor      bool
-	JSONOutput   bool
-	WatchMode    bool
-	WatchSeconds int
-	Debug        bool
+type CalendarToolConfig struct {
+	SonarrInstances []ArrInstance
+	RadarrInstances []ArrInstance
+	Timeout         time.Duration
+	Days            int
+	DaysPast        int
+	NoColor         bool
+	JSONOutput      bool
+	WatchMode       bool
+	WatchSeconds    int
+	Debug           bool
+	NoBanner        bool
+	Quiet           bool
+	Filter          string
+	MonitoredOnly   bool
 }
 
-// QueueIssue represents a service with queue problems
 type QueueIssue struct {
 	ServiceName string
 	URL         string
 	Count       int
 }
 
-// Summary holds JSON output structure
 type Summary struct {
 	StartDate   string         `json:"start_date"`
 	EndDate     string         `json:"end_date"`
@@ -144,202 +130,351 @@ type Summary struct {
 	Items       []CalendarItem `json:"items"`
 }
 
+type fetchEpisodeResult struct {
+	Instance string
+	Episodes []SonarrEpisode
+	Err      error
+}
+
+type fetchMovieResult struct {
+	Instance string
+	Movies   []RadarrMovie
+	Err      error
+}
+
+type fetchQueueResult struct {
+	Instance string
+	Queue    *QueueResponse
+	Err      error
+}
+
+func BuildCalendarToolConfig(tk *ToolkitConfig) CalendarToolConfig {
+	cfg := CalendarToolConfig{}
+	if tk == nil {
+		cfg.Timeout = 10 * time.Second
+		cfg.Days = 1
+		cfg.WatchSeconds = 300
+		return cfg
+	}
+
+	dur, err := time.ParseDuration(tk.General.Timeout)
+	if err != nil || dur <= 0 {
+		dur = 10 * time.Second
+	}
+	cfg.Timeout = dur
+	cfg.NoColor = tk.General.NoColor
+
+	cfg.SonarrInstances = slices.Clone(tk.Sonarr)
+	cfg.RadarrInstances = slices.Clone(tk.Radarr)
+
+	if tk.MediaCalendar.Days > 0 {
+		cfg.Days = tk.MediaCalendar.Days
+	} else {
+		cfg.Days = 1
+	}
+	cfg.DaysPast = tk.MediaCalendar.DaysPast
+	if tk.MediaCalendar.WatchInterval > 0 {
+		cfg.WatchSeconds = tk.MediaCalendar.WatchInterval
+	} else {
+		cfg.WatchSeconds = 300
+	}
+	cfg.Debug = tk.MediaCalendar.Debug
+
+	return cfg
+}
+
+func calculateDateRange(days, daysPast int) (start, end time.Time) {
+	now := time.Now()
+	start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if daysPast > 0 {
+		start = start.AddDate(0, 0, -daysPast)
+	}
+	end = start.AddDate(0, 0, days+daysPast)
+	return start, end
+}
+
 func main() {
-	// Command line flags
-	var (
-		sonarrURLs   = flag.String("sonarr-urls", "", "Comma-separated Sonarr URLs")
-		sonarrTokens = flag.String("sonarr-tokens", "", "Comma-separated Sonarr API tokens")
-		radarrURLs   = flag.String("radarr-urls", "", "Comma-separated Radarr URLs")
-		radarrTokens = flag.String("radarr-tokens", "", "Comma-separated Radarr API tokens")
-		timeout      = flag.Duration("timeout", 10*time.Second, "Connection timeout")
-		days         = flag.Int("days", 1, "Number of days to display (1 = today only)")
-		daysPast     = flag.Int("days-past", 0, "Number of days in the past to display (0 = no past days)")
-		noColor      = flag.Bool("no-color", false, "Disable colored output")
-		jsonOutput   = flag.Bool("json", false, "Output in JSON format")
-		watchMode    = flag.Bool("watch", false, "Continuously monitor calendar")
-		watchSeconds = flag.Int("interval", 300, "Watch mode refresh interval in seconds")
-		debug        = flag.Bool("debug", false, "Enable debug logging (shows API URLs)")
-	)
+	tk, err := LoadToolkitConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+	cfg := BuildCalendarToolConfig(tk)
+
+	days := flag.Int("days", cfg.Days, "Number of days to display")
+	daysPast := flag.Int("days-past", cfg.DaysPast, "Number of past days to include")
+	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP connection timeout")
+	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
+	jsonOutput := flag.Bool("json", false, "Output in JSON format")
+	watchMode := flag.Bool("watch", false, "Continuously monitor calendar")
+	watchSeconds := flag.Int("interval", cfg.WatchSeconds, "Watch mode refresh interval in seconds")
+	debug := flag.Bool("debug", cfg.Debug, "Enable debug logging")
+	noBanner := flag.Bool("no-banner", false, "Suppress the banner header")
+	quiet := flag.Bool("quiet", false, "Suppress queue warnings")
+	filter := flag.String("filter", "", "Filter: missing,available,premieres,monitored (comma-separated)")
+	monitoredOnly := flag.Bool("monitored-only", false, "Only show monitored items")
 	flag.Parse()
 
-	// Load configuration
-	config := loadConfig(*sonarrURLs, *sonarrTokens, *radarrURLs, *radarrTokens,
-		*timeout, *days, *daysPast, *noColor, *jsonOutput, *watchMode, *watchSeconds, *debug)
+	cfg.Days = *days
+	cfg.DaysPast = *daysPast
+	cfg.Timeout = *timeout
+	cfg.NoColor = *noColor || *jsonOutput
+	cfg.JSONOutput = *jsonOutput
+	cfg.WatchMode = *watchMode
+	cfg.WatchSeconds = *watchSeconds
+	cfg.Debug = *debug
+	cfg.NoBanner = *noBanner
+	cfg.Quiet = *quiet
+	cfg.Filter = *filter
+	cfg.MonitoredOnly = *monitoredOnly
 
-	// Validate configuration
-	if len(config.SonarrURLs) == 0 && len(config.RadarrURLs) == 0 {
+	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
 		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
-		fmt.Fprintf(os.Stderr, "Please set SONARR_URLS/SONARR_TOKENS or RADARR_URLS/RADARR_TOKENS environment variables\n")
-		fmt.Fprintf(os.Stderr, "Or use -sonarr-urls/-sonarr-tokens or -radarr-urls/-radarr-tokens flags\n")
+		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
 		os.Exit(1)
 	}
 
-	// Watch mode: continuously monitor
-	if config.WatchMode {
+	if cfg.WatchMode {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
 		for {
-			clearScreen()
-			if err := displayCalendar(config); err != nil {
+			fmt.Print(AnsiClearScreen + AnsiHomeCursor)
+			if err := displayCalendar(ctx, cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
-			time.Sleep(time.Duration(config.WatchSeconds) * time.Second)
+			select {
+			case <-ctx.Done():
+				fmt.Println("\nShutting down.")
+				return
+			case <-time.After(time.Duration(cfg.WatchSeconds) * time.Second):
+			}
 		}
 	}
 
-	// Single execution
-	if err := displayCalendar(config); err != nil {
+	ctx := context.Background()
+	if err := displayCalendar(ctx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func loadConfig(sonarrURLsFlag, sonarrTokensFlag, radarrURLsFlag, radarrTokensFlag string,
-	timeout time.Duration, days int, daysPast int, noColor, jsonOutput, watchMode bool, watchSeconds int, debug bool) Config {
-
-	config := Config{
-		Timeout:      timeout,
-		Days:         days,
-		DaysPast:     daysPast,
-		NoColor:      noColor || jsonOutput,
-		JSONOutput:   jsonOutput,
-		WatchMode:    watchMode,
-		WatchSeconds: watchSeconds,
-		Debug:        debug || os.Getenv("DEBUG") == "true" || os.Getenv("DEBUG") == "1",
-	}
-
-	// Try to load from .env file first
-	// Check current directory first, then fallback to /opt/apps/compose/.env
-	envPaths := []string{".env", "/opt/apps/compose/.env"}
-	for _, envPath := range envPaths {
-		if _, err := os.Stat(envPath); err == nil {
-			loadEnvFile(envPath, &config)
-			break // Use first found .env file
-		}
-	}
-
-	// Environment variables override .env file
-	// Support both plural (SONARR_URLS) and singular (SONARR_URL) variants
-	if envURLs := os.Getenv("SONARR_URLS"); envURLs != "" {
-		config.SonarrURLs = parseCommaSeparated(envURLs)
-	} else if envURL := os.Getenv("SONARR_URL"); envURL != "" {
-		// Fallback to singular SONARR_URL
-		config.SonarrURLs = []string{envURL}
-	}
-
-	if envTokens := os.Getenv("SONARR_TOKENS"); envTokens != "" {
-		config.SonarrTokens = parseCommaSeparated(envTokens)
-	} else if envToken := os.Getenv("SONARR_API_TOKEN"); envToken != "" {
-		// Fallback to singular SONARR_API_TOKEN
-		config.SonarrTokens = []string{envToken}
-	}
-
-	if envURLs := os.Getenv("RADARR_URLS"); envURLs != "" {
-		config.RadarrURLs = parseCommaSeparated(envURLs)
-	} else if envURL := os.Getenv("RADARR_URL"); envURL != "" {
-		// Fallback to singular RADARR_URL
-		config.RadarrURLs = []string{envURL}
-	}
-
-	if envTokens := os.Getenv("RADARR_TOKENS"); envTokens != "" {
-		config.RadarrTokens = parseCommaSeparated(envTokens)
-	} else if envToken := os.Getenv("RADARR_API_TOKEN"); envToken != "" {
-		// Fallback to singular RADARR_API_TOKEN
-		config.RadarrTokens = []string{envToken}
-	}
-
-	// Command line flags override everything
-	if sonarrURLsFlag != "" {
-		config.SonarrURLs = parseCommaSeparated(sonarrURLsFlag)
-	}
-	if sonarrTokensFlag != "" {
-		config.SonarrTokens = parseCommaSeparated(sonarrTokensFlag)
-	}
-	if radarrURLsFlag != "" {
-		config.RadarrURLs = parseCommaSeparated(radarrURLsFlag)
-	}
-	if radarrTokensFlag != "" {
-		config.RadarrTokens = parseCommaSeparated(radarrTokensFlag)
-	}
-
-	// Clean URLs
-	for i := range config.SonarrURLs {
-		config.SonarrURLs[i] = strings.TrimSuffix(config.SonarrURLs[i], "/")
-	}
-	for i := range config.RadarrURLs {
-		config.RadarrURLs[i] = strings.TrimSuffix(config.RadarrURLs[i], "/")
-	}
-
-	return config
-}
-
-func loadEnvFile(path string, config *Config) {
-	data, err := os.ReadFile(path)
+func displayCalendar(ctx context.Context, cfg CalendarToolConfig) error {
+	items, queueIssues, err := aggregateCalendar(ctx, cfg)
 	if err != nil {
-		return
+		return err
 	}
 
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
+	if cfg.JSONOutput {
+		return displayJSON(items, queueIssues, cfg)
+	}
+
+	return displayTerminal(items, queueIssues, cfg)
+}
+
+func aggregateCalendar(ctx context.Context, cfg CalendarToolConfig) ([]CalendarItem, []QueueIssue, error) {
+	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
+
+	client := &http.Client{
+		Timeout: cfg.Timeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        20,
+			IdleConnTimeout:     30 * time.Second,
+			DisableCompression:  false,
+		},
+	}
+
+	items := make([]CalendarItem, 0)
+	queueIssues := make([]QueueIssue, 0)
+	seenEpisodes := make(map[string]bool)
+	seenMovies := make(map[string]bool)
+	var mu sync.Mutex
+	var qMu sync.Mutex
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	// Fetch Sonarr instances concurrently
+	for _, inst := range cfg.SonarrInstances {
+		inst := inst
+		g.Go(func() error {
+			return fetchSonarrInstance(gCtx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenEpisodes)
+		})
+	}
+
+	// Fetch Radarr instances concurrently
+	for _, inst := range cfg.RadarrInstances {
+		inst := inst
+		g.Go(func() error {
+			return fetchRadarrInstance(gCtx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenMovies)
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+	}
+
+	// Sort items by air time
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].AirTime.Before(items[j].AirTime)
+	})
+
+	return items, queueIssues, nil
+}
+
+func fetchSonarrInstance(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, debug)
+	if err != nil {
+		return fmt.Errorf("Sonarr %s: %w", inst.Name, err)
+	}
+
+	mu.Lock()
+	for _, ep := range episodes {
+		if ep.Series == nil {
+			continue
+		}
+		key := fmt.Sprintf("%s-S%02dE%02d", ep.Series.Title, ep.SeasonNumber, ep.EpisodeNumber)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		item := CalendarItem{
+			Type:           "episode",
+			Title:          ep.Title,
+			ShowTitle:      ep.Series.Title,
+			Year:           ep.Series.Year,
+			Season:         ep.SeasonNumber,
+			Episode:        ep.EpisodeNumber,
+			AirTime:        ep.AirDateUtc,
+			HasFile:        ep.HasFile,
+			Monitored:      ep.Monitored,
+			IsPremiere:     ep.SeasonNumber == 1 && ep.EpisodeNumber == 1,
+			SourceInstance: inst.Name,
+		}
+		*items = append(*items, item)
+	}
+	mu.Unlock()
+
+	// Check queue
+	queue, err := fetchQueue(ctx, client, inst, debug)
+	if err != nil {
+		return nil // queue check is best-effort
+	}
+
+	if queue != nil {
+		errorCount := 0
+		for _, qItem := range queue.Records {
+			if qItem.TrackedState == "importFailed" || qItem.TrackedState == "importPending" ||
+				len(qItem.StatusMessages) > 0 {
+				errorCount++
+			}
+		}
+		if errorCount > 0 {
+			qMu.Lock()
+			*queueIssues = append(*queueIssues, QueueIssue{
+				ServiceName: inst.Name,
+				URL:         inst.URL + "/activity/queue",
+				Count:       errorCount,
+			})
+			qMu.Unlock()
+		}
+	}
+
+	return nil
+}
+
+func fetchRadarrInstance(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, debug)
+	if err != nil {
+		return fmt.Errorf("Radarr %s: %w", inst.Name, err)
+	}
+
+	mu.Lock()
+	for _, movie := range movies {
+		key := fmt.Sprintf("%s-%d", movie.Title, movie.Year)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		var releaseTime time.Time
+		if movie.DigitalDate != "" {
+			releaseTime, err = time.Parse("2006-01-02T15:04:05Z", movie.DigitalDate)
+		}
+		if releaseTime.IsZero() && movie.ReleaseDate != "" {
+			releaseTime, err = time.Parse("2006-01-02T15:04:05Z", movie.ReleaseDate)
+		}
+		if releaseTime.IsZero() && movie.InCinemas != "" {
+			releaseTime, err = time.Parse("2006-01-02T15:04:05Z", movie.InCinemas)
+		}
+		if releaseTime.IsZero() {
+			if debug {
+				fmt.Fprintf(os.Stderr, "DEBUG: Skipping %s (%d) - no valid release date\n", movie.Title, movie.Year)
+			}
 			continue
 		}
 
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
+		item := CalendarItem{
+			Type:           "movie",
+			Title:          movie.Title,
+			Year:           movie.Year,
+			AirTime:        releaseTime,
+			HasFile:        movie.HasFile,
+			Monitored:      movie.Monitored,
+			IsPremiere:     false,
+			SourceInstance: inst.Name,
 		}
+		*items = append(*items, item)
+	}
+	mu.Unlock()
 
-		key := strings.TrimSpace(parts[0])
-		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+	queue, err := fetchQueue(ctx, client, inst, debug)
+	if err != nil {
+		return nil
+	}
 
-		switch key {
-		case "SONARR_URLS":
-			config.SonarrURLs = parseCommaSeparated(value)
-		case "SONARR_TOKENS":
-			config.SonarrTokens = parseCommaSeparated(value)
-		case "RADARR_URLS":
-			config.RadarrURLs = parseCommaSeparated(value)
-		case "RADARR_TOKENS":
-			config.RadarrTokens = parseCommaSeparated(value)
+	if queue != nil {
+		errorCount := 0
+		for _, qItem := range queue.Records {
+			if qItem.TrackedState == "importFailed" || qItem.TrackedState == "importPending" ||
+				len(qItem.StatusMessages) > 0 {
+				errorCount++
+			}
+		}
+		if errorCount > 0 {
+			qMu.Lock()
+			*queueIssues = append(*queueIssues, QueueIssue{
+				ServiceName: inst.Name,
+				URL:         inst.URL + "/activity/queue",
+				Count:       errorCount,
+			})
+			qMu.Unlock()
 		}
 	}
+
+	return nil
 }
 
-func parseCommaSeparated(s string) []string {
-	parts := strings.Split(s, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return result
-}
-
-func fetchSonarrCalendar(url, token string, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
+func fetchSonarrCalendar(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s&includeSeries=true",
-		url, start.Format("2006-01-02"), end.Format("2006-01-02"))
+		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "DEBUG: Fetching Sonarr calendar from: %s\n", apiURL)
+		fmt.Fprintf(os.Stderr, "DEBUG: Sonarr %s: GET %s\n", inst.Name, apiURL)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("X-Api-Key", inst.APIKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Sonarr at %s: %w", url, err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Sonarr returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("returned status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -355,29 +490,28 @@ func fetchSonarrCalendar(url, token string, start, end time.Time, debug bool) ([
 	return episodes, nil
 }
 
-func fetchRadarrCalendar(url, token string, start, end time.Time, debug bool) ([]RadarrMovie, error) {
+func fetchRadarrCalendar(ctx context.Context, client *http.Client, inst ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s",
-		url, start.Format("2006-01-02"), end.Format("2006-01-02"))
+		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "DEBUG: Fetching Radarr calendar from: %s\n", apiURL)
+		fmt.Fprintf(os.Stderr, "DEBUG: Radarr %s: GET %s\n", inst.Name, apiURL)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("X-Api-Key", inst.APIKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to Radarr at %s: %w", url, err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Radarr returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("returned status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -393,28 +527,27 @@ func fetchRadarrCalendar(url, token string, start, end time.Time, debug bool) ([
 	return movies, nil
 }
 
-func fetchQueue(url, token string, debug bool) (*QueueResponse, error) {
-	apiURL := fmt.Sprintf("%s/api/v3/queue", url)
+func fetchQueue(ctx context.Context, client *http.Client, inst ArrInstance, debug bool) (*QueueResponse, error) {
+	apiURL := fmt.Sprintf("%s/api/v3/queue?pageSize=1", inst.URL)
 
 	if debug {
-		fmt.Fprintf(os.Stderr, "DEBUG: Fetching queue from: %s\n", apiURL)
+		fmt.Fprintf(os.Stderr, "DEBUG: Queue %s: GET %s\n", inst.Name, apiURL)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", apiURL, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("X-Api-Key", token)
+	req.Header.Set("X-Api-Key", inst.APIKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to queue at %s: %w", url, err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("queue API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("returned status %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -430,194 +563,9 @@ func fetchQueue(url, token string, debug bool) (*QueueResponse, error) {
 	return &queue, nil
 }
 
-func aggregateCalendar(config Config) ([]CalendarItem, []QueueIssue, error) {
+func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg CalendarToolConfig) error {
+	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	// Adjust start date if looking at past days
-	if config.DaysPast > 0 {
-		start = start.AddDate(0, 0, -config.DaysPast)
-	}
-
-	// End date is start + config.Days (total days to display including past)
-	end := start.AddDate(0, 0, config.Days+config.DaysPast)
-
-	items := make([]CalendarItem, 0)
-	queueIssues := make([]QueueIssue, 0)
-
-	// Track seen series/movies for deduplication
-	seenEpisodes := make(map[string]bool)
-	seenMovies := make(map[string]bool)
-
-	// Fetch from all Sonarr instances
-	for i, url := range config.SonarrURLs {
-		if i >= len(config.SonarrTokens) {
-			fmt.Fprintf(os.Stderr, "WARNING: No token for Sonarr instance %s\n", url)
-			continue
-		}
-		token := config.SonarrTokens[i]
-
-		episodes, err := fetchSonarrCalendar(url, token, start, end, config.Debug)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch from Sonarr %s: %v\n", url, err)
-			continue
-		}
-
-		instanceName := fmt.Sprintf("Sonarr-%d", i+1)
-
-		for _, ep := range episodes {
-			if ep.Series == nil {
-				continue
-			}
-
-			// Deduplicate by series title + season + episode
-			key := fmt.Sprintf("%s-S%02dE%02d", ep.Series.Title, ep.SeasonNumber, ep.EpisodeNumber)
-			if seenEpisodes[key] {
-				continue
-			}
-			seenEpisodes[key] = true
-
-			// Detect premiere
-			isPremiere := ep.SeasonNumber == 1 && ep.EpisodeNumber == 1
-
-			item := CalendarItem{
-				Type:           "episode",
-				Title:          ep.Title,
-				ShowTitle:      ep.Series.Title,
-				Year:           ep.Series.Year,
-				Season:         ep.SeasonNumber,
-				Episode:        ep.EpisodeNumber,
-				AirTime:        ep.AirDateUtc,
-				HasFile:        ep.HasFile,
-				Monitored:      ep.Monitored,
-				IsPremiere:     isPremiere,
-				SourceInstance: instanceName,
-			}
-			items = append(items, item)
-		}
-
-		// Check queue
-		queue, err := fetchQueue(url, token, config.Debug)
-		if err == nil && queue != nil {
-			errorCount := 0
-			for _, item := range queue.Records {
-				if item.TrackedState == "importFailed" || item.TrackedState == "importPending" ||
-					len(item.StatusMessages) > 0 {
-					errorCount++
-				}
-			}
-			if errorCount > 0 {
-				queueIssues = append(queueIssues, QueueIssue{
-					ServiceName: instanceName,
-					URL:         url + "/activity/queue",
-					Count:       errorCount,
-				})
-			}
-		}
-	}
-
-	// Fetch from all Radarr instances
-	for i, url := range config.RadarrURLs {
-		if i >= len(config.RadarrTokens) {
-			fmt.Fprintf(os.Stderr, "WARNING: No token for Radarr instance %s\n", url)
-			continue
-		}
-		token := config.RadarrTokens[i]
-
-		movies, err := fetchRadarrCalendar(url, token, start, end, config.Debug)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "WARNING: Failed to fetch from Radarr %s: %v\n", url, err)
-			continue
-		}
-
-		instanceName := fmt.Sprintf("Radarr-%d", i+1)
-
-		for _, movie := range movies {
-			// Deduplicate by title + year
-			key := fmt.Sprintf("%s-%d", movie.Title, movie.Year)
-			if seenMovies[key] {
-				continue
-			}
-			seenMovies[key] = true
-
-			// Determine release date (prefer digital > physical > cinema)
-			var releaseTime time.Time
-			if movie.DigitalDate != "" {
-				releaseTime, _ = time.Parse("2006-01-02T15:04:05Z", movie.DigitalDate)
-			} else if movie.ReleaseDate != "" {
-				releaseTime, _ = time.Parse("2006-01-02T15:04:05Z", movie.ReleaseDate)
-			} else if movie.InCinemas != "" {
-				releaseTime, _ = time.Parse("2006-01-02T15:04:05Z", movie.InCinemas)
-			}
-
-			if releaseTime.IsZero() {
-				continue
-			}
-
-			item := CalendarItem{
-				Type:           "movie",
-				Title:          movie.Title,
-				Year:           movie.Year,
-				AirTime:        releaseTime,
-				HasFile:        movie.HasFile,
-				Monitored:      movie.Monitored,
-				IsPremiere:     false,
-				SourceInstance: instanceName,
-			}
-			items = append(items, item)
-		}
-
-		// Check queue
-		queue, err := fetchQueue(url, token, config.Debug)
-		if err == nil && queue != nil {
-			errorCount := 0
-			for _, item := range queue.Records {
-				if item.TrackedState == "importFailed" || item.TrackedState == "importPending" ||
-					len(item.StatusMessages) > 0 {
-					errorCount++
-				}
-			}
-			if errorCount > 0 {
-				queueIssues = append(queueIssues, QueueIssue{
-					ServiceName: instanceName,
-					URL:         url + "/activity/queue",
-					Count:       errorCount,
-				})
-			}
-		}
-	}
-
-	// Sort items by air time
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].AirTime.Before(items[j].AirTime)
-	})
-
-	return items, queueIssues, nil
-}
-
-func displayCalendar(config Config) error {
-	items, queueIssues, err := aggregateCalendar(config)
-	if err != nil {
-		return err
-	}
-
-	if config.JSONOutput {
-		return displayJSON(items, queueIssues, config)
-	}
-
-	return displayTerminal(items, queueIssues, config)
-}
-
-func displayJSON(items []CalendarItem, queueIssues []QueueIssue, config Config) error {
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	// Adjust start date if looking at past days
-	if config.DaysPast > 0 {
-		start = start.AddDate(0, 0, -config.DaysPast)
-	}
-
-	end := start.AddDate(0, 0, config.Days+config.DaysPast)
 
 	episodes := 0
 	movies := 0
@@ -662,16 +610,18 @@ type calendarLayout struct {
 	color          func(string) string
 }
 
-func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Config) error {
+func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, cfg CalendarToolConfig) error {
 	color := func(code string) string {
-		if config.NoColor {
+		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	// Display queue warning banner if issues exist
-	if len(queueIssues) > 0 {
+	now := time.Now()
+	start, _ := calculateDateRange(cfg.Days, cfg.DaysPast)
+
+	if !cfg.Quiet && len(queueIssues) > 0 {
 		totalIssues := 0
 		for _, issue := range queueIssues {
 			totalIssues += issue.Count
@@ -686,74 +636,142 @@ func displayTerminal(items []CalendarItem, queueIssues []QueueIssue, config Conf
 		fmt.Println()
 	}
 
-	// Display header
-	fmt.Printf("%s%s=== Media Calendar ===%s\n\n",
-		color(ColorBold), color(ColorCyan), color(ColorReset))
-
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-
-	// Adjust start date if looking at past days
-	if config.DaysPast > 0 {
-		start = start.AddDate(0, 0, -config.DaysPast)
+	if !cfg.NoBanner {
+		fmt.Printf("%s%s=== Media Calendar ===%s\n\n",
+			color(ColorBold), color(ColorCyan), color(ColorReset))
 	}
 
-	// Get terminal width
+	items = applyFilters(items, cfg)
+
+	if len(items) == 0 {
+		fmt.Printf("%sNo items match the current filters.%s\n",
+			color(ColorGreen), color(ColorReset))
+		return nil
+	}
+
 	termWidth := getTerminalWidth()
-
-	// Minimum width for vertical fallback
 	if termWidth < minTerminalWidth {
-		return displayVertical(items, config, now, start)
+		return displayVertical(items, cfg, now, start)
 	}
 
-	// Calculate how many columns (days) we can fit
-	totalDays := config.Days + config.DaysPast
+	totalDays := cfg.Days + cfg.DaysPast
 	numColumns, widthPerColumn := calculateColumnLayout(termWidth, totalDays)
 
-	// Group items by day
 	dayGroups := make(map[string][]CalendarItem)
 	for _, item := range items {
 		dayKey := item.AirTime.Format("2006-01-02")
 		dayGroups[dayKey] = append(dayGroups[dayKey], item)
 	}
 
-	// Render horizontal calendar
 	layout := calendarLayout{
 		numColumns:     numColumns,
 		widthPerColumn: widthPerColumn,
 		totalDays:      totalDays,
 		color:          color,
 	}
-	return renderHorizontalCalendar(dayGroups, config, now, start, layout)
+	if err := renderHorizontalCalendar(dayGroups, cfg, now, start, layout); err != nil {
+		return err
+	}
+
+	displaySummary(items, now, color)
+
+	return nil
+}
+
+func applyFilters(items []CalendarItem, cfg CalendarToolConfig) []CalendarItem {
+	if cfg.MonitoredOnly {
+		filtered := make([]CalendarItem, 0, len(items))
+		for _, item := range items {
+			if item.Monitored {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	if cfg.Filter != "" {
+		filters := strings.Split(cfg.Filter, ",")
+		filtered := make([]CalendarItem, 0, len(items))
+		for _, item := range items {
+			match := false
+			for _, f := range filters {
+				switch strings.TrimSpace(strings.ToLower(f)) {
+				case "missing":
+					if !item.HasFile && item.AirTime.Before(time.Now()) {
+						match = true
+					}
+				case "available":
+					if item.HasFile {
+						match = true
+					}
+				case "premieres":
+					if item.IsPremiere {
+						match = true
+					}
+				case "monitored":
+					if item.Monitored {
+						match = true
+					}
+				}
+				if match {
+					break
+				}
+			}
+			if match {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	return items
+}
+
+func displaySummary(items []CalendarItem, now time.Time, color func(string) string) {
+	episodes := 0
+	movies := 0
+	available := 0
+	missing := 0
+	future := 0
+
+	for _, item := range items {
+		if item.Type == "episode" {
+			episodes++
+		} else {
+			movies++
+		}
+		if item.HasFile {
+			available++
+		} else if item.AirTime.Before(now) {
+			missing++
+		}
+	}
+	future = len(items) - available - missing
+
+	fmt.Printf("\n%s%s%d items%s (%d episodes, %d movies) — ",
+		color(ColorBold), color(ColorCyan), len(items), color(ColorReset), episodes, movies)
+	fmt.Printf("%s%d available%s, %s%d missing%s, %d upcoming\n",
+		color(ColorGreen), available, color(ColorReset),
+		color(ColorRed), missing, color(ColorReset),
+		future)
 }
 
 func getTerminalWidth() int {
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || width <= 0 {
-		return 80 // Default fallback
+		return 80
 	}
 	return width
 }
 
-// calculateColumnLayout determines the optimal number of columns and width per column
-// based on the terminal width and total number of days to display
 func calculateColumnLayout(termWidth, totalDays int) (numColumns, widthPerColumn int) {
-	// Start with all days if possible
 	numColumns = totalDays
 
-	// Calculate the available width per column
-	// tablewriter uses: | col1 | col2 | col3 |
-	// That's: 1 (left border) + (numCols * (1 space + content + 1 space + 1 border))
-	// Simplified: 1 + numCols * 3 + total_content_width
-
-	// Work backwards: given terminal width, how much space per column?
 	tableBorderOverhead := 1 + (numColumns * 3)
 	availableContentWidth := termWidth - tableBorderOverhead
 
 	if availableContentWidth > 0 {
 		widthPerColumn = availableContentWidth / numColumns
-
-		// If each column would be too narrow, reduce number of columns
 		for widthPerColumn < minComfortableColumnWidth && numColumns > 1 {
 			numColumns--
 			tableBorderOverhead = 1 + (numColumns * 3)
@@ -764,15 +782,13 @@ func calculateColumnLayout(termWidth, totalDays int) (numColumns, widthPerColumn
 		}
 	}
 
-	// Ensure at least 1 column
 	if numColumns < 1 {
 		numColumns = 1
 	}
 
-	// Calculate final width per column for formatting decisions
 	finalBorderOverhead := 1 + (numColumns * 3)
 	finalContentWidth := termWidth - finalBorderOverhead
-	widthPerColumn = 60 // default
+	widthPerColumn = 60
 	if finalContentWidth > 0 && numColumns > 0 {
 		widthPerColumn = finalContentWidth / numColumns
 	}
@@ -781,6 +797,9 @@ func calculateColumnLayout(termWidth, totalDays int) (numColumns, widthPerColumn
 }
 
 func truncateText(text string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
 	if len(text) <= maxLen {
 		return text
 	}
@@ -790,8 +809,7 @@ func truncateText(text string, maxLen int) string {
 	return text[:maxLen-3] + "..."
 }
 
-func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config, now time.Time, start time.Time, layout calendarLayout) error {
-	// Collect all headers and all day columns
+func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, cfg CalendarToolConfig, now time.Time, start time.Time, layout calendarLayout) error {
 	allHeaders := make([]string, 0)
 	allDayColumns := make([][]string, 0)
 	maxRows := 0
@@ -801,11 +819,9 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 		dayKey := currentDay.Format("2006-01-02")
 		dayItems := dayGroups[dayKey]
 
-		// Add header
 		allHeaders = append(allHeaders, currentDay.Format("Mon 01/02"))
 
-		// Build content for this day
-		content := buildDayContent(dayItems, now, config, layout.color, layout.widthPerColumn)
+		content := buildDayContent(dayItems, now, cfg, layout.color, layout.widthPerColumn)
 		allDayColumns = append(allDayColumns, content)
 
 		if len(content) > maxRows {
@@ -813,18 +829,14 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 		}
 	}
 
-	// If we need to wrap to multiple rows, we need to create sections
-	// But display them as one continuous table by not adding spacing
 	for sectionStart := 0; sectionStart < layout.totalDays; sectionStart += layout.numColumns {
 		sectionEnd := sectionStart + layout.numColumns
 		if sectionEnd > layout.totalDays {
 			sectionEnd = layout.totalDays
 		}
 
-		// Create a table for this section
 		table := tablewriter.NewWriter(os.Stdout)
 
-		// Extract headers for this section
 		sectionHeaders := allHeaders[sectionStart:sectionEnd]
 		headerInterfaces := make([]interface{}, len(sectionHeaders))
 		for i, h := range sectionHeaders {
@@ -832,7 +844,6 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 		}
 		table.Header(headerInterfaces...)
 
-		// Build rows for this section
 		sectionMaxRows := 0
 		for i := sectionStart; i < sectionEnd; i++ {
 			if len(allDayColumns[i]) > sectionMaxRows {
@@ -850,80 +861,66 @@ func renderHorizontalCalendar(dayGroups map[string][]CalendarItem, config Config
 					rowData[col] = ""
 				}
 			}
-			table.Append(rowData...)
+			table.Append(rowData)
 		}
 		table.Render()
-
-		// NO spacing between sections - they should appear attached
 	}
 
 	return nil
 }
 
-func buildDayContent(dayItems []CalendarItem, now time.Time, config Config, color func(string) string, widthPerColumn int) []string {
-	content := make([]string, 0)
-
+func buildDayContent(dayItems []CalendarItem, now time.Time, cfg CalendarToolConfig, color func(string) string, widthPerColumn int) []string {
 	if len(dayItems) == 0 {
-		content = append(content, color(ColorGreen)+"No releases"+color(ColorReset))
-		return content
+		return []string{color(ColorGreen) + "No releases" + color(ColorReset)}
 	}
 
-	// Sort all items by air time first, then by type (episodes before movies), then by season/episode
-	sort.Slice(dayItems, func(i, j int) bool {
-		// Primary sort: air time
-		if !dayItems[i].AirTime.Equal(dayItems[j].AirTime) {
-			return dayItems[i].AirTime.Before(dayItems[j].AirTime)
+	sortedItems := slices.Clone(dayItems)
+
+	sort.Slice(sortedItems, func(i, j int) bool {
+		if !sortedItems[i].AirTime.Equal(sortedItems[j].AirTime) {
+			return sortedItems[i].AirTime.Before(sortedItems[j].AirTime)
 		}
-		// Secondary sort: episodes before movies
-		if dayItems[i].Type != dayItems[j].Type {
-			return dayItems[i].Type == "episode"
+		if sortedItems[i].Type != sortedItems[j].Type {
+			return sortedItems[i].Type == "episode"
 		}
-		// Tertiary sort for episodes: season then episode number
-		if dayItems[i].Type == "episode" {
-			if dayItems[i].Season != dayItems[j].Season {
-				return dayItems[i].Season < dayItems[j].Season
+		if sortedItems[i].Type == "episode" {
+			if sortedItems[i].Season != sortedItems[j].Season {
+				return sortedItems[i].Season < sortedItems[j].Season
 			}
-			return dayItems[i].Episode < dayItems[j].Episode
+			return sortedItems[i].Episode < sortedItems[j].Episode
 		}
-		// For movies, maintain stable order
 		return false
 	})
 
-	// Process items in chronological order with truncation for consecutive same-show episodes
+	content := make([]string, 0)
 	i := 0
-	for i < len(dayItems) {
-		item := dayItems[i]
+	for i < len(sortedItems) {
+		item := sortedItems[i]
 
 		if item.Type == "movie" {
-			content = append(content, formatMovie(item, now, config, color, widthPerColumn))
+			content = append(content, formatMovie(item, now, cfg, color, widthPerColumn))
 			i++
 			continue
 		}
 
-		// For episodes, check if there are consecutive episodes from the same show
 		showStart := i
 		showEnd := i + 1
-		for showEnd < len(dayItems) &&
-			dayItems[showEnd].Type == "episode" &&
-			dayItems[showEnd].ShowTitle == item.ShowTitle {
+		for showEnd < len(sortedItems) &&
+			sortedItems[showEnd].Type == "episode" &&
+			sortedItems[showEnd].ShowTitle == item.ShowTitle {
 			showEnd++
 		}
 		consecutiveCount := showEnd - showStart
 
-		// If multiple consecutive episodes from same show, show first 2 then collapse
-		maxDisplay := 2
-		if consecutiveCount > maxDisplay {
-			// Show first 2
-			for j := showStart; j < showStart+maxDisplay; j++ {
-				content = append(content, formatEpisode(dayItems[j], now, config, color, widthPerColumn))
+		if consecutiveCount > maxDisplayPerShow {
+			for j := showStart; j < showStart+maxDisplayPerShow; j++ {
+				content = append(content, formatEpisode(sortedItems[j], now, cfg, color, widthPerColumn))
 			}
-			// Add truncation
-			remaining := consecutiveCount - maxDisplay
+			remaining := consecutiveCount - maxDisplayPerShow
 			content = append(content, color(ColorCyan)+fmt.Sprintf("  + %d more episodes", remaining)+color(ColorReset))
 		} else {
-			// Show all if only 1-2 consecutive episodes
 			for j := showStart; j < showEnd; j++ {
-				content = append(content, formatEpisode(dayItems[j], now, config, color, widthPerColumn))
+				content = append(content, formatEpisode(sortedItems[j], now, cfg, color, widthPerColumn))
 			}
 		}
 
@@ -933,46 +930,34 @@ func buildDayContent(dayItems []CalendarItem, now time.Time, config Config, colo
 	return content
 }
 
-func formatEpisode(ep CalendarItem, now time.Time, config Config, color func(string) string, widthPerColumn int) string {
-	statusColor := getStatusColor(ep, now, config.NoColor)
+func formatEpisode(ep CalendarItem, now time.Time, cfg CalendarToolConfig, color func(string) string, widthPerColumn int) string {
+	statusColor := getStatusColor(ep, now, cfg.NoColor)
 	timeStr := ep.AirTime.Format("15:04")
 
 	showTitle := ep.ShowTitle
 	episodeTitle := ep.Title
 
-	// Multi-line format:
-	// Line 1: "HH:MM SHOWNAME - S##E##"
-	// Line 2: "       EPISODE_TITLE"
-
-	// Fixed parts for line 1: time(5) + space(1) + " - S##E##"(10) = 16 chars
-	fixedCharsLine1 := 16
+	fixedCharsLine1 := len(timeStr) + 2 + 2 + 2 + 2 + 4 // "HH:MM  " + " - S##E##"
+	fixedCharsLine1 = 16
 	maxShowLen := widthPerColumn - fixedCharsLine1
-
-	// Apply minimum sensible length for show title
 	if maxShowLen < minShowTitleLength {
 		maxShowLen = minShowTitleLength
 	}
 
-	// Truncate show title if needed
 	if len(showTitle) > maxShowLen {
 		showTitle = showTitle[:maxShowLen-3] + "..."
 	}
 
-	// Line 2 has leading spaces (7 chars: "       ") for alignment
-	indentSpaces := "       "
+	indentSpaces := strings.Repeat(" ", len(timeStr)+2)
 	maxEpisodeLen := widthPerColumn - len(indentSpaces)
-
-	// Apply minimum sensible length for episode title
 	if maxEpisodeLen < minEpisodeTitleLength {
 		maxEpisodeLen = minEpisodeTitleLength
 	}
 
-	// Truncate episode title if needed
 	if len(episodeTitle) > maxEpisodeLen {
 		episodeTitle = episodeTitle[:maxEpisodeLen-3] + "..."
 	}
 
-	// Build multi-line format using \n
 	line1 := fmt.Sprintf("%s %s%s - S%02dE%02d%s",
 		timeStr, statusColor, showTitle, ep.Season, ep.Episode, color(ColorReset))
 	line2 := fmt.Sprintf("%s%s%s%s",
@@ -981,56 +966,49 @@ func formatEpisode(ep CalendarItem, now time.Time, config Config, color func(str
 	return line1 + "\n" + line2
 }
 
-func formatMovie(movie CalendarItem, now time.Time, config Config, color func(string) string, widthPerColumn int) string {
-	statusColor := getStatusColor(movie, now, config.NoColor)
+func formatMovie(movie CalendarItem, now time.Time, cfg CalendarToolConfig, color func(string) string, widthPerColumn int) string {
+	statusColor := getStatusColor(movie, now, cfg.NoColor)
 	timeStr := movie.AirTime.Format("15:04")
 
 	title := movie.Title
 
-	// Calculate available space
 	// Format: "HH:MM TITLE (YYYY)"
-	// Fixed parts: time(5) + space(1) + " (####)"(7) = 13 chars
-	fixedChars := 13
+	// Fixed chars: time(5) + space(1) + " ("(2) + year(4) + ")"(1) = len(timeStr) + 8
+	fixedChars := len(timeStr) + 8
 	maxTitleLen := widthPerColumn - fixedChars
 
-	// Only truncate if necessary
-	if maxTitleLen < len(title) {
-		if maxTitleLen < minMovieTitleLength {
-			maxTitleLen = minMovieTitleLength
-		}
-		if len(title) > maxTitleLen {
-			title = title[:maxTitleLen-3] + "..."
-		}
+	if maxTitleLen < minMovieTitleLength {
+		maxTitleLen = minMovieTitleLength
+	}
+
+	if len(title) > maxTitleLen {
+		title = title[:maxTitleLen-3] + "..."
 	}
 
 	return fmt.Sprintf("%s %s%s (%d)%s",
 		timeStr, statusColor, title, movie.Year, color(ColorReset))
 }
 
-func displayVertical(items []CalendarItem, config Config, now time.Time, start time.Time) error {
-	// Fallback to vertical layout for narrow terminals
+func displayVertical(items []CalendarItem, cfg CalendarToolConfig, now time.Time, start time.Time) error {
 	color := func(code string) string {
-		if config.NoColor {
+		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	// Group items by day
 	dayGroups := make(map[string][]CalendarItem)
 	for _, item := range items {
 		dayKey := item.AirTime.Format("2006-01-02")
 		dayGroups[dayKey] = append(dayGroups[dayKey], item)
 	}
 
-	// Display each day
-	totalDaysToDisplay := config.Days + config.DaysPast
+	totalDaysToDisplay := cfg.Days + cfg.DaysPast
 	for d := 0; d < totalDaysToDisplay; d++ {
 		currentDay := start.AddDate(0, 0, d)
 		dayKey := currentDay.Format("2006-01-02")
 		dayItems := dayGroups[dayKey]
 
-		// Day header
 		fmt.Printf("\n%s%s%s%s\n",
 			color(ColorBold), color(ColorCyan),
 			currentDay.Format("Mon 01/02"),
@@ -1046,7 +1024,6 @@ func displayVertical(items []CalendarItem, config Config, now time.Time, start t
 			continue
 		}
 
-		// Group episodes by show for truncation
 		showEpisodes := make(map[string][]CalendarItem)
 		var movieItems []CalendarItem
 
@@ -1058,21 +1035,18 @@ func displayVertical(items []CalendarItem, config Config, now time.Time, start t
 			}
 		}
 
-		// Display episodes (with truncation)
 		for show, episodes := range showEpisodes {
-			maxDisplay := 3
 			for i, ep := range episodes {
-				if i >= maxDisplay {
-					remaining := len(episodes) - maxDisplay
+				if i >= maxDisplayPerShowVertical {
+					remaining := len(episodes) - maxDisplayPerShowVertical
 					fmt.Printf("  %s+ %d more episodes%s\n",
 						color(ColorCyan), remaining, color(ColorReset))
 					break
 				}
 
-				statusColor := getStatusColor(ep, now, config.NoColor)
+				statusColor := getStatusColor(ep, now, cfg.NoColor)
 				timeStr := ep.AirTime.Format("15:04")
 
-				// Multi-line format for consistency with horizontal view
 				fmt.Printf("  %s%s%s %s%s - S%02dE%02d%s\n",
 					color(ColorBold), timeStr, color(ColorReset),
 					statusColor, show, ep.Season, ep.Episode, color(ColorReset))
@@ -1081,9 +1055,8 @@ func displayVertical(items []CalendarItem, config Config, now time.Time, start t
 			}
 		}
 
-		// Display movies
 		for _, movie := range movieItems {
-			statusColor := getStatusColor(movie, now, config.NoColor)
+			statusColor := getStatusColor(movie, now, cfg.NoColor)
 			timeStr := movie.AirTime.Format("15:04")
 
 			fmt.Printf("  %s%s%s %s%s (%d)%s\n",
@@ -1091,6 +1064,8 @@ func displayVertical(items []CalendarItem, config Config, now time.Time, start t
 				statusColor, movie.Title, movie.Year, color(ColorReset))
 		}
 	}
+
+	displaySummary(items, now, color)
 
 	return nil
 }
@@ -1113,17 +1088,4 @@ func getStatusColor(item CalendarItem, now time.Time, noColor bool) string {
 	}
 
 	return ColorBlue
-}
-
-func clearScreen() {
-	switch runtime.GOOS {
-	case "linux", "darwin":
-		cmd := exec.Command("clear")
-		cmd.Stdout = os.Stdout
-		cmd.Run()
-	case "windows":
-		cmd := exec.Command("cmd", "/c", "cls")
-		cmd.Stdout = os.Stdout
-		cmd.Run()
-	}
 }
