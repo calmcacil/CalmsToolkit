@@ -4,11 +4,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -180,70 +179,67 @@ func TestGenerateSessionID(t *testing.T) {
 	}
 }
 
-// TestLoadEnvFile verifies environment file loading for media-streams
-func TestLoadEnvFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	envFile := filepath.Join(tmpDir, ".env")
+// TestBuildStreamsToolConfig verifies config building from ToolkitConfig
+func TestBuildStreamsToolConfig(t *testing.T) {
+	tk := DefaultToolkitConfig()
+	tk.MediaStreams.ServerType = "plex"
+	tk.MediaStreams.PlexURL = "http://plex.test.com/"
+	tk.MediaStreams.PlexToken = "plex-test-token"
+	tk.General.Timeout = "10s"
 
-	content := `PLEX_URL=http://plex.example.com
-PLEX_TOKEN=plex-token-123
-JELLYFIN_URL=http://jellyfin.example.com
-JELLYFIN_TOKEN=jellyfin-token-456
-# Comment line
-IGNORED_VAR=value
-`
-	err := os.WriteFile(envFile, []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test .env file: %v", err)
+	cfg := BuildStreamsToolConfig(tk)
+
+	if cfg.ServerType != "plex" {
+		t.Errorf("ServerType = %v, want %v", cfg.ServerType, "plex")
+	}
+	if cfg.PlexURL != "http://plex.test.com" {
+		t.Errorf("PlexURL = %v, want %v", cfg.PlexURL, "http://plex.test.com")
+	}
+	if cfg.PlexToken != "plex-test-token" {
+		t.Errorf("PlexToken = %v, want %v", cfg.PlexToken, "plex-test-token")
+	}
+	if cfg.Timeout != 10*time.Second {
+		t.Errorf("Timeout = %v, want %v", cfg.Timeout, 10*time.Second)
 	}
 
-	config := &Config{}
-	loadEnvFile(envFile, config)
-
-	if config.PlexURL != "http://plex.example.com" {
-		t.Errorf("PlexURL = %v, want %v", config.PlexURL, "http://plex.example.com")
+	// Test nil config
+	nilCfg := BuildStreamsToolConfig(nil)
+	if nilCfg.ServerType != "both" {
+		t.Errorf("nil ServerType = %v, want 'both'", nilCfg.ServerType)
 	}
-	if config.PlexToken != "plex-token-123" {
-		t.Errorf("PlexToken = %v, want %v", config.PlexToken, "plex-token-123")
-	}
-	if config.JellyfinURL != "http://jellyfin.example.com" {
-		t.Errorf("JellyfinURL = %v, want %v", config.JellyfinURL, "http://jellyfin.example.com")
-	}
-	if config.JellyfinToken != "jellyfin-token-456" {
-		t.Errorf("JellyfinToken = %v, want %v", config.JellyfinToken, "jellyfin-token-456")
+	if nilCfg.Timeout != 10*time.Second {
+		t.Errorf("nil Timeout = %v, want %v", nilCfg.Timeout, 10*time.Second)
 	}
 }
 
-// TestLoadConfig verifies configuration loading
-func TestLoadConfig(t *testing.T) {
-	config := loadConfig(
-		"plex",
-		"http://plex.test.com",
-		"plex-test-token",
-		"http://jellyfin.test.com",
-		"jellyfin-test-token",
-		10*time.Second,
-		false,
-		false,
-		true,
-		5,
-		3*time.Minute,
-	)
+// TestBuildStreamsToolConfigDefaults verifies defaults and edge cases
+func TestBuildStreamsToolConfigDefaults(t *testing.T) {
+	// Test empty ServerType defaults to "both"
+	cfg := BuildStreamsToolConfig(DefaultToolkitConfig())
+	if cfg.ServerType != "both" {
+		t.Errorf("ServerType = %v, want 'both'", cfg.ServerType)
+	}
 
-	if config.ServerType != "plex" {
-		t.Errorf("ServerType = %v, want %v", config.ServerType, "plex")
+	// Test invalid timeout defaults
+	tk := DefaultToolkitConfig()
+	tk.General.Timeout = "not-a-duration"
+	cfg = BuildStreamsToolConfig(tk)
+	if cfg.Timeout != 10*time.Second {
+		t.Errorf("Timeout = %v, want %v", cfg.Timeout, 10*time.Second)
 	}
-	if config.PlexURL != "http://plex.test.com" {
-		t.Errorf("PlexURL = %v, want %v", config.PlexURL, "http://plex.test.com")
+
+	// Test WatchInterval <= 0 defaults
+	tk.MediaStreams.WatchInterval = 0
+	cfg = BuildStreamsToolConfig(tk)
+	if cfg.WatchSeconds != 10 {
+		t.Errorf("WatchSeconds = %v, want 10", cfg.WatchSeconds)
 	}
-	if config.PlexToken != "plex-test-token" {
-		t.Errorf("PlexToken = %v, want %v", config.PlexToken, "plex-test-token")
-	}
-	if config.WatchMode != true {
-		t.Errorf("WatchMode = %v, want %v", config.WatchMode, true)
-	}
-	if config.WatchSeconds != 5 {
-		t.Errorf("WatchSeconds = %v, want %v", config.WatchSeconds, 5)
+
+	// Test invalid HistoryDuration defaults
+	tk.MediaStreams.HistoryDuration = "bad"
+	cfg = BuildStreamsToolConfig(tk)
+	if cfg.HistoryDuration != 15*time.Minute {
+		t.Errorf("HistoryDuration = %v, want 15m", cfg.HistoryDuration)
 	}
 }
 
@@ -275,13 +271,14 @@ func TestFetchPlexStreams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	cfg := StreamsToolConfig{
 		PlexURL:   server.URL,
 		PlexToken: "test-token",
 		Timeout:   5 * time.Second,
 	}
+	client := &http.Client{Timeout: cfg.Timeout}
 
-	streams, err := fetchPlexStreams(config)
+	streams, err := fetchPlexStreams(context.Background(), client, cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -339,13 +336,14 @@ func TestFetchJellyfinStreams(t *testing.T) {
 	}))
 	defer server.Close()
 
-	config := Config{
+	cfg := StreamsToolConfig{
 		JellyfinURL:   server.URL,
 		JellyfinToken: "test-token",
 		Timeout:       5 * time.Second,
 	}
+	client := &http.Client{Timeout: cfg.Timeout}
 
-	streams, err := fetchJellyfinStreams(config)
+	streams, err := fetchJellyfinStreams(context.Background(), client, cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
