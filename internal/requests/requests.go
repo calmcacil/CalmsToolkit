@@ -1,13 +1,10 @@
-//go:build mediarequests
-
-package main
+package requests
 
 import (
 	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,9 +15,11 @@ import (
 	"time"
 
 	"golang.org/x/term"
+
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
-// Status codes
 const (
 	StatusPending  = 1
 	StatusApproved = 2
@@ -36,8 +35,7 @@ const (
 	MediaStatusDeleted            = 6
 )
 
-// API structures
-type RequestsToolConfig struct {
+type ToolConfig struct {
 	ServerURL  string
 	APIKey     string
 	Timeout    time.Duration
@@ -200,8 +198,8 @@ type Season struct {
 	AirDate      string `json:"airDate,omitempty"`
 }
 
-func BuildRequestsToolConfig(tk *ToolkitConfig) RequestsToolConfig {
-	cfg := RequestsToolConfig{}
+func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
+	cfg := ToolConfig{}
 	if tk == nil {
 		cfg.Timeout = 10 * time.Second
 		cfg.ServerURL = "http://localhost:5055"
@@ -219,31 +217,20 @@ func BuildRequestsToolConfig(tk *ToolkitConfig) RequestsToolConfig {
 	return cfg
 }
 
-func main() {
-	tk, err := LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
-	cfg := BuildRequestsToolConfig(tk)
+var (
+	cReset   = colors.Reset
+	cBold    = colors.Bold
+	cCyan    = colors.Cyan
+	cGreen   = colors.Green
+	cYellow  = colors.Yellow
+	cRed     = colors.Red
+	cGray    = colors.Gray
+	cMagenta = colors.Magenta
+)
+
+func Run(cfg ToolConfig) {
 	cfg.ctx = context.Background()
 	cfg.client = &http.Client{Timeout: cfg.Timeout}
-
-	url := flag.String("url", cfg.ServerURL, "Overseerr/Jellyseerr server URL")
-	token := flag.String("token", cfg.APIKey, "API key/token")
-	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
-	verbose := flag.Bool("verbose", cfg.Verbose, "Enable verbose diagnostic output")
-	jsonOutput := flag.Bool("json", false, "Output in JSON format")
-	quiet := flag.Bool("quiet", false, "Suppress warnings")
-	flag.Parse()
-
-	cfg.ServerURL = *url
-	cfg.APIKey = *token
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *jsonOutput
-	cfg.Verbose = *verbose
-	cfg.JSONOutput = *jsonOutput
-	cfg.Quiet = *quiet
 
 	if cfg.APIKey == "" {
 		fmt.Fprintf(os.Stderr, "ERROR: API key is not set\n")
@@ -257,8 +244,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg.client = &http.Client{Timeout: cfg.Timeout}
-
 	if err := testConnection(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to connect to server: %v\n", err)
 		os.Exit(1)
@@ -267,7 +252,7 @@ func main() {
 	runInteractiveMenu(cfg)
 }
 
-func testConnection(cfg RequestsToolConfig) error {
+func testConnection(cfg ToolConfig) error {
 	ctx := cfg.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -299,7 +284,7 @@ func testConnection(cfg RequestsToolConfig) error {
 	return nil
 }
 
-func runInteractiveMenu(cfg RequestsToolConfig) {
+func runInteractiveMenu(cfg ToolConfig) {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -323,34 +308,34 @@ func runInteractiveMenu(cfg RequestsToolConfig) {
 	}
 }
 
-func printMainMenu(cfg RequestsToolConfig) {
-	color := func(code string) string {
+func printMainMenu(cfg ToolConfig) {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	fmt.Printf("%s%s╔══════════════════════════════════════════╗%s\n", color(ColorBold), color(ColorCyan), color(ColorReset))
-	fmt.Printf("%s%s║    Media Requests - Interactive Menu    ║%s\n", color(ColorBold), color(ColorCyan), color(ColorReset))
-	fmt.Printf("%s%s╚══════════════════════════════════════════╝%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s╔══════════════════════════════════════════╗%s\n", clr(cBold), clr(cCyan), clr(cReset))
+	fmt.Printf("%s%s║    Media Requests - Interactive Menu    ║%s\n", clr(cBold), clr(cCyan), clr(cReset))
+	fmt.Printf("%s%s╚══════════════════════════════════════════╝%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
-	fmt.Printf("%s[N]%s New Request\n", color(ColorGreen), color(ColorReset))
-	fmt.Printf("%s[W]%s View Requests\n", color(ColorYellow), color(ColorReset))
-	fmt.Printf("%s[Q]%s Quit\n\n", color(ColorRed), color(ColorReset))
+	fmt.Printf("%s[N]%s New Request\n", clr(cGreen), clr(cReset))
+	fmt.Printf("%s[W]%s View Requests\n", clr(cYellow), clr(cReset))
+	fmt.Printf("%s[Q]%s Quit\n\n", clr(cRed), clr(cReset))
 	fmt.Printf("Select an option: ")
 }
 
-func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
+func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 	clearScreen()
-	color := func(code string) string {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	fmt.Printf("%s%s=== New Media Request ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== New Media Request ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 	fmt.Printf("Enter search query (or 'back' to return): ")
 
 	query, _ := reader.ReadString('\n')
@@ -360,24 +345,24 @@ func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
 		return
 	}
 
-	fmt.Printf("\n%sSearching...%s\n", color(ColorYellow), color(ColorReset))
+	fmt.Printf("\n%sSearching...%s\n", clr(cYellow), clr(cReset))
 	results, err := searchMedia(cfg, query)
 	if err != nil {
-		fmt.Printf("\n%sError searching: %v%s\n", color(ColorRed), err, color(ColorReset))
+		fmt.Printf("\n%sError searching: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
 	if len(results) == 0 {
-		fmt.Printf("\n%sNo results found.%s\n", color(ColorYellow), color(ColorReset))
+		fmt.Printf("\n%sNo results found.%s\n", clr(cYellow), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
 	clearScreen()
-	fmt.Printf("%s%s=== Search Results ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== Search Results ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
 	displayLimit := 10
 	if len(results) > displayLimit {
@@ -398,7 +383,7 @@ func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
 
 	selection, err := strconv.Atoi(selectionStr)
 	if err != nil || selection < 1 || selection > len(results) {
-		fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+		fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -409,13 +394,13 @@ func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
 	if selectedMedia.MediaInfo != nil {
 		status := selectedMedia.MediaInfo.Status
 		if status == MediaStatusAvailable || status == MediaStatusPartiallyAvailable {
-			fmt.Printf("\n%sThis media is already available!%s\n", color(ColorGreen), color(ColorReset))
+			fmt.Printf("\n%sThis media is already available!%s\n", clr(cGreen), clr(cReset))
 			fmt.Printf("\nPress any key to continue...")
 			readKeystroke(cfg)
 			return
 		}
 		if len(selectedMedia.MediaInfo.Requests) > 0 {
-			fmt.Printf("\n%sThis media has already been requested.%s\n", color(ColorYellow), color(ColorReset))
+			fmt.Printf("\n%sThis media has already been requested.%s\n", clr(cYellow), clr(cReset))
 			fmt.Printf("\nPress any key to continue...")
 			readKeystroke(cfg)
 			return
@@ -436,7 +421,7 @@ func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
 	}
 
 	clearScreen()
-	fmt.Printf("%s%s=== Confirm Request ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== Confirm Request ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
 	title := selectedMedia.Title
 	if title == "" {
@@ -444,28 +429,28 @@ func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
 	}
 	year := getYear(selectedMedia)
 
-	fmt.Printf("%sMedia:%s %s", color(ColorBold), color(ColorReset), title)
+	fmt.Printf("%sMedia:%s %s", clr(cBold), clr(cReset), title)
 	if year != "" {
-		fmt.Printf(" %s(%s)%s", color(ColorCyan), year, color(ColorReset))
+		fmt.Printf(" %s(%s)%s", clr(cCyan), year, clr(cReset))
 	}
 	fmt.Printf("\n")
 
-	fmt.Printf("%sType:%s %s\n", color(ColorBold), color(ColorReset), titleCase(selectedMedia.MediaType))
+	fmt.Printf("%sType:%s %s\n", clr(cBold), clr(cReset), titleCase(selectedMedia.MediaType))
 
 	if selectedMedia.MediaType == "tv" && seasons != nil {
 		if seasons == "all" {
-			fmt.Printf("%sSeasons:%s All\n", color(ColorBold), color(ColorReset))
+			fmt.Printf("%sSeasons:%s All\n", clr(cBold), clr(cReset))
 		} else if seasonList, ok := seasons.([]int); ok {
-			fmt.Printf("%sSeasons:%s %v\n", color(ColorBold), color(ColorReset), seasonList)
+			fmt.Printf("%sSeasons:%s %v\n", clr(cBold), clr(cReset), seasonList)
 		}
 	}
 
 	if overrides != nil {
 		if overrides.ServerName != "" {
-			fmt.Printf("%sServer:%s %s\n", color(ColorBold), color(ColorReset), overrides.ServerName)
+			fmt.Printf("%sServer:%s %s\n", clr(cBold), clr(cReset), overrides.ServerName)
 		}
 		if overrides.RootFolder != "" {
-			fmt.Printf("%sRoot Folder:%s %s\n", color(ColorBold), color(ColorReset), overrides.RootFolder)
+			fmt.Printf("%sRoot Folder:%s %s\n", clr(cBold), clr(cReset), overrides.RootFolder)
 		}
 	}
 
@@ -473,56 +458,56 @@ func handleNewRequest(cfg RequestsToolConfig, reader *bufio.Reader) {
 	confirm := readKeyOrDefault(cfg, "n")
 
 	if confirm != "y" {
-		fmt.Printf("\n%sRequest cancelled.%s\n", color(ColorYellow), color(ColorReset))
+		fmt.Printf("\n%sRequest cancelled.%s\n", clr(cYellow), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
-	fmt.Printf("\n%sSubmitting request...%s\n", color(ColorYellow), color(ColorReset))
+	fmt.Printf("\n%sSubmitting request...%s\n", clr(cYellow), clr(cReset))
 	request, err := createRequest(cfg, selectedMedia, seasons, overrides)
 	if err != nil {
-		fmt.Printf("\n%sError creating request: %v%s\n", color(ColorRed), err, color(ColorReset))
+		fmt.Printf("\n%sError creating request: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
-	fmt.Printf("\n%s✓ Request submitted successfully!%s\n", color(ColorGreen), color(ColorReset))
-	fmt.Printf("Request ID: %s%d%s\n", color(ColorCyan), request.ID, color(ColorReset))
+	fmt.Printf("\n%s✓ Request submitted successfully!%s\n", clr(cGreen), clr(cReset))
+	fmt.Printf("Request ID: %s%d%s\n", clr(cCyan), request.ID, clr(cReset))
 
 	statusText := getStatusText(request.Status)
-	fmt.Printf("Status: %s%s%s\n", color(ColorYellow), statusText, color(ColorReset))
+	fmt.Printf("Status: %s%s%s\n", clr(cYellow), statusText, clr(cReset))
 
 	fmt.Printf("\nPress any key to continue...")
 	readKeystroke(cfg)
 }
 
-func handleViewRequests(cfg RequestsToolConfig, reader *bufio.Reader) {
+func handleViewRequests(cfg ToolConfig, reader *bufio.Reader) {
 	clearScreen()
-	color := func(code string) string {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	fmt.Printf("%s%s=== Pending Requests ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
-	fmt.Printf("%sLoading...%s\n", color(ColorYellow), color(ColorReset))
+	fmt.Printf("%s%s=== Pending Requests ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
+	fmt.Printf("%sLoading...%s\n", clr(cYellow), clr(cReset))
 
 	requests, err := getPendingRequests(cfg)
 	if err != nil {
-		fmt.Printf("\n%sError fetching requests: %v%s\n", color(ColorRed), err, color(ColorReset))
+		fmt.Printf("\n%sError fetching requests: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
 	clearScreen()
-	fmt.Printf("%s%s=== Pending Requests ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== Pending Requests ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
 	if len(requests) == 0 {
-		fmt.Printf("%sNo pending requests.%s\n", color(ColorGreen), color(ColorReset))
+		fmt.Printf("%sNo pending requests.%s\n", clr(cGreen), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -542,7 +527,7 @@ func handleViewRequests(cfg RequestsToolConfig, reader *bufio.Reader) {
 
 	selection, err := strconv.Atoi(selectionStr)
 	if err != nil || selection < 1 || selection > len(requests) {
-		fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+		fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -552,24 +537,24 @@ func handleViewRequests(cfg RequestsToolConfig, reader *bufio.Reader) {
 	handleRequestDetail(cfg, selectedRequest, reader)
 }
 
-func handleRequestDetail(cfg RequestsToolConfig, request MediaRequest, reader *bufio.Reader) {
+func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Reader) {
 	clearScreen()
-	color := func(code string) string {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	fmt.Printf("%s%s=== Request Details ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== Request Details ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
 	displayRequestDetail(cfg, request)
 
-	fmt.Printf("\n%sActions:%s\n", color(ColorBold), color(ColorReset))
+	fmt.Printf("\n%sActions:%s\n", clr(cBold), clr(cReset))
 	fmt.Printf("%s[A]%s Approve    %s[D]%s Decline    %s[B]%s Back\n\n",
-		color(ColorGreen), color(ColorReset),
-		color(ColorRed), color(ColorReset),
-		color(ColorYellow), color(ColorReset))
+		clr(cGreen), clr(cReset),
+		clr(cRed), clr(cReset),
+		clr(cYellow), clr(cReset))
 
 	fmt.Printf("Select action: ")
 	action := readKeyOrDefault(cfg, "b")
@@ -581,31 +566,31 @@ func handleRequestDetail(cfg RequestsToolConfig, request MediaRequest, reader *b
 			return
 		}
 
-		fmt.Printf("\n%sApproving request...%s\n", color(ColorYellow), color(ColorReset))
+		fmt.Printf("\n%sApproving request...%s\n", clr(cYellow), clr(cReset))
 		if err := approveRequestWithOverrides(cfg, request.ID, overrides); err != nil {
-			fmt.Printf("\n%sError approving: %v%s\n", color(ColorRed), err, color(ColorReset))
+			fmt.Printf("\n%sError approving: %v%s\n", clr(cRed), err, clr(cReset))
 		} else {
-			fmt.Printf("\n%s✓ Request approved!%s\n", color(ColorGreen), color(ColorReset))
+			fmt.Printf("\n%s✓ Request approved!%s\n", clr(cGreen), clr(cReset))
 			if overrides != nil && overrides.RootFolder != "" {
-				fmt.Printf("%s  Root folder set to: %s%s\n", color(ColorGray), overrides.RootFolder, color(ColorReset))
+				fmt.Printf("%s  Root folder set to: %s%s\n", clr(cGray), overrides.RootFolder, clr(cReset))
 			}
 		}
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 
 	case "d":
-		fmt.Printf("\n%sAre you sure you want to decline this request? (y/n):%s ", color(ColorRed), color(ColorReset))
+		fmt.Printf("\n%sAre you sure you want to decline this request? (y/n):%s ", clr(cRed), clr(cReset))
 		confirm := readKeyOrDefault(cfg, "n")
 
 		if confirm == "y" {
-			fmt.Printf("\n%sDeclining request...%s\n", color(ColorYellow), color(ColorReset))
+			fmt.Printf("\n%sDeclining request...%s\n", clr(cYellow), clr(cReset))
 			if err := declineRequest(cfg, request.ID); err != nil {
-				fmt.Printf("\n%sError declining: %v%s\n", color(ColorRed), err, color(ColorReset))
+				fmt.Printf("\n%sError declining: %v%s\n", clr(cRed), err, clr(cReset))
 			} else {
-				fmt.Printf("\n%s✓ Request declined.%s\n", color(ColorGreen), color(ColorReset))
+				fmt.Printf("\n%s✓ Request declined.%s\n", clr(cGreen), clr(cReset))
 			}
 		} else {
-			fmt.Printf("\n%sCancelled.%s\n", color(ColorYellow), color(ColorReset))
+			fmt.Printf("\n%sCancelled.%s\n", clr(cYellow), clr(cReset))
 		}
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
@@ -614,14 +599,14 @@ func handleRequestDetail(cfg RequestsToolConfig, request MediaRequest, reader *b
 		return
 
 	default:
-		fmt.Printf("\n%sInvalid action.%s\n", color(ColorRed), color(ColorReset))
+		fmt.Printf("\n%sInvalid action.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 	}
 }
 
-func displaySearchResult(cfg RequestsToolConfig, index int, result SearchResult) {
-	color := func(code string) string {
+func displaySearchResult(cfg ToolConfig, index int, result SearchResult) {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
@@ -641,39 +626,39 @@ func displaySearchResult(cfg RequestsToolConfig, index int, result SearchResult)
 	}
 
 	fmt.Printf("%s%d.%s %s %s%s%s",
-		color(ColorYellow), index, color(ColorReset),
-		typeIcon, color(ColorBold), title, color(ColorReset))
+		clr(cYellow), index, clr(cReset),
+		typeIcon, clr(cBold), title, clr(cReset))
 
 	if year != "" {
-		fmt.Printf(" %s(%s)%s", color(ColorCyan), year, color(ColorReset))
+		fmt.Printf(" %s(%s)%s", clr(cCyan), year, clr(cReset))
 	}
 
 	if result.MediaInfo != nil {
 		status := result.MediaInfo.Status
 		if status == MediaStatusAvailable || status == MediaStatusPartiallyAvailable {
-			fmt.Printf(" %s[AVAILABLE]%s", color(ColorGreen), color(ColorReset))
+			fmt.Printf(" %s[AVAILABLE]%s", clr(cGreen), clr(cReset))
 		} else if len(result.MediaInfo.Requests) > 0 {
-			fmt.Printf(" %s[REQUESTED]%s", color(ColorYellow), color(ColorReset))
+			fmt.Printf(" %s[REQUESTED]%s", clr(cYellow), clr(cReset))
 		}
 	}
 
 	fmt.Printf("\n")
 
 	if result.Overview != "" && len(result.Overview) > 100 {
-		fmt.Printf("   %s%s...%s\n", color(ColorGray), result.Overview[:97], color(ColorReset))
+		fmt.Printf("   %s%s...%s\n", clr(cGray), result.Overview[:97], clr(cReset))
 	} else if result.Overview != "" {
-		fmt.Printf("   %s%s%s\n", color(ColorGray), result.Overview, color(ColorReset))
+		fmt.Printf("   %s%s%s\n", clr(cGray), result.Overview, clr(cReset))
 	}
 
 	if result.VoteAverage > 0 {
-		fmt.Printf("   %sRating: %.1f/10%s\n", color(ColorGray), result.VoteAverage, color(ColorReset))
+		fmt.Printf("   %sRating: %.1f/10%s\n", clr(cGray), result.VoteAverage, clr(cReset))
 	}
 
 	fmt.Println()
 }
 
-func displayRequestSummary(cfg RequestsToolConfig, index int, request MediaRequest) {
-	color := func(code string) string {
+func displayRequestSummary(cfg ToolConfig, index int, request MediaRequest) {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
@@ -685,9 +670,9 @@ func displayRequestSummary(cfg RequestsToolConfig, index int, request MediaReque
 		mediaType = "TV Show"
 	}
 
-	fmt.Printf("%s%d.%s [%s] ", color(ColorYellow), index, color(ColorReset), mediaType)
+	fmt.Printf("%s%d.%s [%s] ", clr(cYellow), index, clr(cReset), mediaType)
 
-	fmt.Printf("Request ID: %s%d%s ", color(ColorCyan), request.ID, color(ColorReset))
+	fmt.Printf("Request ID: %s%d%s ", clr(cCyan), request.ID, clr(cReset))
 	fmt.Printf("(TMDB: %d)", request.Media.TmdbID)
 
 	requestedBy := request.RequestedBy.Username
@@ -698,28 +683,28 @@ func displayRequestSummary(cfg RequestsToolConfig, index int, request MediaReque
 		requestedBy = request.RequestedBy.DisplayName
 	}
 
-	fmt.Printf("\n   %sRequested by:%s %s", color(ColorGray), color(ColorReset), requestedBy)
-	fmt.Printf("  %sCreated:%s %s\n", color(ColorGray), color(ColorReset), formatDate(request.CreatedAt))
+	fmt.Printf("\n   %sRequested by:%s %s", clr(cGray), clr(cReset), requestedBy)
+	fmt.Printf("  %sCreated:%s %s\n", clr(cGray), clr(cReset), formatDate(request.CreatedAt))
 
 	fmt.Println()
 }
 
-func displayRequestDetail(cfg RequestsToolConfig, request MediaRequest) {
-	color := func(code string) string {
+func displayRequestDetail(cfg ToolConfig, request MediaRequest) {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	fmt.Printf("%sRequest ID:%s %d\n", color(ColorBold), color(ColorReset), request.ID)
-	fmt.Printf("%sTMDB ID:%s %d\n", color(ColorBold), color(ColorReset), request.Media.TmdbID)
+	fmt.Printf("%sRequest ID:%s %d\n", clr(cBold), clr(cReset), request.ID)
+	fmt.Printf("%sTMDB ID:%s %d\n", clr(cBold), clr(cReset), request.Media.TmdbID)
 
 	mediaType := "Movie"
 	if request.Type == "tv" {
 		mediaType = "TV Show"
 	}
-	fmt.Printf("%sType:%s %s\n", color(ColorBold), color(ColorReset), mediaType)
+	fmt.Printf("%sType:%s %s\n", clr(cBold), clr(cReset), mediaType)
 
 	requestedBy := request.RequestedBy.Username
 	if requestedBy == "" {
@@ -728,23 +713,23 @@ func displayRequestDetail(cfg RequestsToolConfig, request MediaRequest) {
 	if requestedBy == "" {
 		requestedBy = request.RequestedBy.DisplayName
 	}
-	fmt.Printf("%sRequested by:%s %s\n", color(ColorBold), color(ColorReset), requestedBy)
+	fmt.Printf("%sRequested by:%s %s\n", clr(cBold), clr(cReset), requestedBy)
 
-	fmt.Printf("%sCreated:%s %s\n", color(ColorBold), color(ColorReset), formatDate(request.CreatedAt))
-	fmt.Printf("%sStatus:%s %s%s%s\n", color(ColorBold), color(ColorReset),
-		color(ColorYellow), getStatusText(request.Status), color(ColorReset))
+	fmt.Printf("%sCreated:%s %s\n", clr(cBold), clr(cReset), formatDate(request.CreatedAt))
+	fmt.Printf("%sStatus:%s %s%s%s\n", clr(cBold), clr(cReset),
+		clr(cYellow), getStatusText(request.Status), clr(cReset))
 
 	if len(request.Seasons) > 0 {
-		fmt.Printf("%sSeasons requested:%s %d\n", color(ColorBold), color(ColorReset), len(request.Seasons))
+		fmt.Printf("%sSeasons requested:%s %d\n", clr(cBold), clr(cReset), len(request.Seasons))
 	}
 
 	if request.Is4k {
-		fmt.Printf("%s4K:%s Yes\n", color(ColorBold), color(ColorReset))
+		fmt.Printf("%s4K:%s Yes\n", clr(cBold), clr(cReset))
 	}
 }
 
-func selectSeasons(cfg RequestsToolConfig, media SearchResult, reader *bufio.Reader) (interface{}, error) {
-	color := func(code string) string {
+func selectSeasons(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (interface{}, error) {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
@@ -753,25 +738,25 @@ func selectSeasons(cfg RequestsToolConfig, media SearchResult, reader *bufio.Rea
 
 	details, err := getTVDetails(cfg, media.ID)
 	if err != nil {
-		fmt.Printf("\n%sError fetching TV show details: %v%s\n", color(ColorRed), err, color(ColorReset))
+		fmt.Printf("\n%sError fetching TV show details: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, err
 	}
 
 	clearScreen()
-	fmt.Printf("%s%s=== Select Seasons ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== Select Seasons ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
 	title := media.Title
 	if title == "" {
 		title = media.Name
 	}
-	fmt.Printf("%sTV Show:%s %s\n", color(ColorBold), color(ColorReset), title)
-	fmt.Printf("%sTotal Seasons:%s %d\n\n", color(ColorBold), color(ColorReset), details.NumberOfSeasons)
+	fmt.Printf("%sTV Show:%s %s\n", clr(cBold), clr(cReset), title)
+	fmt.Printf("%sTotal Seasons:%s %d\n\n", clr(cBold), clr(cReset), details.NumberOfSeasons)
 
-	fmt.Printf("%s[A]%s Request all seasons\n", color(ColorGreen), color(ColorReset))
-	fmt.Printf("%s[S]%s Select specific seasons\n", color(ColorYellow), color(ColorReset))
-	fmt.Printf("%s[B]%s Back\n\n", color(ColorRed), color(ColorReset))
+	fmt.Printf("%s[A]%s Request all seasons\n", clr(cGreen), clr(cReset))
+	fmt.Printf("%s[S]%s Select specific seasons\n", clr(cYellow), clr(cReset))
+	fmt.Printf("%s[B]%s Back\n\n", clr(cRed), clr(cReset))
 
 	fmt.Printf("Select option: ")
 	option := readKeyOrDefault(cfg, "b")
@@ -795,7 +780,7 @@ func selectSeasons(cfg RequestsToolConfig, media SearchResult, reader *bufio.Rea
 			part = strings.TrimSpace(part)
 			season, err := strconv.Atoi(part)
 			if err != nil || season < 1 || season > details.NumberOfSeasons {
-				fmt.Printf("\n%sInvalid season number: %s%s\n", color(ColorRed), part, color(ColorReset))
+				fmt.Printf("\n%sInvalid season number: %s%s\n", clr(cRed), part, clr(cReset))
 				fmt.Printf("\nPress any key to continue...")
 				readKeystroke(cfg)
 				return nil, fmt.Errorf("invalid season number")
@@ -813,14 +798,14 @@ func selectSeasons(cfg RequestsToolConfig, media SearchResult, reader *bufio.Rea
 		return nil, fmt.Errorf("cancelled")
 
 	default:
-		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
+		fmt.Printf("\n%sInvalid option.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, fmt.Errorf("invalid option")
 	}
 }
 
-func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader *bufio.Reader) (*RequestOverrides, error) {
+func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (*RequestOverrides, error) {
 	mediaType := strings.ToLower(media.MediaType)
 
 	var service string
@@ -838,13 +823,13 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 
 	servers, err := fetchServiceInstances(cfg, service)
 	if err != nil {
-		color := func(code string) string {
+		clr := func(code string) string {
 			if cfg.NoColor {
 				return ""
 			}
 			return code
 		}
-		fmt.Printf("\n%sError fetching %s servers: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("\n%sError fetching %s servers: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, err
@@ -854,14 +839,14 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 		return nil, nil
 	}
 
-	color := func(code string) string {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
 		return code
 	}
 
-	fmt.Printf("\n%sSelect %s destination%s\n", color(ColorBold), serviceLabel, color(ColorReset))
+	fmt.Printf("\n%sSelect %s destination%s\n", clr(cBold), serviceLabel, clr(cReset))
 
 	var selected *ServiceInstance
 
@@ -869,7 +854,7 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 		for {
 			fmt.Printf("\nAvailable %s servers:\n", serviceLabel)
 			for i, server := range servers {
-				fmt.Printf("%s%d.%s %s", color(ColorYellow), i+1, color(ColorReset), server.Name)
+				fmt.Printf("%s%d.%s %s", clr(cYellow), i+1, clr(cReset), server.Name)
 
 				var badges []string
 				if server.IsDefault {
@@ -879,7 +864,7 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 					badges = append(badges, "4K")
 				}
 				if len(badges) > 0 {
-					fmt.Printf(" %s[%s]%s", color(ColorGray), strings.Join(badges, ", "), color(ColorReset))
+					fmt.Printf(" %s[%s]%s", clr(cGray), strings.Join(badges, ", "), clr(cReset))
 				}
 				fmt.Println()
 			}
@@ -899,13 +884,13 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 				if selected == nil {
 					selected = &servers[0]
 				}
-				fmt.Printf("Using default %s server: %s%s%s\n", serviceLabel, color(ColorBold), selected.Name, color(ColorReset))
+				fmt.Printf("Using default %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
 			case "back", "b":
 				return nil, fmt.Errorf("cancelled")
 			default:
 				index, convErr := strconv.Atoi(input)
 				if convErr != nil || index < 1 || index > len(servers) {
-					fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+					fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 					continue
 				}
 				selected = &servers[index-1]
@@ -917,28 +902,28 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 		}
 	} else {
 		selected = &servers[0]
-		fmt.Printf("Using %s server: %s%s%s\n", serviceLabel, color(ColorBold), selected.Name, color(ColorReset))
+		fmt.Printf("Using %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
 	}
 
 	details, err := fetchServiceDetails(cfg, service, selected.ID)
 	if err != nil {
-		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("\n%sError fetching %s details: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, err
 	}
 
 	if len(details.RootFolders) == 0 {
-		fmt.Printf("\n%sNo root folders configured for %s.%s\n", color(ColorYellow), selected.Name, color(ColorReset))
+		fmt.Printf("\n%sNo root folders configured for %s.%s\n", clr(cYellow), selected.Name, clr(cReset))
 		fmt.Printf("Press Enter to continue...")
 		reader.ReadString('\n')
 		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
 	}
 
 	for {
-		fmt.Printf("\n%sRoot folders for %s:%s\n", color(ColorBold), selected.Name, color(ColorReset))
+		fmt.Printf("\n%sRoot folders for %s:%s\n", clr(cBold), selected.Name, clr(cReset))
 		for i, folder := range details.RootFolders {
-			fmt.Printf("%s%d.%s %s\n", color(ColorYellow), i+1, color(ColorReset), folder.Path)
+			fmt.Printf("%s%d.%s %s\n", clr(cYellow), i+1, clr(cReset), folder.Path)
 		}
 
 		fmt.Printf("\nSelect a root folder (1-%d), press Enter to use server default, or type 'back' to cancel: ", len(details.RootFolders))
@@ -953,7 +938,7 @@ func selectRootFolderOverride(cfg RequestsToolConfig, media SearchResult, reader
 		default:
 			index, convErr := strconv.Atoi(input)
 			if convErr != nil || index < 1 || index > len(details.RootFolders) {
-				fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+				fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 				continue
 			}
 			folder := details.RootFolders[index-1]
@@ -997,7 +982,7 @@ func formatDate(dateStr string) string {
 	return t.Format("2006-01-02 15:04")
 }
 
-func readKeystroke(cfg RequestsToolConfig) (string, error) {
+func readKeystroke(cfg ToolConfig) (string, error) {
 	fd := int(os.Stdin.Fd())
 
 	if !term.IsTerminal(fd) {
@@ -1027,17 +1012,13 @@ func readKeystroke(cfg RequestsToolConfig) (string, error) {
 		return "", err
 	}
 
-	if !cfg.NoColor {
-		fmt.Printf("%c\n", b[0])
-	} else {
-		fmt.Printf("%c\n", b[0])
-	}
+	fmt.Printf("%c\n", b[0])
 
 	char := strings.ToLower(string(b[0]))
 	return char, nil
 }
 
-func readKeyOrDefault(cfg RequestsToolConfig, defaultKey string) string {
+func readKeyOrDefault(cfg ToolConfig, defaultKey string) string {
 	key, err := readKeystroke(cfg)
 	if err != nil {
 		return defaultKey
@@ -1050,49 +1031,12 @@ func readKeyOrDefault(cfg RequestsToolConfig, defaultKey string) string {
 	return key
 }
 
-func readNumericInput(cfg RequestsToolConfig, maxValue int) (int, error) {
-	if maxValue <= 9 {
-		key, err := readKeystroke(cfg)
-		if err != nil {
-			return 0, err
-		}
-
-		if key == "\n" || key == "\r" || key == "" {
-			return 0, fmt.Errorf("no input")
-		}
-
-		num, err := strconv.Atoi(key)
-		if err != nil {
-			return 0, fmt.Errorf("invalid number")
-		}
-
-		return num, nil
-	}
-
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-
-	if input == "" {
-		return 0, fmt.Errorf("no input")
-	}
-
-	num, err := strconv.Atoi(input)
-	if err != nil {
-		return 0, fmt.Errorf("invalid number")
-	}
-
-	return num, nil
-}
-
 func clearScreen() {
-	fmt.Print(AnsiHomeCursor)
-	fmt.Print(AnsiClearScreen)
+	fmt.Print(colors.HomeCursor)
+	fmt.Print(colors.ClearScreen)
 }
 
-// API functions
-
-func fetchServiceInstances(cfg RequestsToolConfig, service string) ([]ServiceInstance, error) {
+func fetchServiceInstances(cfg ToolConfig, service string) ([]ServiceInstance, error) {
 	var endpoint string
 	switch service {
 	case "radarr":
@@ -1121,7 +1065,7 @@ func fetchServiceInstances(cfg RequestsToolConfig, service string) ([]ServiceIns
 	return servers, nil
 }
 
-func fetchServiceDetails(cfg RequestsToolConfig, service string, id int) (*ServiceDetails, error) {
+func fetchServiceDetails(cfg ToolConfig, service string, id int) (*ServiceDetails, error) {
 	if service != "radarr" && service != "sonarr" {
 		return nil, fmt.Errorf("unsupported service type: %s", service)
 	}
@@ -1145,7 +1089,7 @@ func fetchServiceDetails(cfg RequestsToolConfig, service string, id int) (*Servi
 	return &details, nil
 }
 
-func makeRequest(cfg RequestsToolConfig, method, endpoint string, body interface{}) (*http.Response, error) {
+func makeRequest(cfg ToolConfig, method, endpoint string, body interface{}) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
 		jsonData, err := json.Marshal(body)
@@ -1177,7 +1121,7 @@ func makeRequest(cfg RequestsToolConfig, method, endpoint string, body interface
 	return client.Do(req)
 }
 
-func searchMedia(cfg RequestsToolConfig, query string) ([]SearchResult, error) {
+func searchMedia(cfg ToolConfig, query string) ([]SearchResult, error) {
 	params := url.Values{}
 	params.Set("query", query)
 	endpoint := "/search?" + params.Encode()
@@ -1201,7 +1145,7 @@ func searchMedia(cfg RequestsToolConfig, query string) ([]SearchResult, error) {
 	return searchResp.Results, nil
 }
 
-func getTVDetails(cfg RequestsToolConfig, tmdbID int) (*TVDetails, error) {
+func getTVDetails(cfg ToolConfig, tmdbID int) (*TVDetails, error) {
 	endpoint := fmt.Sprintf("/tv/%d", tmdbID)
 	resp, err := makeRequest(cfg, "GET", endpoint, nil)
 	if err != nil {
@@ -1221,7 +1165,7 @@ func getTVDetails(cfg RequestsToolConfig, tmdbID int) (*TVDetails, error) {
 	return &details, nil
 }
 
-func createRequest(cfg RequestsToolConfig, media SearchResult, seasons interface{}, overrides *RequestOverrides) (*MediaRequest, error) {
+func createRequest(cfg ToolConfig, media SearchResult, seasons interface{}, overrides *RequestOverrides) (*MediaRequest, error) {
 	reqData := CreateRequest{
 		MediaType: media.MediaType,
 		MediaID:   media.ID,
@@ -1259,7 +1203,7 @@ func createRequest(cfg RequestsToolConfig, media SearchResult, seasons interface
 	return &request, nil
 }
 
-func checkUserPermissions(cfg RequestsToolConfig) (*AuthMe, error) {
+func checkUserPermissions(cfg ToolConfig) (*AuthMe, error) {
 	resp, err := makeRequest(cfg, "GET", "/auth/me", nil)
 	if err != nil {
 		return nil, err
@@ -1279,7 +1223,7 @@ func checkUserPermissions(cfg RequestsToolConfig) (*AuthMe, error) {
 	return &authMe, nil
 }
 
-func getRequestCount(cfg RequestsToolConfig) (*RequestCount, error) {
+func getRequestCount(cfg ToolConfig) (*RequestCount, error) {
 	resp, err := makeRequest(cfg, "GET", "/request/count", nil)
 	if err != nil {
 		return nil, err
@@ -1299,7 +1243,7 @@ func getRequestCount(cfg RequestsToolConfig) (*RequestCount, error) {
 	return &count, nil
 }
 
-func getPendingRequests(cfg RequestsToolConfig) ([]MediaRequest, error) {
+func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 	var expectedPendingCount int
 
 	if cfg.Verbose {
@@ -1391,7 +1335,7 @@ func getPendingRequests(cfg RequestsToolConfig) ([]MediaRequest, error) {
 	}
 
 	if expectedPendingCount > 0 && len(pending) == 0 {
-		color := func(code string) string {
+		clr := func(code string) string {
 			if cfg.NoColor {
 				return ""
 			}
@@ -1399,7 +1343,7 @@ func getPendingRequests(cfg RequestsToolConfig) ([]MediaRequest, error) {
 		}
 
 		if !cfg.Quiet {
-			fmt.Fprintf(os.Stderr, "\n%s⚠ WARNING: Overseerr API bug detected!%s\n", color(ColorYellow), color(ColorReset))
+			fmt.Fprintf(os.Stderr, "\n%s⚠ WARNING: Overseerr API bug detected!%s\n", clr(cYellow), clr(cReset))
 			fmt.Fprintf(os.Stderr, "Expected %d pending request(s) but filter=pending returned 0 results.\n", expectedPendingCount)
 			fmt.Fprintf(os.Stderr, "Activating fallback: fetching all requests and filtering client-side...\n\n")
 		}
@@ -1467,7 +1411,7 @@ func getPendingRequests(cfg RequestsToolConfig) ([]MediaRequest, error) {
 
 		if !cfg.Quiet {
 			fmt.Fprintf(os.Stderr, "%s✓ Fallback successful: Found %d pending request(s)%s\n\n",
-				color(ColorGreen), len(pending), color(ColorReset))
+				clr(cGreen), len(pending), clr(cReset))
 		}
 	} else if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "Primary fetch successful, no fallback needed.\n\n")
@@ -1476,7 +1420,7 @@ func getPendingRequests(cfg RequestsToolConfig) ([]MediaRequest, error) {
 	return pending, nil
 }
 
-func approveRequest(cfg RequestsToolConfig, requestID int) error {
+func approveRequest(cfg ToolConfig, requestID int) error {
 	endpoint := fmt.Sprintf("/request/%d/approve", requestID)
 	resp, err := makeRequest(cfg, "POST", endpoint, nil)
 	if err != nil {
@@ -1492,7 +1436,7 @@ func approveRequest(cfg RequestsToolConfig, requestID int) error {
 	return nil
 }
 
-func approveRequestWithOverrides(cfg RequestsToolConfig, requestID int, overrides *RequestOverrides) error {
+func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *RequestOverrides) error {
 	if err := approveRequest(cfg, requestID); err != nil {
 		return err
 	}
@@ -1520,8 +1464,8 @@ func approveRequestWithOverrides(cfg RequestsToolConfig, requestID int, override
 	return nil
 }
 
-func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, reader *bufio.Reader) (*RequestOverrides, error) {
-	color := func(code string) string {
+func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *bufio.Reader) (*RequestOverrides, error) {
+	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
 		}
@@ -1543,7 +1487,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 
 	servers, err := fetchServiceInstances(cfg, service)
 	if err != nil {
-		fmt.Printf("\n%sError fetching %s servers: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("\n%sError fetching %s servers: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
 		return nil, nil
 	}
@@ -1553,24 +1497,24 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 	}
 
 	clearScreen()
-	fmt.Printf("%s%s=== Approve Request - Root Folder Override ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+	fmt.Printf("%s%s=== Approve Request - Root Folder Override ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
 	displayRequestDetail(cfg, request)
 
 	if request.RootFolder != "" {
 		fmt.Printf("\n%sCurrent Root Folder:%s %s%s%s\n",
-			color(ColorBold), color(ColorReset),
-			color(ColorCyan), request.RootFolder, color(ColorReset))
+			clr(cBold), clr(cReset),
+			clr(cCyan), request.RootFolder, clr(cReset))
 	} else {
 		fmt.Printf("\n%sCurrent Root Folder:%s %sNot set (will use server default)%s\n",
-			color(ColorBold), color(ColorReset),
-			color(ColorGray), color(ColorReset))
+			clr(cBold), clr(cReset),
+			clr(cGray), clr(cReset))
 	}
 
-	fmt.Printf("\n%sWould you like to override the root folder for this request?%s\n", color(ColorBold), color(ColorReset))
-	fmt.Printf("%s[Y]%s Yes, select root folder\n", color(ColorGreen), color(ColorReset))
-	fmt.Printf("%s[N]%s No, use default (proceed with approval)\n", color(ColorYellow), color(ColorReset))
-	fmt.Printf("%s[B]%s Back (cancel approval)\n\n", color(ColorRed), color(ColorReset))
+	fmt.Printf("\n%sWould you like to override the root folder for this request?%s\n", clr(cBold), clr(cReset))
+	fmt.Printf("%s[Y]%s Yes, select root folder\n", clr(cGreen), clr(cReset))
+	fmt.Printf("%s[N]%s No, use default (proceed with approval)\n", clr(cYellow), clr(cReset))
+	fmt.Printf("%s[B]%s Back (cancel approval)\n\n", clr(cRed), clr(cReset))
 
 	fmt.Printf("Select option: ")
 	option := readKeyOrDefault(cfg, "n")
@@ -1586,7 +1530,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 		break
 
 	default:
-		fmt.Printf("\n%sInvalid option.%s\n", color(ColorRed), color(ColorReset))
+		fmt.Printf("\n%sInvalid option.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, fmt.Errorf("invalid option")
@@ -1597,11 +1541,11 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 	if len(servers) > 1 {
 		for {
 			clearScreen()
-			fmt.Printf("%s%s=== Select %s Server ===%s\n\n", color(ColorBold), color(ColorCyan), serviceLabel, color(ColorReset))
+			fmt.Printf("%s%s=== Select %s Server ===%s\n\n", clr(cBold), clr(cCyan), serviceLabel, clr(cReset))
 
 			fmt.Printf("Available %s servers:\n", serviceLabel)
 			for i, server := range servers {
-				fmt.Printf("%s%d.%s %s", color(ColorYellow), i+1, color(ColorReset), server.Name)
+				fmt.Printf("%s%d.%s %s", clr(cYellow), i+1, clr(cReset), server.Name)
 
 				var badges []string
 				if server.IsDefault {
@@ -1611,7 +1555,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 					badges = append(badges, "4K")
 				}
 				if len(badges) > 0 {
-					fmt.Printf(" %s[%s]%s", color(ColorGray), strings.Join(badges, ", "), color(ColorReset))
+					fmt.Printf(" %s[%s]%s", clr(cGray), strings.Join(badges, ", "), clr(cReset))
 				}
 				fmt.Println()
 			}
@@ -1626,7 +1570,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 			default:
 				index, convErr := strconv.Atoi(input)
 				if convErr != nil || index < 1 || index > len(servers) {
-					fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+					fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 					fmt.Printf("\nPress Enter to continue...")
 					reader.ReadString('\n')
 					continue
@@ -1640,12 +1584,12 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 		}
 	} else {
 		selected = &servers[0]
-		fmt.Printf("\nUsing %s server: %s%s%s\n", serviceLabel, color(ColorBold), selected.Name, color(ColorReset))
+		fmt.Printf("\nUsing %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
 	}
 
 	details, err := fetchServiceDetails(cfg, service, selected.ID)
 	if err != nil {
-		fmt.Printf("\n%sError fetching %s details: %v%s\n", color(ColorRed), serviceLabel, err, color(ColorReset))
+		fmt.Printf("\n%sError fetching %s details: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
@@ -1653,7 +1597,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 	}
 
 	if len(details.RootFolders) == 0 {
-		fmt.Printf("\n%sNo root folders configured for %s.%s\n", color(ColorYellow), selected.Name, color(ColorReset))
+		fmt.Printf("\n%sNo root folders configured for %s.%s\n", clr(cYellow), selected.Name, clr(cReset))
 		fmt.Printf("Proceeding with approval without overrides...\n")
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
@@ -1662,12 +1606,12 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 
 	for {
 		clearScreen()
-		fmt.Printf("%s%s=== Select Root Folder ===%s\n\n", color(ColorBold), color(ColorCyan), color(ColorReset))
+		fmt.Printf("%s%s=== Select Root Folder ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
 
-		fmt.Printf("%sServer:%s %s\n\n", color(ColorBold), color(ColorReset), selected.Name)
-		fmt.Printf("%sRoot folders:%s\n", color(ColorBold), color(ColorReset))
+		fmt.Printf("%sServer:%s %s\n\n", clr(cBold), clr(cReset), selected.Name)
+		fmt.Printf("%sRoot folders:%s\n", clr(cBold), clr(cReset))
 		for i, folder := range details.RootFolders {
-			fmt.Printf("%s%d.%s %s\n", color(ColorYellow), i+1, color(ColorReset), folder.Path)
+			fmt.Printf("%s%d.%s %s\n", clr(cYellow), i+1, clr(cReset), folder.Path)
 		}
 
 		fmt.Printf("\nSelect a root folder (1-%d) or type 'back' to cancel: ", len(details.RootFolders))
@@ -1680,7 +1624,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 		default:
 			index, convErr := strconv.Atoi(input)
 			if convErr != nil || index < 1 || index > len(details.RootFolders) {
-				fmt.Printf("\n%sInvalid selection.%s\n", color(ColorRed), color(ColorReset))
+				fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 				fmt.Printf("\nPress Enter to continue...")
 				reader.ReadString('\n')
 				continue
@@ -1695,7 +1639,7 @@ func selectRootFolderForApproval(cfg RequestsToolConfig, request MediaRequest, r
 	}
 }
 
-func declineRequest(cfg RequestsToolConfig, requestID int) error {
+func declineRequest(cfg ToolConfig, requestID int) error {
 	endpoint := fmt.Sprintf("/request/%d/decline", requestID)
 	resp, err := makeRequest(cfg, "POST", endpoint, nil)
 	if err != nil {

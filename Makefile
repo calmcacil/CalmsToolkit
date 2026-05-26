@@ -1,4 +1,4 @@
-.PHONY: all build clean install test help setup setup-install
+.PHONY: all build build-all clean install test help setup setup-install tidy
 
 # Installation parameters
 prefix?=/usr/local
@@ -39,10 +39,10 @@ help:
 build:
 	@echo "Building binaries..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOBUILD) $(LDFLAGS) -tags mediastreams -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) .
-	$(GOBUILD) $(LDFLAGS) -tags mediacalendar -o $(BUILD_DIR)/$(BINARY_CALENDAR) .
-	$(GOBUILD) $(LDFLAGS) -tags mediarequests -o $(BUILD_DIR)/$(BINARY_REQUESTS) .
-	$(GOBUILD) $(LDFLAGS) -tags arrfeed -o $(BUILD_DIR)/$(BINARY_ARRFEED) .
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_STREAMSTOOL) ./cmd/media-streams/
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) ./cmd/media-calendar/
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_REQUESTS) ./cmd/media-requests/
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_ARRFEED) ./cmd/arr-feed/
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -52,16 +52,11 @@ build-all:
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
 			for SRC in media-streams media-calendar media-requests arr-feed; do \
-				BIN=$${SRC}-$$GOOS-$$GOARCH; \
-				EXT=$${GOOS} = "windows" && EXT=".exe" || EXT=""; \
-				case $$SRC in \
-					media-streams) TAG=mediastreams ;; \
-					media-calendar) TAG=mediacalendar ;; \
-					media-requests) TAG=mediarequests ;; \
-					arr-feed) TAG=arrfeed ;; \
-				esac; \
+				EXT=""; \
+				if [ "$$GOOS" = "windows" ]; then EXT=".exe"; fi; \
+				BIN=$${SRC}-$$GOOS-$$GOARCH$$EXT; \
 				echo "Building $$SRC for $$GOOS/$$GOARCH..."; \
-				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -tags $$TAG -o $(BUILD_DIR)/$$BIN$$EXT . || exit 1; \
+				GOOS=$$GOOS GOARCH=$$GOARCH $(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$$BIN ./cmd/$$SRC/ || exit 1; \
 			done; \
 		done; \
 	done
@@ -94,20 +89,8 @@ setup-install:
 	@echo "Installed: $(BUILD_DIR)/$(BINARY_SETUP)"
 
 test:
-	@echo "Running shared tests..."
+	@echo "Running all tests..."
 	$(GOTEST) -v ./...
-	@echo ""
-	@echo "Running media-requests tests..."
-	$(GOTEST) -tags mediarequests -v ./...
-	@echo ""
-	@echo "Running media-streams tests..."
-	$(GOTEST) -tags mediastreams -v ./...
-	@echo ""
-	@echo "Running media-calendar tests..."
-	$(GOTEST) -tags mediacalendar -v ./...
-	@echo ""
-	@echo "Running arr-feed tests..."
-	$(GOTEST) -tags arrfeed -v ./...
 	@echo ""
 	@echo "All tests complete!"
 
