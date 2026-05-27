@@ -32,6 +32,7 @@ type ToolConfig struct {
 	ShowFailed      bool
 	ShowDeleted     bool
 	ShowIgnored     bool
+	ShowSubtitles   bool
 	MaxEvents       int
 	Quiet           bool
 }
@@ -49,6 +50,8 @@ type HistoryEvent struct {
 	SourceTitle  string    `json:"sourceTitle,omitempty"`
 	EventType    string    `json:"eventType"`
 	ID           int       `json:"id"`
+	FileID       int       `json:"fileId,omitempty"`
+	Subtitles    string    `json:"subtitles,omitempty"`
 }
 
 // SonarrHistory is the raw Sonarr history API response entry.
@@ -93,6 +96,28 @@ type QualityRevision struct {
 	Version  int  `json:"version"`
 	Real     int  `json:"real"`
 	IsRepack bool `json:"isRepack"`
+}
+
+// SonarrEpisodeFileResponse is the Sonarr episode file API response.
+type SonarrEpisodeFileResponse struct {
+	ID        int                  `json:"id"`
+	MediaInfo *SonarrMediaInfo     `json:"mediaInfo,omitempty"`
+}
+
+// RadarrMovieFileResponse is the Radarr movie file API response.
+type RadarrMovieFileResponse struct {
+	ID        int                `json:"id"`
+	MediaInfo *RadarrMediaInfo   `json:"mediaInfo,omitempty"`
+}
+
+// SonarrMediaInfo holds media info including subtitle languages (V3 API).
+type SonarrMediaInfo struct {
+	Subtitles string `json:"subtitles"`
+}
+
+// RadarrMediaInfo holds media info including subtitle languages (V3 API).
+type RadarrMediaInfo struct {
+	Subtitles string `json:"subtitles"`
 }
 
 // SonarrEpisode is an episode reference in Sonarr history.
@@ -193,6 +218,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg.ShowFailed = tk.ArrFeed.ShowFailed
 	cfg.ShowDeleted = tk.ArrFeed.ShowDeleted
 	cfg.ShowIgnored = tk.ArrFeed.ShowIgnored
+	cfg.ShowSubtitles = tk.ArrFeed.ShowSubtitles
 	return cfg
 }
 
@@ -297,7 +323,7 @@ func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolCon
 		wg.Add(1)
 		go func(inst config.ArrInstance) {
 			defer wg.Done()
-			events, err := fetchSonarrHistory(ctx, client, inst, since)
+			events, err := fetchSonarrHistory(ctx, client, inst, since, cfg.ShowSubtitles)
 			if err != nil {
 				errorsChan <- fmt.Errorf("Sonarr %s: %v", inst.Name, err)
 				return
@@ -310,7 +336,7 @@ func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolCon
 		wg.Add(1)
 		go func(inst config.ArrInstance) {
 			defer wg.Done()
-			events, err := fetchRadarrHistory(ctx, client, inst, since)
+			events, err := fetchRadarrHistory(ctx, client, inst, since, cfg.ShowSubtitles)
 			if err != nil {
 				errorsChan <- fmt.Errorf("Radarr %s: %v", inst.Name, err)
 				return
@@ -344,7 +370,7 @@ func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolCon
 	return allEvents, nil
 }
 
-func fetchSonarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
+func fetchSonarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", inst.URL, sinceStr)
 
@@ -372,10 +398,60 @@ func fetchSonarrHistory(ctx context.Context, client *httpclient.Client, inst con
 		events = append(events, sonarrToHistoryEvent(h))
 	}
 
+	if showSubtitles {
+		enrichSonarrSubtitles(ctx, client, inst, events)
+	}
+
 	return events, nil
 }
 
-func fetchRadarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
+func enrichSonarrSubtitles(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, events []HistoryEvent) {
+	var ids []int
+	seen := make(map[int]bool)
+	for _, ev := range events {
+		if ev.FileID > 0 && !seen[ev.FileID] {
+			seen[ev.FileID] = true
+			ids = append(ids, ev.FileID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	endpoint := fmt.Sprintf("%s/api/v3/episodefile?", inst.URL)
+	for i, fid := range ids {
+		if i > 0 {
+			endpoint += "&"
+		}
+		endpoint += fmt.Sprintf("episodeFileIds=%d", fid)
+	}
+
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
+	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
+	if err != nil || status != http.StatusOK {
+		return
+	}
+
+	var files []SonarrEpisodeFileResponse
+	if err := json.Unmarshal(body, &files); err != nil {
+		return
+	}
+
+	subMap := make(map[int]string)
+	for _, f := range files {
+		if f.MediaInfo != nil && f.MediaInfo.Subtitles != "" {
+			subMap[f.ID] = f.MediaInfo.Subtitles
+		}
+	}
+
+	for i := range events {
+		if subs, ok := subMap[events[i].FileID]; ok {
+			events[i].Subtitles = subs
+		}
+	}
+}
+
+func fetchRadarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", inst.URL, sinceStr)
 
@@ -403,7 +479,57 @@ func fetchRadarrHistory(ctx context.Context, client *httpclient.Client, inst con
 		events = append(events, radarrToHistoryEvent(h))
 	}
 
+	if showSubtitles {
+		enrichRadarrSubtitles(ctx, client, inst, events)
+	}
+
 	return events, nil
+}
+
+func enrichRadarrSubtitles(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, events []HistoryEvent) {
+	var ids []int
+	seen := make(map[int]bool)
+	for _, ev := range events {
+		if ev.FileID > 0 && !seen[ev.FileID] {
+			seen[ev.FileID] = true
+			ids = append(ids, ev.FileID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	endpoint := fmt.Sprintf("%s/api/v3/moviefile?", inst.URL)
+	for i, fid := range ids {
+		if i > 0 {
+			endpoint += "&"
+		}
+		endpoint += fmt.Sprintf("movieFileIds=%d", fid)
+	}
+
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
+	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
+	if err != nil || status != http.StatusOK {
+		return
+	}
+
+	var files []RadarrMovieFileResponse
+	if err := json.Unmarshal(body, &files); err != nil {
+		return
+	}
+
+	subMap := make(map[int]string)
+	for _, f := range files {
+		if f.MediaInfo != nil && f.MediaInfo.Subtitles != "" {
+			subMap[f.ID] = f.MediaInfo.Subtitles
+		}
+	}
+
+	for i := range events {
+		if subs, ok := subMap[events[i].FileID]; ok {
+			events[i].Subtitles = subs
+		}
+	}
 }
 
 func sonarrToHistoryEvent(sh SonarrHistory) HistoryEvent {
@@ -417,6 +543,17 @@ func sonarrToHistoryEvent(sh SonarrHistory) HistoryEvent {
 		SourceTitle: sh.SourceTitle,
 		EventType:   sh.EventType,
 		ID:          sh.ID,
+	}
+
+	if sh.Data != nil {
+		for _, key := range []string{"fileId", "FileId"} {
+			if fileIDVal, ok := sh.Data[key]; ok {
+				if fid, err := parseInt(fmt.Sprintf("%v", fileIDVal)); err == nil {
+					event.FileID = fid
+				}
+				break
+			}
+		}
 	}
 
 	if sh.Series != nil {
@@ -455,6 +592,17 @@ func radarrToHistoryEvent(rh RadarrHistory) HistoryEvent {
 		SourceTitle: rh.SourceTitle,
 		EventType:   rh.EventType,
 		ID:          rh.ID,
+	}
+
+	if rh.Data != nil {
+		for _, key := range []string{"fileId", "FileId"} {
+			if fileIDVal, ok := rh.Data[key]; ok {
+				if fid, err := parseInt(fmt.Sprintf("%v", fileIDVal)); err == nil {
+					event.FileID = fid
+				}
+				break
+			}
+		}
 	}
 
 	if rh.Movie != nil {
@@ -591,42 +739,87 @@ func filterEvents(events []HistoryEvent, cfg ToolConfig) []HistoryEvent {
 	return filtered
 }
 
+func parseInt(s string) (int, error) {
+	var n int
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
+}
+
 func renderTable(events []HistoryEvent, cfg ToolConfig) {
 	color := getColorFunc(cfg)
 
-	fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s%s\n",
-		color(colors.Bold),
-		"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats",
-		color(colors.Reset))
+	if cfg.ShowSubtitles {
+		fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s | %-15s%s\n",
+			color(colors.Bold),
+			"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats", "Subtitles",
+			color(colors.Reset))
 
-	fmt.Printf("%s%s%s\n",
-		color(colors.Bold),
-		strings.Repeat("-", 160),
-		color(colors.Reset))
+		fmt.Printf("%s%s%s\n",
+			color(colors.Bold),
+			strings.Repeat("-", 180),
+			color(colors.Reset))
 
-	if len(events) == 0 {
-		fmt.Printf("%sNo events found%s\n", color(colors.Gray), color(colors.Reset))
-		return
-	}
+		if len(events) == 0 {
+			fmt.Printf("%sNo events found%s\n", color(colors.Gray), color(colors.Reset))
+			return
+		}
 
-	for _, event := range events {
-		actionColor := getActionColor(event.Action)
-		timeStr := formatRelativeTime(event.When)
-		title := truncate(event.Title, 30)
-		episodeTitle := truncate(event.EpisodeTitle, 40)
-		quality := truncate(event.Quality, 15)
-		formats := truncate(strings.Join(event.Formats, ", "), 20)
+		for _, event := range events {
+			actionColor := getActionColor(event.Action)
+			timeStr := formatRelativeTime(event.When)
+			title := truncate(event.Title, 30)
+			episodeTitle := truncate(event.EpisodeTitle, 40)
+			quality := truncate(event.Quality, 15)
+			formats := truncate(strings.Join(event.Formats, ", "), 20)
+			subtitles := truncate(subtitlesDisplay(event.Subtitles), 15)
 
-		fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-40s | %-15s | %-20s\n",
-			timeStr,
-			color(actionColor),
-			center(event.Action, 10),
-			color(colors.Reset),
-			center(title, 30),
-			center(event.Episode, 10),
-			center(episodeTitle, 40),
-			center(quality, 15),
-			center(formats, 20))
+			fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-40s | %-15s | %-20s | %-15s\n",
+				timeStr,
+				color(actionColor),
+				center(event.Action, 10),
+				color(colors.Reset),
+				center(title, 30),
+				center(event.Episode, 10),
+				center(episodeTitle, 40),
+				center(quality, 15),
+				center(formats, 20),
+				center(subtitles, 15))
+		}
+	} else {
+		fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s%s\n",
+			color(colors.Bold),
+			"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats",
+			color(colors.Reset))
+
+		fmt.Printf("%s%s%s\n",
+			color(colors.Bold),
+			strings.Repeat("-", 160),
+			color(colors.Reset))
+
+		if len(events) == 0 {
+			fmt.Printf("%sNo events found%s\n", color(colors.Gray), color(colors.Reset))
+			return
+		}
+
+		for _, event := range events {
+			actionColor := getActionColor(event.Action)
+			timeStr := formatRelativeTime(event.When)
+			title := truncate(event.Title, 30)
+			episodeTitle := truncate(event.EpisodeTitle, 40)
+			quality := truncate(event.Quality, 15)
+			formats := truncate(strings.Join(event.Formats, ", "), 20)
+
+			fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-40s | %-15s | %-20s\n",
+				timeStr,
+				color(actionColor),
+				center(event.Action, 10),
+				color(colors.Reset),
+				center(title, 30),
+				center(event.Episode, 10),
+				center(episodeTitle, 40),
+				center(quality, 15),
+				center(formats, 20))
+		}
 	}
 
 	fmt.Printf("\n%sTotal events: %d%s\n", color(colors.Bold), len(events), color(colors.Reset))
@@ -662,6 +855,13 @@ func getColorFunc(cfg ToolConfig) func(string) string {
 		return func(s string) string { return "" }
 	}
 	return func(s string) string { return s }
+}
+
+func subtitlesDisplay(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func truncate(s string, maxLen int) string {

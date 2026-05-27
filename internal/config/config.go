@@ -69,6 +69,7 @@ type FeedConfig struct {
 	ShowFailed    bool   `json:"show_failed"`
 	ShowDeleted   bool   `json:"show_deleted"`
 	ShowIgnored   bool   `json:"show_ignored"`
+	ShowSubtitles bool   `json:"show_subtitles"`
 	MaxEvents     int    `json:"max_events"`
 }
 
@@ -117,6 +118,7 @@ func DefaultToolkitConfig() *ToolkitConfig {
 			ShowFailed:    true,
 			ShowDeleted:   false,
 			ShowIgnored:   false,
+			ShowSubtitles: false,
 			MaxEvents:     50,
 		},
 	}
