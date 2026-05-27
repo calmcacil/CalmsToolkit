@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -358,7 +359,7 @@ func TestFetchSonarrHistory(t *testing.T) {
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
-	events, err := fetchSonarrHistory(context.Background(), client, inst, since)
+	events, err := fetchSonarrHistory(context.Background(), client, inst, since, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -384,7 +385,7 @@ func TestFetchRadarrHistory(t *testing.T) {
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
-	events, err := fetchRadarrHistory(context.Background(), client, inst, since)
+	events, err := fetchRadarrHistory(context.Background(), client, inst, since, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -453,7 +454,7 @@ func TestCustomFormatsInSonarrHistory(t *testing.T) {
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
-	events, err := fetchSonarrHistory(context.Background(), client, inst, since)
+	events, err := fetchSonarrHistory(context.Background(), client, inst, since, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -489,7 +490,7 @@ func TestCustomFormatsInRadarrHistory(t *testing.T) {
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
-	events, err := fetchRadarrHistory(context.Background(), client, inst, since)
+	events, err := fetchRadarrHistory(context.Background(), client, inst, since, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -569,4 +570,230 @@ func TestEventSortOrder(t *testing.T) {
 	_ = cfg
 	_ = client
 	_ = since
+}
+
+func TestSonarrToHistoryEventWithFileID(t *testing.T) {
+	now := time.Now()
+	sh := SonarrHistory{
+		ID:        123,
+		EventType: "downloadFolderImported",
+		Date:      now.UTC().Format(time.RFC3339),
+		SourceTitle: "Test.Source.2024",
+		Data: map[string]interface{}{
+			"fileId": "42",
+		},
+		Quality: SonarrQuality{
+			Quality: SonarrQualityItem{Name: "HD-1080p"},
+		},
+		Series: &SonarrSeries{
+			ID:    1,
+			Title: "Test Series",
+		},
+		Episode: &SonarrEpisode{
+			ID:            100,
+			SeasonNumber:  2,
+			EpisodeNumber: 5,
+			Title:         "Episode 5",
+		},
+	}
+
+	event := sonarrToHistoryEvent(sh)
+	if event.FileID != 42 {
+		t.Errorf("FileID = %d, want 42", event.FileID)
+	}
+}
+
+func TestRadarrToHistoryEventWithFileID(t *testing.T) {
+	now := time.Now()
+	rh := RadarrHistory{
+		ID:        456,
+		EventType: "downloadFolderImported",
+		Date:      now.UTC().Format(time.RFC3339),
+		SourceTitle: "Test.Movie.2024.1080p",
+		Data: map[string]interface{}{
+			"fileId": "99",
+		},
+		Quality: RadarrQuality{
+			Quality: RadarrQualityItem{Name: "HD-1080p"},
+		},
+		Movie: &RadarrMovie{
+			ID:    1,
+			Title: "Test Movie",
+			Year:  2024,
+		},
+	}
+
+	event := radarrToHistoryEvent(rh)
+	if event.FileID != 99 {
+		t.Errorf("FileID = %d, want 99", event.FileID)
+	}
+}
+
+func TestSubtitlesDisplay(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", "-"},
+		{"English", "English"},
+		{"English, French", "English, French"},
+	}
+
+	for _, tt := range tests {
+		result := subtitlesDisplay(tt.input)
+		if result != tt.expected {
+			t.Errorf("subtitlesDisplay(%q) = %q, want %q", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestParseInt(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"42", 42},
+		{"0", 0},
+		{"-1", -1},
+	}
+
+	for _, tt := range tests {
+		result, err := parseInt(tt.input)
+		if err != nil {
+			t.Errorf("parseInt(%q) unexpected error: %v", tt.input, err)
+		}
+		if result != tt.expected {
+			t.Errorf("parseInt(%q) = %d, want %d", tt.input, result, tt.expected)
+		}
+	}
+}
+
+func TestParseIntInvalid(t *testing.T) {
+	_, err := parseInt("not-a-number")
+	if err == nil {
+		t.Error("parseInt('not-a-number') expected error, got nil")
+	}
+}
+
+func TestEnrichSonarrSubtitles(t *testing.T) {
+	mockResponse := `[{
+		"id": 42,
+		"mediaInfo": {"subtitles": "English, French"}
+	}]`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.String(), "episodeFileIds=42") {
+			t.Errorf("Expected episodeFileIds=42 in URL, got %s", r.URL.String())
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(mockResponse))
+	}))
+	defer server.Close()
+
+	client := httpclient.NewClient(5 * time.Second)
+	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
+
+	events := []HistoryEvent{
+		{ID: 1, FileID: 42, Action: "Imported"},
+		{ID: 2, FileID: 0, Action: "Grabbed"},
+	}
+
+	enrichSonarrSubtitles(context.Background(), client, inst, events)
+
+	if events[0].Subtitles != "English, French" {
+		t.Errorf("Subtitles = %q, want 'English, French'", events[0].Subtitles)
+	}
+	if events[1].Subtitles != "" {
+		t.Errorf("Grabbed event should have empty subtitles, got %q", events[1].Subtitles)
+	}
+}
+
+func TestEnrichRadarrSubtitles(t *testing.T) {
+	mockResponse := `[{
+		"id": 99,
+		"mediaInfo": {"subtitles": "English"}
+	}]`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.String(), "movieFileIds=99") {
+			t.Errorf("Expected movieFileIds=99 in URL, got %s", r.URL.String())
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(mockResponse))
+	}))
+	defer server.Close()
+
+	client := httpclient.NewClient(5 * time.Second)
+	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
+
+	events := []HistoryEvent{
+		{ID: 1, FileID: 99, Action: "Imported"},
+	}
+
+	enrichRadarrSubtitles(context.Background(), client, inst, events)
+
+	if events[0].Subtitles != "English" {
+		t.Errorf("Subtitles = %q, want 'English'", events[0].Subtitles)
+	}
+}
+
+func TestEnrichSonarrSubtitlesNoFileID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Should not make API call when no file IDs")
+	}))
+	defer server.Close()
+
+	client := httpclient.NewClient(5 * time.Second)
+	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
+
+	events := []HistoryEvent{
+		{ID: 1, FileID: 0, Action: "Grabbed"},
+	}
+
+	enrichSonarrSubtitles(context.Background(), client, inst, events)
+	// If we get here without the handler being called, the test passes
+}
+
+func TestEnrichSonarrSubtitlesAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := httpclient.NewClient(5 * time.Second)
+	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
+
+	events := []HistoryEvent{
+		{ID: 1, FileID: 42, Action: "Imported"},
+	}
+
+	enrichSonarrSubtitles(context.Background(), client, inst, events)
+	if events[0].Subtitles != "" {
+		t.Errorf("Subtitles should be empty after API error, got %q", events[0].Subtitles)
+	}
+}
+
+func TestEnrichSonarrSubtitlesNoMediaInfo(t *testing.T) {
+	mockResponse := `[{
+		"id": 42,
+		"mediaInfo": null
+	}]`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(mockResponse))
+	}))
+	defer server.Close()
+
+	client := httpclient.NewClient(5 * time.Second)
+	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
+
+	events := []HistoryEvent{
+		{ID: 1, FileID: 42, Action: "Imported"},
+	}
+
+	enrichSonarrSubtitles(context.Background(), client, inst, events)
+	if events[0].Subtitles != "" {
+		t.Errorf("Subtitles should be empty when no mediaInfo, got %q", events[0].Subtitles)
+	}
 }
