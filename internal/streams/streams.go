@@ -8,9 +8,11 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
@@ -766,15 +768,14 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		return nil
 	}
 
-	// Close outer box before grid, reopen after
+	// Close outer box before grid
 	boxStreamBottom(bw, termW)
 
 	// Stream grid
 	renderStreamGrid(bw, streams, termW, noColor, p)
 
-	// Reopen for summary
+	// Summary standalone box
 	boxStreamTop(bw, termW)
-	boxStreamSep(bw, termW)
 	displayStreamSummaryToBox(bw, streams, boxW, noColor, p)
 	boxStreamBottom(bw, termW)
 
@@ -842,6 +843,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 
 	// Active streams as standalone grid
 	if len(active) > 0 {
+		sort.Slice(active, func(i, j int) bool {
+			return active[i].StartTime.Before(active[j].StartTime)
+		})
 		boxStreamBottom(bw, termW)
 		var activeStreams []StreamInfo
 		for _, record := range active {
@@ -850,12 +854,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		renderStreamGrid(bw, activeStreams, termW, noColor, p)
 	}
 
-	// Reopen outer box for ended sessions + summary
-	boxStreamTop(bw, termW)
-
-	// Ended sessions
+	// Ended sessions standalone box
 	if len(ended) > 0 {
-		boxStreamSep(bw, termW)
+		boxStreamTop(bw, termW)
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, clr(p.Subdued))
 		fmt.Fprint(bw, colors.PadRight(" Recently Ended Sessions ", boxW))
@@ -865,19 +866,20 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		for _, record := range ended {
 			displayEndedStreamToBox(bw, record, boxW, noColor, p)
 		}
+		boxStreamBottom(bw, termW)
 	}
 
-	// Summary
+	// Summary standalone box
 	if len(active) > 0 {
-		boxStreamSep(bw, termW)
+		boxStreamTop(bw, termW)
 		var activeStreams []StreamInfo
 		for _, record := range active {
 			activeStreams = append(activeStreams, record.Stream)
 		}
 		displayStreamSummaryToBox(bw, activeStreams, boxW, noColor, p)
+		boxStreamBottom(bw, termW)
 	}
 
-	boxStreamBottom(bw, termW)
 	fmt.Fprint(bw, colors.EraseDown)
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
@@ -1021,6 +1023,10 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 		return code
 	}
 
+	trunc := func(s string, maxW int) string {
+		return runewidth.Truncate(s, maxW, "…")
+	}
+
 	var lines []string
 
 	serverColor := p.ServerJellyfin
@@ -1028,14 +1034,18 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 		serverColor = p.ServerPlex
 	}
 
+	userW := boxW - 12 // " PLEX User: "
+	user := trunc(stream.User, userW)
 	line := fmt.Sprintf(" %s%s%s %sUser%s: %s%s%s",
 		clr(serverColor), strings.ToUpper(stream.Server), clr(p.Reset),
 		clr(p.Bold), clr(p.Reset),
-		clr(p.ServerPlex), stream.User, clr(p.Reset))
+		clr(p.ServerPlex), user, clr(p.Reset))
 	lines = append(lines, colors.PadRight(line, boxW))
 
 	if stream.Type == "episode" && stream.Show != "" {
-		line := fmt.Sprintf(" %sShow%s: %s", clr(p.Bold), clr(p.Reset), stream.Show)
+		showW := boxW - 9 // " Show: "
+		show := trunc(stream.Show, showW)
+		line := fmt.Sprintf(" %sShow%s: %s", clr(p.Bold), clr(p.Reset), show)
 		lines = append(lines, colors.PadRight(line, boxW))
 		if stream.Season != "" || stream.Episode != "" {
 			epStr := ""
@@ -1045,11 +1055,13 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 			if stream.Episode != "" {
 				epStr += fmt.Sprintf("E%02s", stream.Episode)
 			}
-			line := fmt.Sprintf("  %s - %s", epStr, stream.Title)
+			line := fmt.Sprintf(" %sEpisode%s: %s", clr(p.Bold), clr(p.Reset), epStr)
 			lines = append(lines, colors.PadRight(line, boxW))
 		}
 	} else {
-		line := fmt.Sprintf(" %sTitle%s: %s", clr(p.Bold), clr(p.Reset), stream.Title)
+		titleW := boxW - 11 // " Title:  (YYYY)"
+		title := trunc(stream.Title, titleW)
+		line := fmt.Sprintf(" %sTitle%s: %s", clr(p.Bold), clr(p.Reset), title)
 		if stream.Year != "" {
 			line += fmt.Sprintf(" %s(%s)%s", clr(p.Accent), stream.Year, clr(p.Reset))
 		}
@@ -1059,9 +1071,13 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 	if stream.Client != "" {
 		var clientLine string
 		if stream.Device != "" {
-			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(p.Bold), clr(p.Reset), stream.Client, stream.Device)
+			clientW := boxW - 13 // " Client:  ()"
+			client := trunc(stream.Client, clientW)
+			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(p.Bold), clr(p.Reset), client, stream.Device)
 		} else {
-			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(p.Bold), clr(p.Reset), stream.Client)
+			clientW := boxW - 11 // " Client: "
+			client := trunc(stream.Client, clientW)
+			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(p.Bold), clr(p.Reset), client)
 		}
 		lines = append(lines, colors.PadRight(clientLine, boxW))
 	}
