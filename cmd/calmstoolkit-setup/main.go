@@ -26,26 +26,27 @@ func main() {
 
 	fmt.Printf("Config file: %s\n", path)
 
-	cfg := DefaultToolkitConfig()
-
-	if data, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(data, cfg); err == nil {
-			fmt.Println("\nExisting configuration found.")
-			if !promptYesNo("Overwrite existing config?", false) {
-				fmt.Println("Setup cancelled.")
-				return
-			}
-		}
-	}
-
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Cannot create config directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println()
-	fmt.Println("Leave blank to accept defaults shown in [brackets].")
+	cfg := config.DefaultToolkitConfig()
+
+	existing := false
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, cfg); err == nil {
+			existing = true
+			fmt.Println("\nExisting configuration loaded. New options (if any) have been added with defaults.")
+			fmt.Println("Press Enter to keep the current value shown in [brackets].")
+		}
+	}
+	if !existing {
+		fmt.Println("\nNo existing config found. Defaults shown in [brackets].")
+		fmt.Println("Press Enter to accept a default.")
+	}
+
 	fmt.Println()
 
 	fmt.Println(strings.Repeat("─", 50))
@@ -58,28 +59,33 @@ func main() {
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Println("  Step 2/6: Sonarr Instances")
 	fmt.Println(strings.Repeat("─", 50))
-	cfg.Sonarr = promptInstances("Sonarr")
+	cfg.Sonarr = promptInstances("Sonarr", cfg.Sonarr)
 	fmt.Println()
 
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Println("  Step 3/6: Radarr Instances")
 	fmt.Println(strings.Repeat("─", 50))
-	cfg.Radarr = promptInstances("Radarr")
+	cfg.Radarr = promptInstances("Radarr", cfg.Radarr)
 	fmt.Println()
 
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Println("  Step 4/6: Plex & Jellyfin Streams")
 	fmt.Println(strings.Repeat("─", 50))
-	if promptYesNo("Configure Plex?", true) {
+	if promptYesNo("Configure Plex?", cfg.MediaStreams.PlexToken != "") {
 		cfg.MediaStreams.PlexURL = prompt("Plex URL", cfg.MediaStreams.PlexURL)
 		cfg.MediaStreams.PlexToken = prompt("Plex Token", cfg.MediaStreams.PlexToken)
+	} else {
+		cfg.MediaStreams.PlexURL = ""
+		cfg.MediaStreams.PlexToken = ""
 	}
-	if promptYesNo("Configure Jellyfin?", true) {
+	if promptYesNo("Configure Jellyfin?", cfg.MediaStreams.JellyfinToken != "") {
 		cfg.MediaStreams.JellyfinURL = prompt("Jellyfin URL", cfg.MediaStreams.JellyfinURL)
 		cfg.MediaStreams.JellyfinToken = prompt("Jellyfin Token", cfg.MediaStreams.JellyfinToken)
+	} else {
+		cfg.MediaStreams.JellyfinURL = ""
+		cfg.MediaStreams.JellyfinToken = ""
 	}
-	serverType := prompt("Server type (plex/jellyfin/both)", cfg.MediaStreams.ServerType)
-	cfg.MediaStreams.ServerType = serverType
+	cfg.MediaStreams.ServerType = prompt("Server type (plex/jellyfin/both)", cfg.MediaStreams.ServerType)
 	cfg.MediaStreams.WatchInterval = promptInt("Watch refresh interval (seconds)", cfg.MediaStreams.WatchInterval)
 	cfg.MediaStreams.HistoryDuration = prompt("Session history duration (e.g. 15m, 1h)", cfg.MediaStreams.HistoryDuration)
 	fmt.Println()
@@ -87,10 +93,14 @@ func main() {
 	fmt.Println(strings.Repeat("─", 50))
 	fmt.Println("  Step 5/6: Media Requests (Overseerr / Jellyseerr)")
 	fmt.Println(strings.Repeat("─", 50))
-	if promptYesNo("Configure media request server?", true) {
+	if promptYesNo("Configure media request server?", cfg.MediaRequests.APIKey != "") {
 		cfg.MediaRequests.OverseerrURL = prompt("Server URL", cfg.MediaRequests.OverseerrURL)
 		cfg.MediaRequests.APIKey = prompt("API Key", cfg.MediaRequests.APIKey)
 		cfg.MediaRequests.Verbose = promptYesNo("Verbose output", cfg.MediaRequests.Verbose)
+	} else {
+		cfg.MediaRequests.OverseerrURL = ""
+		cfg.MediaRequests.APIKey = ""
+		cfg.MediaRequests.Verbose = false
 	}
 	fmt.Println()
 
@@ -113,6 +123,7 @@ func main() {
 	cfg.ArrFeed.ShowFailed = promptYesNo("Show failed events", cfg.ArrFeed.ShowFailed)
 	cfg.ArrFeed.ShowDeleted = promptYesNo("Show deleted events", cfg.ArrFeed.ShowDeleted)
 	cfg.ArrFeed.ShowIgnored = promptYesNo("Show ignored events", cfg.ArrFeed.ShowIgnored)
+	cfg.ArrFeed.ShowSubtitles = promptYesNo("Show subtitle info for imported events", cfg.ArrFeed.ShowSubtitles)
 	fmt.Println()
 
 	fmt.Println(strings.Repeat("━", 50))
@@ -125,6 +136,7 @@ func main() {
 	fmt.Printf("  Requests server:   %v\n", cfg.MediaRequests.APIKey != "")
 	fmt.Printf("  Calendar days:     %d (+%d past)\n", cfg.MediaCalendar.Days, cfg.MediaCalendar.DaysPast)
 	fmt.Printf("  Feed max events:   %d\n", cfg.ArrFeed.MaxEvents)
+	fmt.Printf("  Feed subtitles:    %v\n", cfg.ArrFeed.ShowSubtitles)
 	fmt.Println()
 
 	cfg.Version = 1
@@ -192,26 +204,51 @@ func promptInt(label string, defaultVal int) int {
 	}
 }
 
-func promptInstances(kind string) []config.ArrInstance {
-	var instances []config.ArrInstance
-	for {
-		fmt.Printf("\n--- %s Instance ---\n", kind)
-		name := prompt("Friendly name", kind+" HD")
-		url := prompt("URL", "http://localhost:8989")
-		token := prompt("API Key", "")
-		if token == "" {
-			fmt.Println("  API Key is required. Skipping this instance.")
-		} else {
-			instances = append(instances, config.ArrInstance{
-				Name:   name,
-				URL:    strings.TrimSuffix(url, "/"),
-				APIKey: token,
-			})
+func promptInstances(kind string, existing []config.ArrInstance) []config.ArrInstance {
+	instances := make([]config.ArrInstance, len(existing))
+	copy(instances, existing)
+
+	if len(instances) > 0 {
+		fmt.Printf("\n  You have %d existing %s instance(s):\n", len(instances), kind)
+		for i, inst := range instances {
+			fmt.Printf("    %d. %s (%s)\n", i+1, inst.Name, inst.URL)
 		}
-		if !promptYesNo("Add another "+kind+" instance?", false) {
-			break
+		if !promptYesNo("Review and update instances?", false) {
+			return instances
+		}
+		for i := range instances {
+			fmt.Printf("\n  --- %s Instance %d ---\n", kind, i+1)
+			instances[i].Name = prompt("Friendly name", instances[i].Name)
+			instances[i].URL = prompt("URL", instances[i].URL)
+			token := prompt("API Key (enter blank to keep current)", instances[i].APIKey)
+			if token != "" {
+				instances[i].APIKey = token
+			}
+			instances[i].URL = strings.TrimSuffix(instances[i].URL, "/")
 		}
 	}
+
+	if promptYesNo("Add another "+kind+" instance?", false) {
+		for {
+			fmt.Printf("\n--- New %s Instance ---\n", kind)
+			name := prompt("Friendly name", kind+" HD")
+			url := prompt("URL", "http://localhost:8989")
+			token := prompt("API Key", "")
+			if token == "" {
+				fmt.Println("  API Key is required. Skipping this instance.")
+			} else {
+				instances = append(instances, config.ArrInstance{
+					Name:   name,
+					URL:    strings.TrimSuffix(url, "/"),
+					APIKey: token,
+				})
+			}
+			if !promptYesNo("Add another "+kind+" instance?", false) {
+				break
+			}
+		}
+	}
+
 	return instances
 }
 
@@ -221,8 +258,4 @@ func ConfigPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".config", "calmstoolkit", "config.json")
-}
-
-func DefaultToolkitConfig() *config.ToolkitConfig {
-	return config.DefaultToolkitConfig()
 }
