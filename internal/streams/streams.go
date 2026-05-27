@@ -1070,13 +1070,23 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 
 	if stream.Client != "" {
 		var clientLine string
-		if stream.Device != "" {
-			clientW := boxW - 13 // " Client:  ()"
-			client := trunc(stream.Client, clientW)
-			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(p.Bold), clr(p.Reset), client, stream.Device)
+		if stream.Device != "" && stream.Device != stream.Client {
+			// " Client: X (Y)" — overhead: " Client:  ()" = 12
+			availW := boxW - 12
+			devW := runewidth.StringWidth(stream.Device)
+			cliW := availW - devW
+			if cliW < 4 {
+				cliW = availW * 2 / 5
+				if cliW < 4 {
+					cliW = 4
+				}
+				devW = availW - cliW
+			}
+			client := trunc(stream.Client, cliW)
+			dev := trunc(stream.Device, devW)
+			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(p.Bold), clr(p.Reset), client, dev)
 		} else {
-			clientW := boxW - 11 // " Client: "
-			client := trunc(stream.Client, clientW)
+			client := trunc(stream.Client, boxW-11)
 			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(p.Bold), clr(p.Reset), client)
 		}
 		lines = append(lines, colors.PadRight(clientLine, boxW))
