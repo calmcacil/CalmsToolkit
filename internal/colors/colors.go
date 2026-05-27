@@ -31,6 +31,7 @@ const (
 const (
 	ClearScreen = "\033[2J"
 	HomeCursor  = "\033[H"
+	EraseDown   = "\033[J"
 	HideCursor  = "\033[?25l"
 	ShowCursor  = "\033[?25h"
 )
