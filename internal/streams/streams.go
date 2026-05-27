@@ -995,7 +995,7 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 
 	// Progress bar
 	if stream.Progress > 0 {
-		barW := boxW - 15
+		barW := boxW - 18
 		if barW > 30 {
 			barW = 30
 		}
@@ -1117,7 +1117,7 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 	}
 
 	if stream.Progress > 0 {
-		barW := boxW - 15
+		barW := boxW - 18
 		if barW > 30 {
 			barW = 30
 		}
