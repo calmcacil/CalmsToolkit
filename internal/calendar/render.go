@@ -7,13 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -281,7 +279,7 @@ func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now ti
 
 	if title != "" {
 		prefix := "┌── " + title + " ──"
-		rc := utf8.RuneCountInString(prefix)
+		rc := colors.VisibleLen(prefix)
 		padLen := totalWidth - rc - 1
 		if padLen < 0 {
 			padLen = 0
@@ -376,7 +374,7 @@ func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colW
 		countStr := fmt.Sprintf("(%d Show%s)", len(dg.items), pluralS(len(dg.items)))
 		full := fmt.Sprintf(" %s%s%s %s",
 			clr(p.DayHeader), dateStr, clr(p.Reset), countStr)
-		fmt.Fprint(bw, padRight(full, w))
+		fmt.Fprint(bw, colors.PadRight(full, w))
 		fmt.Fprint(bw, "│")
 	}
 	fmt.Fprintln(bw)
@@ -385,7 +383,7 @@ func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colW
 func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidth int, p *colors.Palette) []string {
 	if len(dg.items) == 0 {
 		line := fmt.Sprintf(" %sNo releases%s", clr(p.NoReleases), clr(p.Reset))
-		return []string{padRight(line, colWidth)}
+		return []string{colors.PadRight(line, colWidth)}
 	}
 
 	sorted := slices.Clone(dg.items)
@@ -430,7 +428,7 @@ func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidt
 				lines = append(lines, buildEpisodeLines(sorted[j], clr, now, colWidth, p)...)
 			}
 			extra := fmt.Sprintf("  %s+ %d more%s", clr(p.Overflow), count-maxPerShow, clr(p.Reset))
-			lines = append(lines, padRight(extra, colWidth))
+			lines = append(lines, colors.PadRight(extra, colWidth))
 		} else {
 			for j := showStart; j < showEnd; j++ {
 				lines = append(lines, buildEpisodeLines(sorted[j], clr, now, colWidth, p)...)
@@ -450,11 +448,11 @@ func buildEpisodeLines(ep CalendarItem, clr func(string) string, now time.Time, 
 	title := truncateWithEllipsis(ep.ShowTitle, titleMax)
 
 	line1 := fmt.Sprintf(" %s %s%s%s", timeStr, clr(c), title, clr(p.Reset))
-	line1 = padRight(line1, colWidth)
+	line1 = colors.PadRight(line1, colWidth)
 
 	epInfo := fmt.Sprintf("[S%02dE%02d]", ep.Season, ep.Episode)
 	line2 := fmt.Sprintf("       %s%s%s", clr(c), epInfo, clr(p.Reset))
-	line2 = padRight(line2, colWidth)
+	line2 = colors.PadRight(line2, colWidth)
 
 	line3 := strings.Repeat(" ", colWidth)
 
@@ -468,11 +466,11 @@ func buildMovieLines(m CalendarItem, clr func(string) string, now time.Time, col
 	title := truncateWithEllipsis(m.Title, titleMax)
 
 	line1 := fmt.Sprintf(" %s %s%s%s", timeStr, clr(c), title, clr(p.Reset))
-	line1 = padRight(line1, colWidth)
+	line1 = colors.PadRight(line1, colWidth)
 
 	yearStr := fmt.Sprintf("(%d)", m.Year)
 	line2 := fmt.Sprintf("       %s%s%s", clr(c), yearStr, clr(p.Reset))
-	line2 = padRight(line2, colWidth)
+	line2 = colors.PadRight(line2, colWidth)
 
 	line3 := strings.Repeat(" ", colWidth)
 
@@ -507,19 +505,7 @@ func renderSummary(bw *bufio.Writer, items []CalendarItem, now time.Time, clr fu
 		future)
 }
 
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
-func visibleLen(s string) int {
-	return utf8.RuneCountInString(ansiRe.ReplaceAllString(s, ""))
-}
-
-func padRight(s string, width int) string {
-	v := visibleLen(s)
-	if v >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-v)
-}
 
 func truncateWithEllipsis(s string, maxLen int) string {
 	if maxLen <= 0 {
