@@ -27,6 +27,7 @@ func main() {
 	showFailed := flag.Bool("show-failed", cfg.ShowFailed, "Show failed events")
 	showDeleted := flag.Bool("show-deleted", cfg.ShowDeleted, "Show deleted events")
 	showIgnored := flag.Bool("show-ignored", cfg.ShowIgnored, "Show ignored events")
+	showSubtitles := flag.Bool("show-subtitles", cfg.ShowSubtitles, "Show subtitle info for imported events")
 	maxEvents := flag.Int("events", cfg.MaxEvents, "Maximum number of events to display (1-100)")
 	quiet := flag.Bool("quiet", false, "Suppress error output in watch mode")
 	flag.Parse()
@@ -42,6 +43,7 @@ func main() {
 	cfg.ShowFailed = *showFailed
 	cfg.ShowDeleted = *showDeleted
 	cfg.ShowIgnored = *showIgnored
+	cfg.ShowSubtitles = *showSubtitles
 	cfg.MaxEvents = *maxEvents
 	cfg.Quiet = *quiet
 
