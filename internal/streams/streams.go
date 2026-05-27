@@ -757,18 +757,18 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 			header += fmt.Sprintf(" (%s)", serverLabel)
 		}
 	}
-	fmt.Fprint(bw, "│ ")
-	fmt.Fprint(bw, padRight(header, boxW))
-	fmt.Fprint(bw, " │\n")
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(" "+header+" ", boxW))
+	fmt.Fprint(bw, "│\n")
 
 	// Empty state
 	if len(streams) == 0 {
 		boxStreamBottom(bw, termW)
-		fmt.Fprint(bw, "│ ")
+		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, clr(colors.Green))
-		fmt.Fprint(bw, padRight("No active streams", boxW))
+		fmt.Fprint(bw, padRight(" No active streams ", boxW))
 		fmt.Fprint(bw, clr(colors.Reset))
-		fmt.Fprint(bw, " │\n")
+		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
@@ -837,17 +837,17 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	if len(ended) > 0 {
 		header += fmt.Sprintf("    Ended: %s%d%s", clr(colors.Gray), len(ended), clr(colors.Reset))
 	}
-	fmt.Fprint(bw, "│ ")
-	fmt.Fprint(bw, padRight(header, boxW))
-	fmt.Fprint(bw, " │\n")
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(" "+header+" ", boxW))
+	fmt.Fprint(bw, "│\n")
 
 	if len(active) == 0 && len(ended) == 0 {
 		boxStreamSep(bw, termW)
-		fmt.Fprint(bw, "│ ")
+		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, clr(colors.Green))
-		fmt.Fprint(bw, padRight("No active streams", boxW))
+		fmt.Fprint(bw, padRight(" No active streams ", boxW))
 		fmt.Fprint(bw, clr(colors.Reset))
-		fmt.Fprint(bw, " │\n")
+		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
@@ -865,11 +865,11 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	// Ended sessions
 	if len(ended) > 0 {
 		boxStreamSep(bw, termW)
-		fmt.Fprint(bw, "│ ")
+		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, clr(colors.Gray))
-		fmt.Fprint(bw, padRight("Recently Ended Sessions:", boxW))
+		fmt.Fprint(bw, padRight(" Recently Ended Sessions ", boxW))
 		fmt.Fprint(bw, clr(colors.Reset))
-		fmt.Fprint(bw, " │\n")
+		fmt.Fprint(bw, "│\n")
 
 		for _, record := range ended {
 			displayEndedStreamToBox(bw, record, boxW, noColor)

@@ -976,10 +976,15 @@ func truncate(s string, maxLen int) string {
 }
 
 func center(s string, width int) string {
-	if len(s) >= width {
-		return s[:width]
+	v := visibleLen(s)
+	if v >= width {
+		runes := []rune(s)
+		if len(runes) > width {
+			return string(runes[:width])
+		}
+		return s
 	}
-	padding := width - len(s)
+	padding := width - v
 	leftPad := padding / 2
 	rightPad := padding - leftPad
 	return strings.Repeat(" ", leftPad) + s + strings.Repeat(" ", rightPad)
