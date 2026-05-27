@@ -281,7 +281,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
 		if err != nil {
 			if !cfg.JSON {
-				fmt.Print(colors.ClearScreen + colors.HomeCursor)
+				fmt.Print(colors.HomeCursor + colors.EraseDown)
 				clr := getColorFunc(cfg, p)
 				fmt.Printf("%sERROR: %v%s\n", clr(p.Error), err, clr(p.Reset))
 				fmt.Printf("Retrying in %v...\n", cfg.PollInterval)
@@ -304,7 +304,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 			if cfg.JSON {
 				renderJSON(filteredEvents)
 			} else {
-				fmt.Print(colors.ClearScreen + colors.HomeCursor)
+				fmt.Print(colors.HomeCursor + colors.EraseDown)
 				renderTable(filteredEvents, cfg, p)
 			}
 
