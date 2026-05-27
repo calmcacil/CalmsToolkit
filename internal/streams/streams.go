@@ -266,7 +266,6 @@ func Run(cfg ToolConfig) {
 		defer cancel()
 
 		for {
-			fmt.Print(colors.ClearScreen + colors.HomeCursor)
 			if err := displayAllSessionsWithHistory(ctx, cfg, history, p); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
@@ -816,7 +815,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	fmt.Fprint(bw, colors.HomeCursor+colors.EraseDown)
 
 	// Title
 	title := "Media Streams Monitor"

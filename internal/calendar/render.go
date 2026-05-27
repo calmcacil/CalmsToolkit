@@ -175,7 +175,7 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	fmt.Fprint(bw, colors.HomeCursor+colors.EraseDown)
 
 	if !cfg.Quiet && len(queueIssues) > 0 {
 		totalIssues := 0
