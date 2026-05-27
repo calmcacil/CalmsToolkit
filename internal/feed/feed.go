@@ -545,7 +545,7 @@ func sonarrToHistoryEvent(sh SonarrHistory) HistoryEvent {
 		ID:          sh.ID,
 	}
 
-	if fileIDVal, ok := sh.Data["fileId"]; ok {
+	if fileIDVal, ok := sh.Data["FileId"]; ok {
 		if fid, err := parseInt(fmt.Sprintf("%v", fileIDVal)); err == nil {
 			event.FileID = fid
 		}
@@ -589,7 +589,7 @@ func radarrToHistoryEvent(rh RadarrHistory) HistoryEvent {
 		ID:          rh.ID,
 	}
 
-	if fileIDVal, ok := rh.Data["fileId"]; ok {
+	if fileIDVal, ok := rh.Data["FileId"]; ok {
 		if fid, err := parseInt(fmt.Sprintf("%v", fileIDVal)); err == nil {
 			event.FileID = fid
 		}
