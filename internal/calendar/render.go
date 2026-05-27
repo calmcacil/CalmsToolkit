@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	minColWidth    = 20
-	maxColumns     = 3
-	maxPerShow     = 2
+	minColWidth = 20
+	maxColumns  = 3
+	maxPerShow  = 2
 )
 
 type resizeEvent struct {
@@ -99,7 +99,7 @@ func dataAgent(ctx context.Context, cfg ToolConfig, ch chan<- dataEvent) {
 	}
 }
 
-func runWithSubagents(ctx context.Context, cfg ToolConfig) error {
+func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) error {
 	resizeCh := make(chan resizeEvent, 1)
 	dataCh := make(chan dataEvent, 1)
 
@@ -111,8 +111,8 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig) error {
 
 	var (
 		termWidth int = 80
-		items         []CalendarItem
-		issues        []QueueIssue
+		items     []CalendarItem
+		issues    []QueueIssue
 	)
 
 	for items == nil {
@@ -134,7 +134,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig) error {
 		}
 	}
 
-	renderCalendar(cfg, items, issues, termWidth)
+	renderCalendar(cfg, items, issues, termWidth, p)
 
 	if !cfg.WatchMode {
 		return nil
@@ -147,7 +147,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig) error {
 		case re := <-resizeCh:
 			if re.width > 0 && re.width != termWidth {
 				termWidth = re.width
-				renderCalendar(cfg, items, issues, termWidth)
+				renderCalendar(cfg, items, issues, termWidth, p)
 			}
 		case de := <-dataCh:
 			if de.err != nil {
@@ -156,12 +156,12 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig) error {
 			}
 			items = de.items
 			issues = de.queueIssues
-			renderCalendar(cfg, items, issues, termWidth)
+			renderCalendar(cfg, items, issues, termWidth, p)
 		}
 	}
 }
 
-func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIssue, termWidth int) {
+func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIssue, termWidth int, p *colors.Palette) {
 	clr := func(code string) string {
 		if cfg.NoColor {
 			return ""
@@ -182,18 +182,18 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 		for _, issue := range queueIssues {
 			totalIssues += issue.Count
 		}
-		fmt.Fprintf(bw, "%s%s⚠️  WARNING: %d items require manual intervention%s\n",
-			clr(colors.Bold), clr(colors.Red), totalIssues, clr(colors.Reset))
+		fmt.Fprintf(bw, "%s⚠️  WARNING: %d items require manual intervention%s\n",
+			clr(p.QueueWarning), totalIssues, clr(p.Reset))
 		for _, issue := range queueIssues {
 			fmt.Fprintf(bw, "%s→ %s: %s%s\n",
-				clr(colors.Yellow), issue.ServiceName, issue.URL, clr(colors.Reset))
+				clr(p.QueueLink), issue.ServiceName, issue.URL, clr(p.Reset))
 		}
 		fmt.Fprintln(bw)
 	}
 
 	if len(items) == 0 {
 		fmt.Fprintf(bw, "%sNo items match the current filters.%s\n",
-			clr(colors.Green), clr(colors.Reset))
+			clr(p.NoReleases), clr(p.Reset))
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return
@@ -258,11 +258,11 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 			}
 		}
 
-		renderBox(bw, cfg, clr, now, section, w, termWidth, title, cfg.NoBanner)
+		renderBox(bw, cfg, clr, now, section, w, termWidth, title, cfg.NoBanner, p)
 		title = ""
 	}
 
-	renderSummary(bw, items, now, clr)
+	renderSummary(bw, items, now, clr, p)
 
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
@@ -272,7 +272,7 @@ func boxExtra(totalWidth, colWidth, numCols int) int {
 	return totalWidth - (numCols*colWidth + numCols + 1)
 }
 
-func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now time.Time, days []*dayGroup, colWidth, totalWidth int, title string, _ bool) {
+func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now time.Time, days []*dayGroup, colWidth, totalWidth int, title string, _ bool, p *colors.Palette) {
 	extra := boxExtra(totalWidth, colWidth, len(days))
 	numCols := len(days)
 
@@ -290,7 +290,7 @@ func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now ti
 		boxTop(bw, colWidth, numCols, extra)
 	}
 
-	headerRow(bw, clr, days, colWidth, extra)
+	headerRow(bw, clr, days, colWidth, extra, p)
 
 	boxSep(bw, colWidth, numCols, extra)
 
@@ -301,7 +301,7 @@ func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now ti
 		if i == numCols-1 {
 			width += extra
 		}
-		lines := buildDayLines(dg, clr, now, width, cfg.NoColor)
+		lines := buildDayLines(dg, clr, now, width, p)
 		dayLines[i] = lines
 		if len(lines) > maxLines {
 			maxLines = len(lines)
@@ -362,7 +362,7 @@ func boxBottom(bw *bufio.Writer, colWidth, numCols, extra int) {
 	fmt.Fprint(bw, "┘\n")
 }
 
-func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colWidth, extra int) {
+func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colWidth, extra int, p *colors.Palette) {
 	fmt.Fprint(bw, "│")
 	for i, dg := range days {
 		w := colWidth
@@ -372,16 +372,16 @@ func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colW
 		dateStr := dg.date.Format("Mon 01/02")
 		countStr := fmt.Sprintf("(%d Show%s)", len(dg.items), pluralS(len(dg.items)))
 		full := fmt.Sprintf(" %s%s%s %s",
-			clr(colors.Bold), dateStr, clr(colors.Reset), countStr)
+			clr(p.DayHeader), dateStr, clr(p.Reset), countStr)
 		fmt.Fprint(bw, padRight(full, w))
 		fmt.Fprint(bw, "│")
 	}
 	fmt.Fprintln(bw)
 }
 
-func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidth int, noColor bool) []string {
+func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidth int, p *colors.Palette) []string {
 	if len(dg.items) == 0 {
-		line := fmt.Sprintf(" %sNo releases%s", clr(colors.Green), clr(colors.Reset))
+		line := fmt.Sprintf(" %sNo releases%s", clr(p.NoReleases), clr(p.Reset))
 		return []string{padRight(line, colWidth)}
 	}
 
@@ -408,7 +408,7 @@ func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidt
 		item := sorted[i]
 
 		if item.Type == "movie" {
-			lines = append(lines, buildMovieLines(item, clr, now, colWidth, noColor)...)
+			lines = append(lines, buildMovieLines(item, clr, now, colWidth, p)...)
 			i++
 			continue
 		}
@@ -424,13 +424,13 @@ func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidt
 
 		if count > maxPerShow {
 			for j := showStart; j < showStart+maxPerShow; j++ {
-				lines = append(lines, buildEpisodeLines(sorted[j], clr, now, colWidth, noColor)...)
+				lines = append(lines, buildEpisodeLines(sorted[j], clr, now, colWidth, p)...)
 			}
-			extra := fmt.Sprintf("  %s+ %d more%s", clr(colors.Cyan), count-maxPerShow, clr(colors.Reset))
+			extra := fmt.Sprintf("  %s+ %d more%s", clr(p.Overflow), count-maxPerShow, clr(p.Reset))
 			lines = append(lines, padRight(extra, colWidth))
 		} else {
 			for j := showStart; j < showEnd; j++ {
-				lines = append(lines, buildEpisodeLines(sorted[j], clr, now, colWidth, noColor)...)
+				lines = append(lines, buildEpisodeLines(sorted[j], clr, now, colWidth, p)...)
 			}
 		}
 
@@ -440,17 +440,17 @@ func buildDayLines(dg *dayGroup, clr func(string) string, now time.Time, colWidt
 	return lines
 }
 
-func buildEpisodeLines(ep CalendarItem, clr func(string) string, now time.Time, colWidth int, noColor bool) []string {
-	c := getStatusColor(ep, now, noColor)
+func buildEpisodeLines(ep CalendarItem, clr func(string) string, now time.Time, colWidth int, p *colors.Palette) []string {
+	c := getStatusColor(ep, now, p)
 	timeStr := ep.AirTime.Format("15:04")
 	titleMax := colWidth - 7
 	title := truncateWithEllipsis(ep.ShowTitle, titleMax)
 
-	line1 := fmt.Sprintf(" %s %s%s%s", timeStr, clr(c), title, clr(colors.Reset))
+	line1 := fmt.Sprintf(" %s %s%s%s", timeStr, clr(c), title, clr(p.Reset))
 	line1 = padRight(line1, colWidth)
 
 	epInfo := fmt.Sprintf("[S%02dE%02d]", ep.Season, ep.Episode)
-	line2 := fmt.Sprintf("       %s%s%s", clr(c), epInfo, clr(colors.Reset))
+	line2 := fmt.Sprintf("       %s%s%s", clr(c), epInfo, clr(p.Reset))
 	line2 = padRight(line2, colWidth)
 
 	line3 := strings.Repeat(" ", colWidth)
@@ -458,17 +458,17 @@ func buildEpisodeLines(ep CalendarItem, clr func(string) string, now time.Time, 
 	return []string{line1, line2, line3}
 }
 
-func buildMovieLines(m CalendarItem, clr func(string) string, now time.Time, colWidth int, noColor bool) []string {
-	c := getStatusColor(m, now, noColor)
+func buildMovieLines(m CalendarItem, clr func(string) string, now time.Time, colWidth int, p *colors.Palette) []string {
+	c := getStatusColor(m, now, p)
 	timeStr := m.AirTime.Format("15:04")
 	titleMax := colWidth - 7
 	title := truncateWithEllipsis(m.Title, titleMax)
 
-	line1 := fmt.Sprintf(" %s %s%s%s", timeStr, clr(c), title, clr(colors.Reset))
+	line1 := fmt.Sprintf(" %s %s%s%s", timeStr, clr(c), title, clr(p.Reset))
 	line1 = padRight(line1, colWidth)
 
 	yearStr := fmt.Sprintf("(%d)", m.Year)
-	line2 := fmt.Sprintf("       %s%s%s", clr(c), yearStr, clr(colors.Reset))
+	line2 := fmt.Sprintf("       %s%s%s", clr(c), yearStr, clr(p.Reset))
 	line2 = padRight(line2, colWidth)
 
 	line3 := strings.Repeat(" ", colWidth)
@@ -476,7 +476,7 @@ func buildMovieLines(m CalendarItem, clr func(string) string, now time.Time, col
 	return []string{line1, line2, line3}
 }
 
-func renderSummary(bw *bufio.Writer, items []CalendarItem, now time.Time, clr func(string) string) {
+func renderSummary(bw *bufio.Writer, items []CalendarItem, now time.Time, clr func(string) string, p *colors.Palette) {
 	episodes := 0
 	movies := 0
 	available := 0
@@ -497,10 +497,10 @@ func renderSummary(bw *bufio.Writer, items []CalendarItem, now time.Time, clr fu
 	future := len(items) - available - missing
 
 	fmt.Fprintf(bw, "\n%s%s%d items%s (%d episodes, %d movies) — ",
-		clr(colors.Bold), clr(colors.Cyan), len(items), clr(colors.Reset), episodes, movies)
+		clr(p.Bold), clr(p.Accent), len(items), clr(p.Reset), episodes, movies)
 	fmt.Fprintf(bw, "%s%d available%s, %s%d missing%s, %d upcoming\n",
-		clr(colors.Green), available, clr(colors.Reset),
-		clr(colors.Red), missing, clr(colors.Reset),
+		clr(p.Success), available, clr(p.Reset),
+		clr(p.Error), missing, clr(p.Reset),
 		future)
 }
 

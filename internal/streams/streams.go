@@ -158,6 +158,7 @@ type ToolConfig struct {
 	JellyfinToken   string
 	Timeout         time.Duration
 	NoColor         bool
+	Theme           string
 	JSONOutput      bool
 	WatchMode       bool
 	WatchSeconds    int
@@ -227,6 +228,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	}
 	cfg.Timeout = dur
 	cfg.NoColor = tk.General.NoColor
+	cfg.Theme = tk.General.Theme
 	cfg.PlexURL = strings.TrimSuffix(tk.MediaStreams.PlexURL, "/")
 	cfg.PlexToken = tk.MediaStreams.PlexToken
 	cfg.JellyfinURL = strings.TrimSuffix(tk.MediaStreams.JellyfinURL, "/")
@@ -250,6 +252,8 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 
 // Run executes the media streams monitor tool.
 func Run(cfg ToolConfig) {
+	p := colors.GetPalette(cfg.Theme)
+
 	if cfg.WatchMode {
 		fmt.Print(colors.HideCursor)
 		defer fmt.Print(colors.ShowCursor)
@@ -262,7 +266,7 @@ func Run(cfg ToolConfig) {
 		defer cancel()
 
 		for {
-			if err := displayAllSessionsWithHistory(ctx, cfg, history); err != nil {
+			if err := displayAllSessionsWithHistory(ctx, cfg, history, p); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
 			select {
@@ -275,13 +279,13 @@ func Run(cfg ToolConfig) {
 	}
 
 	ctx := context.Background()
-	if err := displayAllSessions(ctx, cfg); err != nil {
+	if err := displayAllSessions(ctx, cfg, p); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory) error {
+func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory, p *colors.Palette) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
@@ -307,10 +311,10 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history 
 		return displayJSONOutput(allStreams, plexCount, jellyfinCount)
 	}
 
-	return displayTerminalOutputWithHistory(allStreams, history, plexCount, jellyfinCount, cfg.NoColor)
+	return displayTerminalOutputWithHistory(allStreams, history, plexCount, jellyfinCount, cfg.NoColor, p)
 }
 
-func displayAllSessions(ctx context.Context, cfg ToolConfig) error {
+func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
@@ -334,7 +338,7 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig) error {
 		return displayJSONOutput(allStreams, plexCount, jellyfinCount)
 	}
 
-	return displayTerminalOutput(allStreams, plexCount, jellyfinCount, cfg.NoColor)
+	return displayTerminalOutput(allStreams, plexCount, jellyfinCount, cfg.NoColor, p)
 }
 
 func fetchPlexStreams(ctx context.Context, client *httpclient.Client, cfg ToolConfig) ([]StreamInfo, error) {
@@ -719,7 +723,7 @@ func boxStreamBottom(bw *bufio.Writer, termW int) {
 	fmt.Fprint(bw, "┘\n")
 }
 
-func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, noColor bool) error {
+func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, noColor bool, p *colors.Palette) error {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -751,7 +755,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 	if len(streams) == 0 {
 		header = "Active Sessions: 0"
 	} else {
-		header = fmt.Sprintf("Active Sessions: %s%d%s", clr(colors.Bold), len(streams), clr(colors.Reset))
+		header = fmt.Sprintf("Active Sessions: %s%d%s", clr(p.Bold), len(streams), clr(p.Reset))
 		if serverLabel != "" {
 			header += fmt.Sprintf(" (%s)", serverLabel)
 		}
@@ -764,9 +768,9 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 	if len(streams) == 0 {
 		boxStreamBottom(bw, termW)
 		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, clr(colors.Green))
+		fmt.Fprint(bw, clr(p.Success))
 		fmt.Fprint(bw, padRight(" No active streams ", boxW))
-		fmt.Fprint(bw, clr(colors.Reset))
+		fmt.Fprint(bw, clr(p.Reset))
 		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
 		bw.Flush()
@@ -782,12 +786,12 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		if i > 0 {
 			boxStreamSep(bw, termW)
 		}
-		displayStreamToBox(bw, stream, boxW, noColor)
+		displayStreamToBox(bw, stream, boxW, noColor, p)
 	}
 
 	// Summary separator and content
 	boxStreamSep(bw, termW)
-	displayStreamSummaryToBox(bw, streams, boxW, noColor)
+	displayStreamSummaryToBox(bw, streams, boxW, noColor, p)
 
 	// Bottom
 	boxStreamBottom(bw, termW)
@@ -797,7 +801,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 	return nil
 }
 
-func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool) error {
+func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool, p *colors.Palette) error {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -829,12 +833,12 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	serverLabel := buildServerLabel(plexCount, jellyfinCount)
 
 	// Active count
-	header := fmt.Sprintf("Active Sessions: %s%d%s", clr(colors.Bold), len(active), clr(colors.Reset))
+	header := fmt.Sprintf("Active Sessions: %s%d%s", clr(p.Bold), len(active), clr(p.Reset))
 	if serverLabel != "" {
 		header += fmt.Sprintf(" (%s)", serverLabel)
 	}
 	if len(ended) > 0 {
-		header += fmt.Sprintf("    Ended: %s%d%s", clr(colors.Gray), len(ended), clr(colors.Reset))
+		header += fmt.Sprintf("    Ended: %s%d%s", clr(p.Subdued), len(ended), clr(p.Reset))
 	}
 	fmt.Fprint(bw, "│")
 	fmt.Fprint(bw, padRight(" "+header+" ", boxW))
@@ -843,9 +847,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	if len(active) == 0 && len(ended) == 0 {
 		boxStreamSep(bw, termW)
 		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, clr(colors.Green))
+		fmt.Fprint(bw, clr(p.Success))
 		fmt.Fprint(bw, padRight(" No active streams ", boxW))
-		fmt.Fprint(bw, clr(colors.Reset))
+		fmt.Fprint(bw, clr(p.Reset))
 		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
 		bw.Flush()
@@ -857,7 +861,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	if len(active) > 0 {
 		boxStreamSep(bw, termW)
 		for _, record := range active {
-			displayStreamToBox(bw, record.Stream, boxW, noColor)
+			displayStreamToBox(bw, record.Stream, boxW, noColor, p)
 		}
 	}
 
@@ -865,13 +869,13 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	if len(ended) > 0 {
 		boxStreamSep(bw, termW)
 		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, clr(colors.Gray))
+		fmt.Fprint(bw, clr(p.Subdued))
 		fmt.Fprint(bw, padRight(" Recently Ended Sessions ", boxW))
-		fmt.Fprint(bw, clr(colors.Reset))
+		fmt.Fprint(bw, clr(p.Reset))
 		fmt.Fprint(bw, "│\n")
 
 		for _, record := range ended {
-			displayEndedStreamToBox(bw, record, boxW, noColor)
+			displayEndedStreamToBox(bw, record, boxW, noColor, p)
 		}
 	}
 
@@ -882,7 +886,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		for _, record := range active {
 			activeStreams = append(activeStreams, record.Stream)
 		}
-		displayStreamSummaryToBox(bw, activeStreams, boxW, noColor)
+		displayStreamSummaryToBox(bw, activeStreams, boxW, noColor, p)
 	}
 
 	boxStreamBottom(bw, termW)
@@ -891,7 +895,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	return nil
 }
 
-func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor bool) {
+func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor bool, p *colors.Palette) {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -899,23 +903,23 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 		return code
 	}
 
-	serverColor := colors.Magenta
+	serverColor := p.ServerJellyfin
 	if stream.Server == "plex" {
-		serverColor = colors.Yellow
+		serverColor = p.ServerPlex
 	}
 
 	// Server + User line
 	line := fmt.Sprintf(" %s%s%s %sUser%s: %s%s%s",
-		clr(serverColor), strings.ToUpper(stream.Server), clr(colors.Reset),
-		clr(colors.Bold), clr(colors.Reset),
-		clr(colors.Yellow), stream.User, clr(colors.Reset))
+		clr(serverColor), strings.ToUpper(stream.Server), clr(p.Reset),
+		clr(p.Bold), clr(p.Reset),
+		clr(p.ServerPlex), stream.User, clr(p.Reset))
 	fmt.Fprint(bw, "│")
 	fmt.Fprint(bw, padRight(line, boxW))
 	fmt.Fprint(bw, "│\n")
 
 	// Show/Title line
 	if stream.Type == "episode" && stream.Show != "" {
-		line := fmt.Sprintf(" %sShow%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Show)
+		line := fmt.Sprintf(" %sShow%s: %s", clr(p.Bold), clr(p.Reset), stream.Show)
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, padRight(line, boxW))
 		fmt.Fprint(bw, "│\n")
@@ -933,9 +937,9 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 			fmt.Fprint(bw, "│\n")
 		}
 	} else {
-		line := fmt.Sprintf(" %sTitle%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Title)
+		line := fmt.Sprintf(" %sTitle%s: %s", clr(p.Bold), clr(p.Reset), stream.Title)
 		if stream.Year != "" {
-			line += fmt.Sprintf(" %s(%s)%s", clr(colors.Cyan), stream.Year, clr(colors.Reset))
+			line += fmt.Sprintf(" %s(%s)%s", clr(p.Accent), stream.Year, clr(p.Reset))
 		}
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, padRight(line, boxW))
@@ -946,9 +950,9 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 	if stream.Client != "" {
 		var clientLine string
 		if stream.Device != "" {
-			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(colors.Bold), clr(colors.Reset), stream.Client, stream.Device)
+			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(p.Bold), clr(p.Reset), stream.Client, stream.Device)
 		} else {
-			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Client)
+			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(p.Bold), clr(p.Reset), stream.Client)
 		}
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, padRight(clientLine, boxW))
@@ -956,15 +960,15 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 	}
 
 	// Status line
-	statusColor := colors.Green
+	statusColor := p.Success
 	if stream.Transcoding {
-		statusColor = colors.Red
+		statusColor = p.Error
 	}
 	statusText := stream.Status
 	if stream.IsPaused {
 		statusText += " (Paused)"
 	}
-	line = fmt.Sprintf(" %sStatus%s: %s%s%s", clr(colors.Bold), clr(colors.Reset), clr(statusColor), statusText, clr(colors.Reset))
+	line = fmt.Sprintf(" %sStatus%s: %s%s%s", clr(p.Bold), clr(p.Reset), clr(statusColor), statusText, clr(p.Reset))
 	if stream.Transcoding {
 		line += " ⚠"
 	}
@@ -974,7 +978,7 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 
 	// Bandwidth line
 	if stream.Bandwidth > 0 {
-		line := fmt.Sprintf(" %sBandwidth%s: %s%.2f Mbps%s", clr(colors.Bold), clr(colors.Reset), clr(colors.Magenta), stream.Bandwidth, clr(colors.Reset))
+		line := fmt.Sprintf(" %sBandwidth%s: %s%.2f Mbps%s", clr(p.Bold), clr(p.Reset), clr(p.Bandwidth), stream.Bandwidth, clr(p.Reset))
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, padRight(line, boxW))
 		fmt.Fprint(bw, "│\n")
@@ -982,7 +986,7 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 
 	// Quality line
 	if stream.Resolution != "" || stream.VideoCodec != "" {
-		line := fmt.Sprintf(" %sQuality%s: ", clr(colors.Bold), clr(colors.Reset))
+		line := fmt.Sprintf(" %sQuality%s: ", clr(p.Bold), clr(p.Reset))
 		if stream.Resolution != "" {
 			line += fmt.Sprintf("%s ", stream.Resolution)
 		}
@@ -1009,16 +1013,16 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 		}
 		bar := renderProgressBar(stream.Progress, barW)
 		line := fmt.Sprintf(" %sPlayback%s: %s %s%5.1f%%%s",
-			clr(colors.Bold), clr(colors.Reset),
+			clr(p.Bold), clr(p.Reset),
 			bar,
-			clr(colors.Cyan), stream.Progress, clr(colors.Reset))
+			clr(p.Accent), stream.Progress, clr(p.Reset))
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, padRight(line, boxW))
 		fmt.Fprint(bw, "│\n")
 	}
 }
 
-func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, noColor bool) {
+func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, noColor bool, p *colors.Palette) {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -1027,16 +1031,16 @@ func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, n
 	}
 	stream := record.Stream
 
-	endedStr := fmt.Sprintf("%s[ENDED %s]%s", clr(colors.Gray), formatTimeSince(*record.EndTime), clr(colors.Reset))
+	endedStr := fmt.Sprintf("%s[ENDED %s]%s", clr(p.Subdued), formatTimeSince(*record.EndTime), clr(p.Reset))
 	line := fmt.Sprintf(" %s%s%s %sUser%s: %s %s",
-		clr(colors.Gray), strings.ToUpper(stream.Server), clr(colors.Reset),
-		clr(colors.Bold), clr(colors.Reset), stream.User, endedStr)
+		clr(p.Subdued), strings.ToUpper(stream.Server), clr(p.Reset),
+		clr(p.Bold), clr(p.Reset), stream.User, endedStr)
 	fmt.Fprint(bw, "│")
 	fmt.Fprint(bw, padRight(line, boxW))
 	fmt.Fprint(bw, "│\n")
 
 	if stream.Type == "episode" && stream.Show != "" {
-		line := fmt.Sprintf(" %sShow%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Show)
+		line := fmt.Sprintf(" %sShow%s: %s", clr(p.Subdued), clr(p.Reset), stream.Show)
 		if stream.Season != "" && stream.Episode != "" {
 			line += fmt.Sprintf(" S%sE%s", stream.Season, stream.Episode)
 		}
@@ -1044,7 +1048,7 @@ func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, n
 		fmt.Fprint(bw, padRight(line, boxW))
 		fmt.Fprint(bw, "│\n")
 	} else {
-		line := fmt.Sprintf(" %sTitle%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Title)
+		line := fmt.Sprintf(" %sTitle%s: %s", clr(p.Subdued), clr(p.Reset), stream.Title)
 		if stream.Year != "" {
 			line += fmt.Sprintf(" (%s)", stream.Year)
 		}
@@ -1053,14 +1057,14 @@ func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, n
 		fmt.Fprint(bw, "│\n")
 	}
 
-	line = fmt.Sprintf(" %sClient%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Client)
+	line = fmt.Sprintf(" %sClient%s: %s", clr(p.Subdued), clr(p.Reset), stream.Client)
 	fmt.Fprint(bw, "│")
 	fmt.Fprint(bw, padRight(line, boxW))
 	fmt.Fprint(bw, "│\n")
 
 	if record.EndTime != nil {
 		duration := record.EndTime.Sub(record.StartTime)
-		line = fmt.Sprintf(" %sDuration%s: %s", clr(colors.Gray), clr(colors.Reset), formatDuration(duration))
+		line = fmt.Sprintf(" %sDuration%s: %s", clr(p.Subdued), clr(p.Reset), formatDuration(duration))
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, padRight(line, boxW))
 		fmt.Fprint(bw, "│\n")
@@ -1084,7 +1088,7 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm", hours, minutes)
 }
 
-func displayStreamSummaryToBox(bw *bufio.Writer, streams []StreamInfo, boxW int, noColor bool) {
+func displayStreamSummaryToBox(bw *bufio.Writer, streams []StreamInfo, boxW int, noColor bool, p *colors.Palette) {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -1102,9 +1106,9 @@ func displayStreamSummaryToBox(bw *bufio.Writer, streams []StreamInfo, boxW int,
 	}
 
 	line := fmt.Sprintf(" %sTotal Streams%s: %d    %sTranscoding%s: %d    %sBandwidth%s: %.2f Mbps",
-		clr(colors.Bold), clr(colors.Reset), len(streams),
-		clr(colors.Bold), clr(colors.Reset), transcodeCount,
-		clr(colors.Bold), clr(colors.Reset), totalBandwidth)
+		clr(p.Bold), clr(p.Reset), len(streams),
+		clr(p.Bold), clr(p.Reset), transcodeCount,
+		clr(p.Bold), clr(p.Reset), totalBandwidth)
 	fmt.Fprint(bw, "│")
 	fmt.Fprint(bw, padRight(line, boxW))
 	fmt.Fprint(bw, "│\n")

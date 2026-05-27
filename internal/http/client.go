@@ -32,9 +32,9 @@ func NewTransportClient(timeout time.Duration) *Client {
 		Client: &http.Client{
 			Timeout: timeout,
 			Transport: &http.Transport{
-				MaxIdleConns:        20,
-				IdleConnTimeout:     30 * time.Second,
-				DisableCompression:  false,
+				MaxIdleConns:       20,
+				IdleConnTimeout:    30 * time.Second,
+				DisableCompression: false,
 			},
 		},
 	}

@@ -1606,8 +1606,6 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 	}
 }
 
-
-
 // TestDisplayCurrentRootFolder verifies current root folder display in approval screen
 func TestDisplayCurrentRootFolder(t *testing.T) {
 	// This test verifies the logic but not the actual display
