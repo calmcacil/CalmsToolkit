@@ -19,6 +19,7 @@ func main() {
 	url := flag.String("url", cfg.ServerURL, "Overseerr/Jellyseerr server URL")
 	token := flag.String("token", cfg.APIKey, "API key/token")
 	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
+	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
 	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
 	verbose := flag.Bool("verbose", cfg.Verbose, "Enable verbose diagnostic output")
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
@@ -29,6 +30,7 @@ func main() {
 	cfg.APIKey = *token
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
+	cfg.Theme = *theme
 	cfg.Verbose = *verbose
 	cfg.JSONOutput = *jsonOutput
 	cfg.Quiet = *quiet

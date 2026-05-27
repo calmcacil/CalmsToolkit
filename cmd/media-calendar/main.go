@@ -20,6 +20,7 @@ func main() {
 	days := flag.Int("days", cfg.Days, "Number of days to display")
 	daysPast := flag.Int("days-past", cfg.DaysPast, "Number of past days to include")
 	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP connection timeout")
+	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
 	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
 	watchMode := flag.Bool("watch", false, "Continuously monitor calendar")
@@ -35,6 +36,7 @@ func main() {
 	cfg.DaysPast = *daysPast
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
+	cfg.Theme = *theme
 	cfg.JSONOutput = *jsonOutput
 	cfg.WatchMode = *watchMode
 	cfg.WatchSeconds = *watchSeconds

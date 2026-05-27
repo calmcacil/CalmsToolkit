@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
@@ -198,8 +199,9 @@ func TestGetActionColor(t *testing.T) {
 		{"unknown"},
 	}
 
+	p := colors.GetPalette("")
 	for _, tt := range tests {
-		result := getActionColor(tt.action)
+		result := getActionColor(tt.action, p)
 		if result == "" {
 			t.Errorf("getActionColor(%q) returned empty", tt.action)
 		}
@@ -260,9 +262,9 @@ func TestBuildToolConfigDefaults(t *testing.T) {
 func TestSonarrToHistoryEvent(t *testing.T) {
 	now := time.Now()
 	sh := SonarrHistory{
-		ID:        123,
-		EventType: "grabbed",
-		Date:      now.UTC().Format(time.RFC3339),
+		ID:          123,
+		EventType:   "grabbed",
+		Date:        now.UTC().Format(time.RFC3339),
 		SourceTitle: "Test.Source.2024",
 		Quality: SonarrQuality{
 			Quality: SonarrQualityItem{Name: "HD-1080p"},
@@ -310,9 +312,9 @@ func TestSonarrToHistoryEvent(t *testing.T) {
 func TestRadarrToHistoryEvent(t *testing.T) {
 	now := time.Now()
 	rh := RadarrHistory{
-		ID:        456,
-		EventType: "downloadFolderImported",
-		Date:      now.UTC().Format(time.RFC3339),
+		ID:          456,
+		EventType:   "downloadFolderImported",
+		Date:        now.UTC().Format(time.RFC3339),
 		SourceTitle: "Test.Movie.2024.1080p",
 		Quality: RadarrQuality{
 			Quality: RadarrQualityItem{Name: "HD-1080p"},
@@ -575,9 +577,9 @@ func TestEventSortOrder(t *testing.T) {
 func TestSonarrToHistoryEventWithFileID(t *testing.T) {
 	now := time.Now()
 	sh := SonarrHistory{
-		ID:        123,
-		EventType: "downloadFolderImported",
-		Date:      now.UTC().Format(time.RFC3339),
+		ID:          123,
+		EventType:   "downloadFolderImported",
+		Date:        now.UTC().Format(time.RFC3339),
 		SourceTitle: "Test.Source.2024",
 		Data: map[string]interface{}{
 			"fileId": "42",
@@ -606,9 +608,9 @@ func TestSonarrToHistoryEventWithFileID(t *testing.T) {
 func TestRadarrToHistoryEventWithFileID(t *testing.T) {
 	now := time.Now()
 	rh := RadarrHistory{
-		ID:        456,
-		EventType: "downloadFolderImported",
-		Date:      now.UTC().Format(time.RFC3339),
+		ID:          456,
+		EventType:   "downloadFolderImported",
+		Date:        now.UTC().Format(time.RFC3339),
 		SourceTitle: "Test.Movie.2024.1080p",
 		Data: map[string]interface{}{
 			"fileId": "99",
