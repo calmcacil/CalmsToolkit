@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -267,8 +268,10 @@ func Run(cfg ToolConfig) {
 
 		fmt.Print(colors.ClearScreen + colors.HomeCursor)
 
+		var lastHash string
+
 		for {
-			if err := displayAllSessionsWithHistory(ctx, cfg, history, p); err != nil {
+			if err := displayAllSessionsWithHistory(ctx, cfg, history, &lastHash, p); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			}
 			select {
@@ -287,7 +290,7 @@ func Run(cfg ToolConfig) {
 	}
 }
 
-func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory, p *colors.Palette) error {
+func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory, lastHash *string, p *colors.Palette) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
@@ -312,6 +315,12 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history 
 	if cfg.JSONOutput {
 		return displayJSONOutput(allStreams, plexCount, jellyfinCount)
 	}
+
+	newHash := computeStreamsHash(history)
+	if *lastHash == newHash {
+		return nil
+	}
+	*lastHash = newHash
 
 	return displayTerminalOutputWithHistory(allStreams, history, plexCount, jellyfinCount, cfg.NoColor, p)
 }
@@ -420,6 +429,19 @@ func updateHistory(history *SessionHistory, currentStreams []StreamInfo, history
 			delete(history.Records, sessionID)
 		}
 	}
+}
+
+func computeStreamsHash(history *SessionHistory) string {
+	records := make([]*SessionRecord, 0, len(history.Records))
+	for _, r := range history.Records {
+		records = append(records, r)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].SessionID < records[j].SessionID
+	})
+	data, _ := json.Marshal(records)
+	h := sha256.Sum256(data)
+	return string(h[:])
 }
 
 func getActiveAndEndedSessions(history *SessionHistory) (active, ended []SessionRecord) {
@@ -798,7 +820,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.HomeCursor)
+	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
 
 	// Title
 	title := "Media Streams Monitor"

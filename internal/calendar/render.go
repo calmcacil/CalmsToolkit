@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -139,6 +141,8 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 		return nil
 	}
 
+	var lastHash string
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,9 +159,23 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 			}
 			items = de.items
 			issues = de.queueIssues
+			newHash := computeCalendarHash(items, issues)
+			if newHash == lastHash {
+				continue
+			}
+			lastHash = newHash
 			renderCalendar(cfg, items, issues, termWidth, p)
 		}
 	}
+}
+
+func computeCalendarHash(items []CalendarItem, queueIssues []QueueIssue) string {
+	data, _ := json.Marshal(struct {
+		Items       []CalendarItem
+		QueueIssues []QueueIssue
+	}{items, queueIssues})
+	h := sha256.Sum256(data)
+	return string(h[:])
 }
 
 func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIssue, termWidth int, p *colors.Palette) {
@@ -174,7 +192,7 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.HomeCursor)
+	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
 
 	if !cfg.Quiet && len(queueIssues) > 0 {
 		totalIssues := 0
