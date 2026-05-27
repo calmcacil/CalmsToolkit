@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"slices"
 	"sort"
@@ -17,8 +15,10 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
 
+// SonarrEpisode represents a Sonarr calendar episode.
 type SonarrEpisode struct {
 	SeriesID      int       `json:"seriesId"`
 	EpisodeID     int       `json:"id"`
@@ -32,12 +32,14 @@ type SonarrEpisode struct {
 	Series        *Series   `json:"series"`
 }
 
+// Series represents a TV series from Sonarr.
 type Series struct {
 	Title       string `json:"title"`
 	Year        int    `json:"year"`
 	SeasonCount int    `json:"seasonCount"`
 }
 
+// RadarrMovie represents a movie from the Radarr calendar.
 type RadarrMovie struct {
 	ID          int    `json:"id"`
 	Title       string `json:"title"`
@@ -49,11 +51,13 @@ type RadarrMovie struct {
 	HasFile     bool   `json:"hasFile"`
 }
 
+// QueueResponse is the wrapper for download queue responses from Sonarr/Radarr.
 type QueueResponse struct {
 	TotalRecords int         `json:"totalRecords"`
 	Records      []QueueItem `json:"records"`
 }
 
+// QueueItem represents a single item in the download queue.
 type QueueItem struct {
 	ID             int             `json:"id"`
 	Status         string          `json:"status"`
@@ -61,11 +65,13 @@ type QueueItem struct {
 	StatusMessages []StatusMessage `json:"statusMessages"`
 }
 
+// StatusMessage describes a queue item status message.
 type StatusMessage struct {
 	Title    string   `json:"title"`
 	Messages []string `json:"messages"`
 }
 
+// CalendarItem is a unified display item representing an episode or movie.
 type CalendarItem struct {
 	Type           string
 	Title          string
@@ -80,6 +86,7 @@ type CalendarItem struct {
 	SourceInstance string
 }
 
+// ToolConfig holds configuration for the media calendar tool.
 type ToolConfig struct {
 	SonarrInstances []config.ArrInstance
 	RadarrInstances []config.ArrInstance
@@ -97,12 +104,14 @@ type ToolConfig struct {
 	MonitoredOnly   bool
 }
 
+// QueueIssue represents a warning about a queue item needing intervention.
 type QueueIssue struct {
 	ServiceName string
 	URL         string
 	Count       int
 }
 
+// Summary provides an overview of calendar items.
 type Summary struct {
 	StartDate   string         `json:"start_date"`
 	EndDate     string         `json:"end_date"`
@@ -134,6 +143,7 @@ type fetchQueueResult struct {
 	Err      error
 }
 
+// BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg := ToolConfig{}
 	if tk == nil {
@@ -179,6 +189,7 @@ func calculateDateRange(days, daysPast int) (start, end time.Time) {
 	return start, end
 }
 
+// Run executes the media calendar tool.
 func Run(cfg ToolConfig) {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
 		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
@@ -210,14 +221,7 @@ func Run(cfg ToolConfig) {
 func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []QueueIssue, error) {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 
-	client := &http.Client{
-		Timeout: cfg.Timeout,
-		Transport: &http.Transport{
-			MaxIdleConns:        20,
-			IdleConnTimeout:     30 * time.Second,
-			DisableCompression:  false,
-		},
-	}
+	client := httpclient.NewTransportClient(cfg.Timeout)
 
 	items := make([]CalendarItem, 0)
 	queueIssues := make([]QueueIssue, 0)
@@ -253,7 +257,7 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 	return items, queueIssues, nil
 }
 
-func fetchSonarrInstance(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+func fetchSonarrInstance(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
 		return fmt.Errorf("Sonarr %s: %w", inst.Name, err)
@@ -314,7 +318,7 @@ func fetchSonarrInstance(ctx context.Context, client *http.Client, inst config.A
 	return nil
 }
 
-func fetchRadarrInstance(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+func fetchRadarrInstance(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
 		return fmt.Errorf("Radarr %s: %w", inst.Name, err)
@@ -386,7 +390,7 @@ func fetchRadarrInstance(ctx context.Context, client *http.Client, inst config.A
 	return nil
 }
 
-func fetchSonarrCalendar(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
+func fetchSonarrCalendar(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s&includeSeries=true",
 		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
@@ -394,36 +398,15 @@ func fetchSonarrCalendar(ctx context.Context, client *http.Client, inst config.A
 		fmt.Fprintf(os.Stderr, "DEBUG: Sonarr %s: GET %s\n", inst.Name, apiURL)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Api-Key", inst.APIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
 	var episodes []SonarrEpisode
-	if err := json.Unmarshal(body, &episodes); err != nil {
+	if err := client.DoJSON(ctx, "GET", apiURL, headers, nil, &episodes); err != nil {
 		return nil, err
 	}
-
 	return episodes, nil
 }
 
-func fetchRadarrCalendar(ctx context.Context, client *http.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
+func fetchRadarrCalendar(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s",
 		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
@@ -431,68 +414,26 @@ func fetchRadarrCalendar(ctx context.Context, client *http.Client, inst config.A
 		fmt.Fprintf(os.Stderr, "DEBUG: Radarr %s: GET %s\n", inst.Name, apiURL)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Api-Key", inst.APIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
 	var movies []RadarrMovie
-	if err := json.Unmarshal(body, &movies); err != nil {
+	if err := client.DoJSON(ctx, "GET", apiURL, headers, nil, &movies); err != nil {
 		return nil, err
 	}
-
 	return movies, nil
 }
 
-func fetchQueue(ctx context.Context, client *http.Client, inst config.ArrInstance, debug bool) (*QueueResponse, error) {
+func fetchQueue(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, debug bool) (*QueueResponse, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/queue?pageSize=1", inst.URL)
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "DEBUG: Queue %s: GET %s\n", inst.Name, apiURL)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("X-Api-Key", inst.APIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
 	var queue QueueResponse
-	if err := json.Unmarshal(body, &queue); err != nil {
+	if err := client.DoJSON(ctx, "GET", apiURL, headers, nil, &queue); err != nil {
 		return nil, err
 	}
-
 	return &queue, nil
 }
 

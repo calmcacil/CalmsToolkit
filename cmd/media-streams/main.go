@@ -44,6 +44,18 @@ func main() {
 	cfg.HistoryDuration = *historyDuration
 	cfg.Quiet = *quiet
 
+	if tk != nil {
+		if err := tk.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
+		}
+	}
+
+	validServers := map[string]bool{"plex": true, "jellyfin": true, "both": true}
+	if cfg.ServerType != "" && !validServers[cfg.ServerType] {
+		fmt.Fprintf(os.Stderr, "ERROR: invalid -server value %q: must be 'plex', 'jellyfin', or 'both'\n", cfg.ServerType)
+		os.Exit(1)
+	}
+
 	cfg.PlexURL = strings.TrimSuffix(cfg.PlexURL, "/")
 	cfg.JellyfinURL = strings.TrimSuffix(cfg.JellyfinURL, "/")
 
