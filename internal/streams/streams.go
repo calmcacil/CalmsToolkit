@@ -265,6 +265,8 @@ func Run(cfg ToolConfig) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		fmt.Print(colors.ClearScreen + colors.HomeCursor)
+
 		for {
 			if err := displayAllSessionsWithHistory(ctx, cfg, history, p); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)

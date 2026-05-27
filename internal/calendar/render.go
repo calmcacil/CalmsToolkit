@@ -134,6 +134,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 		}
 	}
 
+	fmt.Print(colors.ClearScreen + colors.HomeCursor)
 	renderCalendar(cfg, items, issues, termWidth, p)
 
 	if !cfg.WatchMode {

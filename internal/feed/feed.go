@@ -277,6 +277,8 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 	eventCache := make([]HistoryEvent, 0, 100)
 	lastFetch := time.Now().Add(-cfg.HistoryWindow)
 
+	fmt.Print(colors.ClearScreen + colors.HomeCursor)
+
 	for {
 		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
 		if err != nil {
