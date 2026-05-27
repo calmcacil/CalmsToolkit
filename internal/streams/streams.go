@@ -667,12 +667,28 @@ func renderProgressBar(pct float64, width int) string {
 	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
 }
 
+const maxBoxInnerWidth = 120
+
 func getTermWidth() int {
 	w, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w <= 0 {
 		return 80
 	}
 	return w
+}
+
+func getBoxWidth(termW int) (inner, outer int) {
+	outer = termW
+	inner = outer - 2
+	if inner < 40 {
+		inner = 40
+		outer = inner + 2
+	}
+	if inner > maxBoxInnerWidth {
+		inner = maxBoxInnerWidth
+		outer = inner + 2
+	}
+	return
 }
 
 func buildServerLabel(plexCount, jellyfinCount int) string {
@@ -712,11 +728,8 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		return code
 	}
 
-	termW := getTermWidth()
-	boxW := termW - 2
-	if boxW < 40 {
-		boxW = 40
-	}
+	rawW := getTermWidth()
+	boxW, termW := getBoxWidth(rawW)
 
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
@@ -762,6 +775,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		return nil
 	}
 
+	// Stream separator (between header and first stream)
 	boxStreamSep(bw, termW)
 
 	// Each stream
@@ -769,16 +783,14 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		if i > 0 {
 			boxStreamSep(bw, termW)
 		}
-		fmt.Fprint(bw, "│ ")
-		fmt.Fprint(bw, padRight("", boxW))
-		fmt.Fprint(bw, " │\n")
-
 		displayStreamToBox(bw, stream, boxW, noColor)
 	}
 
+	// Summary separator and content
 	boxStreamSep(bw, termW)
 	displayStreamSummaryToBox(bw, streams, boxW, noColor)
 
+	// Bottom
 	boxStreamBottom(bw, termW)
 
 	bw.Flush()
@@ -794,11 +806,8 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		return code
 	}
 
-	termW := getTermWidth()
-	boxW := termW - 2
-	if boxW < 40 {
-		boxW = 40
-	}
+	rawW := getTermWidth()
+	boxW, termW := getBoxWidth(rawW)
 
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
@@ -849,9 +858,6 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	if len(active) > 0 {
 		boxStreamSep(bw, termW)
 		for _, record := range active {
-			fmt.Fprint(bw, "│ ")
-			fmt.Fprint(bw, padRight("", boxW))
-			fmt.Fprint(bw, " │\n")
 			displayStreamToBox(bw, record.Stream, boxW, noColor)
 		}
 	}
@@ -866,9 +872,6 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		fmt.Fprint(bw, " │\n")
 
 		for _, record := range ended {
-			fmt.Fprint(bw, "│ ")
-			fmt.Fprint(bw, padRight("", boxW))
-			fmt.Fprint(bw, " │\n")
 			displayEndedStreamToBox(bw, record, boxW, noColor)
 		}
 	}
@@ -941,15 +944,17 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 	}
 
 	// Client line
-	var clientLine string
-	if stream.Device != "" {
-		clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(colors.Bold), clr(colors.Reset), stream.Client, stream.Device)
-	} else {
-		clientLine = fmt.Sprintf(" %sClient%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Client)
+	if stream.Client != "" {
+		var clientLine string
+		if stream.Device != "" {
+			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(colors.Bold), clr(colors.Reset), stream.Client, stream.Device)
+		} else {
+			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Client)
+		}
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(clientLine, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
-	fmt.Fprint(bw, "│")
-	fmt.Fprint(bw, padRight(clientLine, boxW))
-	fmt.Fprint(bw, "│\n")
 
 	// Status line
 	statusColor := colors.Green
@@ -997,6 +1002,9 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 	// Progress bar
 	if stream.Progress > 0 {
 		barW := boxW - 15
+		if barW > 30 {
+			barW = 30
+		}
 		if barW < 10 {
 			barW = 10
 		}
