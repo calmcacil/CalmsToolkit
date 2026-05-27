@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -277,6 +278,8 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 
 	fmt.Print(colors.ClearScreen + colors.HomeCursor)
 
+	var lastHash string
+
 	for {
 		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
 		if err != nil {
@@ -288,8 +291,10 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 				fmt.Print(colors.EraseDown)
 			}
 		} else {
+			newCount := 0
 			for _, event := range newEvents {
 				eventCache = append(eventCache, event)
+				newCount++
 			}
 
 			if len(eventCache) > 100 {
@@ -305,12 +310,23 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 			if cfg.JSON {
 				renderJSON(filteredEvents)
 			} else {
+				newHash := computeFeedHash(filteredEvents)
+				if newHash == lastHash && newCount == 0 {
+					select {
+					case <-ctx.Done():
+						fmt.Print(colors.ShowCursor)
+						return
+					case <-time.After(cfg.PollInterval):
+					}
+					continue
+				}
+				lastHash = newHash
 				fmt.Print(colors.HomeCursor)
 				renderTable(filteredEvents, cfg, p)
 				fmt.Print(colors.EraseDown)
 			}
 
-			if len(newEvents) > 0 {
+			if newCount > 0 {
 				lastFetch = time.Now()
 			}
 		}
@@ -324,6 +340,12 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 		case <-time.After(cfg.PollInterval):
 		}
 	}
+}
+
+func computeFeedHash(events []HistoryEvent) string {
+	data, _ := json.Marshal(events)
+	h := sha256.Sum256(data)
+	return string(h[:])
 }
 
 func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
@@ -839,24 +861,23 @@ func renderTable(events []HistoryEvent, cfg ToolConfig, p *colors.Palette) {
 	bw := bufio.NewWriter(&buf)
 
 	if len(events) == 0 {
-		boxTop(bw, colWidths, cfg.ShowSubtitles)
-		fmt.Fprint(bw, color(p.Bold))
+		boxW := termWidth - 2
+		msg := "No events found"
+		fmt.Fprint(bw, "┌")
+		fmt.Fprint(bw, strings.Repeat("─", boxW))
+		fmt.Fprint(bw, "┐\n")
 		fmt.Fprint(bw, "│")
-		totalW := 0
-		for _, w := range colWidths {
-			totalW += w
+		left := (boxW - len(msg)) / 2
+		if left < 0 {
+			left = 0
 		}
-		mid := (totalW - len("No events found")) / 2
-		if mid < 0 {
-			mid = 0
-		}
-		fmt.Fprint(bw, strings.Repeat(" ", mid))
-		fmt.Fprint(bw, "No events found")
-		fmt.Fprint(bw, colors.PadRight("", totalW-mid-len("No events found")))
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, color(p.Reset))
-		fmt.Fprintln(bw)
-		boxBottom(bw, colWidths, cfg.ShowSubtitles)
+		fmt.Fprint(bw, strings.Repeat(" ", left))
+		fmt.Fprint(bw, msg)
+		fmt.Fprint(bw, strings.Repeat(" ", boxW-left-len(msg)))
+		fmt.Fprint(bw, "│\n")
+		fmt.Fprint(bw, "└")
+		fmt.Fprint(bw, strings.Repeat("─", boxW))
+		fmt.Fprint(bw, "┘\n")
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return
