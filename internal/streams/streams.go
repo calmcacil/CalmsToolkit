@@ -815,7 +815,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.HomeCursor+colors.EraseDown)
+	fmt.Fprint(bw, colors.HomeCursor)
 
 	// Title
 	title := "Media Streams Monitor"
@@ -852,6 +852,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		fmt.Fprint(bw, clr(p.Reset))
 		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
+		fmt.Fprint(bw, colors.EraseDown)
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return nil
@@ -890,6 +891,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	}
 
 	boxStreamBottom(bw, termW)
+	fmt.Fprint(bw, colors.EraseDown)
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
 	return nil
