@@ -766,14 +766,16 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		return nil
 	}
 
-	// Stream grid
-	renderStreamGrid(bw, streams, boxW, termW, noColor, p)
+	// Close outer box before grid, reopen after
+	boxStreamBottom(bw, termW)
 
-	// Summary separator and content
+	// Stream grid
+	renderStreamGrid(bw, streams, termW, noColor, p)
+
+	// Reopen for summary
+	boxStreamTop(bw, termW)
 	boxStreamSep(bw, termW)
 	displayStreamSummaryToBox(bw, streams, boxW, noColor, p)
-
-	// Bottom
 	boxStreamBottom(bw, termW)
 
 	bw.Flush()
@@ -838,15 +840,18 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		return nil
 	}
 
-	// Active streams
+	// Active streams as standalone grid
 	if len(active) > 0 {
-		boxStreamSep(bw, termW)
+		boxStreamBottom(bw, termW)
 		var activeStreams []StreamInfo
 		for _, record := range active {
 			activeStreams = append(activeStreams, record.Stream)
 		}
-		renderStreamGrid(bw, activeStreams, boxW, termW, noColor, p)
+		renderStreamGrid(bw, activeStreams, termW, noColor, p)
 	}
+
+	// Reopen outer box for ended sessions + summary
+	boxStreamTop(bw, termW)
 
 	// Ended sessions
 	if len(ended) > 0 {
@@ -1116,13 +1121,14 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 
 // renderStreamGrid renders a set of stream boxes in a side-by-side grid that
 // wraps to new rows when the terminal width is exhausted.
-func renderStreamGrid(bw *bufio.Writer, streams []StreamInfo, maxBoxW, termW int, noColor bool, p *colors.Palette) {
+func renderStreamGrid(bw *bufio.Writer, streams []StreamInfo, termW int, noColor bool, p *colors.Palette) {
 	if len(streams) == 0 {
 		return
 	}
 
-	boxFullW := maxBoxW + 2 // │ content │
-	numCols := (termW + 1) / (boxFullW + 1)
+	const prefBoxInnerW = 48
+	boxFullW := prefBoxInnerW + 2
+	numCols := termW / boxFullW
 	if numCols < 1 {
 		numCols = 1
 	}
@@ -1130,14 +1136,14 @@ func renderStreamGrid(bw *bufio.Writer, streams []StreamInfo, maxBoxW, termW int
 		numCols = len(streams)
 	}
 
-	actualW := (termW - 1 - (numCols - 1)) / numCols
-	if actualW > maxBoxW+2 {
-		actualW = maxBoxW + 2
+	innerW := (termW - 1 - (numCols - 1)) / numCols
+	if innerW > prefBoxInnerW {
+		innerW = prefBoxInnerW
 	}
-	if actualW < 3 {
-		actualW = 3
+	if innerW < 20 {
+		innerW = 20
 	}
-	innerW := actualW - 2
+	innerW-- // account for border chars
 
 	type box struct {
 		lines []string
@@ -1159,13 +1165,11 @@ func renderStreamGrid(bw *bufio.Writer, streams []StreamInfo, maxBoxW, termW int
 		}
 		row := boxes[i:end]
 
-		// Top borders
 		for range row {
 			fmt.Fprint(bw, "┌"+strings.Repeat("─", innerW)+"┐")
 		}
 		fmt.Fprintln(bw)
 
-		// Content rows
 		for lineIdx := 0; lineIdx < maxLines; lineIdx++ {
 			for _, b := range row {
 				fmt.Fprint(bw, "│")
@@ -1179,7 +1183,6 @@ func renderStreamGrid(bw *bufio.Writer, streams []StreamInfo, maxBoxW, termW int
 			fmt.Fprintln(bw)
 		}
 
-		// Bottom borders
 		for range row {
 			fmt.Fprint(bw, "└"+strings.Repeat("─", innerW)+"┘")
 		}
