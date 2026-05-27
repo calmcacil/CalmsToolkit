@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/term"
 
@@ -759,20 +757,6 @@ func parseInt(s string) (int, error) {
 	return n, err
 }
 
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-
-func visibleLen(s string) int {
-	return utf8.RuneCountInString(ansiRe.ReplaceAllString(s, ""))
-}
-
-func padRight(s string, width int) string {
-	v := visibleLen(s)
-	if v >= width {
-		return s
-	}
-	return s + strings.Repeat(" ", width-v)
-}
-
 func truncateWithEllipsis(s string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
@@ -868,7 +852,7 @@ func renderTable(events []HistoryEvent, cfg ToolConfig, p *colors.Palette) {
 		}
 		fmt.Fprint(bw, strings.Repeat(" ", mid))
 		fmt.Fprint(bw, "No events found")
-		fmt.Fprint(bw, padRight("", totalW-mid-len("No events found")))
+		fmt.Fprint(bw, colors.PadRight("", totalW-mid-len("No events found")))
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, color(p.Reset))
 		fmt.Fprintln(bw)
@@ -984,7 +968,7 @@ func truncate(s string, maxLen int) string {
 }
 
 func center(s string, width int) string {
-	v := visibleLen(s)
+	v := colors.VisibleLen(s)
 	if v >= width {
 		runes := []rune(s)
 		if len(runes) > width {

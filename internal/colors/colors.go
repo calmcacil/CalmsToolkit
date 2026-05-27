@@ -1,6 +1,29 @@
 package colors
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/mattn/go-runewidth"
+)
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// VisibleLen returns the visible column width of a string, accounting for
+// ANSI codes (zero-width) and CJK / fullwidth characters (double-width).
+func VisibleLen(s string) int {
+	return runewidth.StringWidth(ansiRe.ReplaceAllString(s, ""))
+}
+
+// PadRight pads s on the right with spaces to reach the given visible width.
+func PadRight(s string, width int) string {
+	v := VisibleLen(s)
+	if v >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-v)
+}
 
 // Colorizer provides no-color awareness for ANSI codes.
 type Colorizer struct {
