@@ -1,16 +1,22 @@
 package feed
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/term"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
@@ -745,84 +751,179 @@ func parseInt(s string) (int, error) {
 	return n, err
 }
 
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+func visibleLen(s string) int {
+	return utf8.RuneCountInString(ansiRe.ReplaceAllString(s, ""))
+}
+
+func padRight(s string, width int) string {
+	v := visibleLen(s)
+	if v >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-v)
+}
+
+func truncateWithEllipsis(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	if maxLen <= 1 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-1]) + "…"
+}
+
+func boxTop(bw *bufio.Writer, colWidths []int, hasSubtitles bool) {
+	fmt.Fprint(bw, "┌")
+	for i, w := range colWidths {
+		fmt.Fprint(bw, strings.Repeat("─", w))
+		if i < len(colWidths)-1 {
+			fmt.Fprint(bw, "┬")
+		}
+	}
+	fmt.Fprint(bw, "┐\n")
+}
+
+func boxSep(bw *bufio.Writer, colWidths []int, hasSubtitles bool) {
+	fmt.Fprint(bw, "├")
+	for i, w := range colWidths {
+		fmt.Fprint(bw, strings.Repeat("─", w))
+		if i < len(colWidths)-1 {
+			fmt.Fprint(bw, "┼")
+		}
+	}
+	fmt.Fprint(bw, "┤\n")
+}
+
+func boxBottom(bw *bufio.Writer, colWidths []int, hasSubtitles bool) {
+	fmt.Fprint(bw, "└")
+	for i, w := range colWidths {
+		fmt.Fprint(bw, strings.Repeat("─", w))
+		if i < len(colWidths)-1 {
+			fmt.Fprint(bw, "┴")
+		}
+	}
+	fmt.Fprint(bw, "┘\n")
+}
+
 func renderTable(events []HistoryEvent, cfg ToolConfig) {
 	color := getColorFunc(cfg)
 
-	if cfg.ShowSubtitles {
-		fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s | %-15s%s\n",
-			color(colors.Bold),
-			"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats", "Subtitles",
-			color(colors.Reset))
-
-		fmt.Printf("%s%s%s\n",
-			color(colors.Bold),
-			strings.Repeat("-", 180),
-			color(colors.Reset))
-
-		if len(events) == 0 {
-			fmt.Printf("%sNo events found%s\n", color(colors.Gray), color(colors.Reset))
-			return
-		}
-
-		for _, event := range events {
-			actionColor := getActionColor(event.Action)
-			timeStr := formatRelativeTime(event.When)
-			title := truncate(event.Title, 30)
-			episodeTitle := truncate(event.EpisodeTitle, 40)
-			quality := truncate(event.Quality, 15)
-			formats := truncate(strings.Join(event.Formats, ", "), 20)
-			subtitles := truncate(subtitlesDisplay(event.Subtitles), 15)
-
-			fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-40s | %-15s | %-20s | %-15s\n",
-				timeStr,
-				color(actionColor),
-				center(event.Action, 10),
-				color(colors.Reset),
-				center(title, 30),
-				center(event.Episode, 10),
-				center(episodeTitle, 40),
-				center(quality, 15),
-				center(formats, 20),
-				center(subtitles, 15))
-		}
-	} else {
-		fmt.Printf("%s%-15s | %-10s | %-30s | %-10s | %-40s | %-15s | %-20s%s\n",
-			color(colors.Bold),
-			"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats",
-			color(colors.Reset))
-
-		fmt.Printf("%s%s%s\n",
-			color(colors.Bold),
-			strings.Repeat("-", 160),
-			color(colors.Reset))
-
-		if len(events) == 0 {
-			fmt.Printf("%sNo events found%s\n", color(colors.Gray), color(colors.Reset))
-			return
-		}
-
-		for _, event := range events {
-			actionColor := getActionColor(event.Action)
-			timeStr := formatRelativeTime(event.When)
-			title := truncate(event.Title, 30)
-			episodeTitle := truncate(event.EpisodeTitle, 40)
-			quality := truncate(event.Quality, 15)
-			formats := truncate(strings.Join(event.Formats, ", "), 20)
-
-			fmt.Printf("%-15s | %s%-10s%s | %-30s | %-10s | %-40s | %-15s | %-20s\n",
-				timeStr,
-				color(actionColor),
-				center(event.Action, 10),
-				color(colors.Reset),
-				center(title, 30),
-				center(event.Episode, 10),
-				center(episodeTitle, 40),
-				center(quality, 15),
-				center(formats, 20))
-		}
+	termWidth := 120
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		termWidth = w
 	}
 
-	fmt.Printf("\n%sTotal events: %d%s\n", color(colors.Bold), len(events), color(colors.Reset))
+	props := []int{12, 8, 28, 8, 20, 12, 15}
+	headers := []string{"When", "Action", "Series/Movie", "Episode", "Episode Title", "Quality", "Formats"}
+	if cfg.ShowSubtitles {
+		props = append(props, 10)
+		headers = append(headers, "Subtitles")
+	}
+
+	totalCols := len(props)
+	sumProp := 0
+	for _, p := range props {
+		sumProp += p
+	}
+	availWidth := termWidth - totalCols - 1
+
+	colWidths := make([]int, totalCols)
+	for i, p := range props {
+		cw := availWidth * p / sumProp
+		if cw < 5 {
+			cw = 5
+		}
+		colWidths[i] = cw
+	}
+
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+
+	if len(events) == 0 {
+		boxTop(bw, colWidths, cfg.ShowSubtitles)
+		fmt.Fprint(bw, color(colors.Bold))
+		fmt.Fprint(bw, "│")
+		totalW := 0
+		for _, w := range colWidths {
+			totalW += w
+		}
+		mid := (totalW - len("No events found")) / 2
+		if mid < 0 {
+			mid = 0
+		}
+		fmt.Fprint(bw, strings.Repeat(" ", mid))
+		fmt.Fprint(bw, "No events found")
+		fmt.Fprint(bw, padRight("", totalW-mid-len("No events found")))
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, color(colors.Reset))
+		fmt.Fprintln(bw)
+		boxBottom(bw, colWidths, cfg.ShowSubtitles)
+		bw.Flush()
+		os.Stdout.Write(buf.Bytes())
+		return
+	}
+
+	boxTop(bw, colWidths, cfg.ShowSubtitles)
+	fmt.Fprint(bw, "│")
+	for i, h := range headers {
+		fmt.Fprint(bw, color(colors.Bold))
+		fmt.Fprint(bw, center(h, colWidths[i]))
+		fmt.Fprint(bw, color(colors.Reset))
+		fmt.Fprint(bw, "│")
+	}
+	fmt.Fprintln(bw)
+
+	boxSep(bw, colWidths, cfg.ShowSubtitles)
+
+	for _, event := range events {
+		actionColor := getActionColor(event.Action)
+		timeStr := formatRelativeTime(event.When)
+		title := truncateWithEllipsis(event.Title, colWidths[2])
+		epiTitle := truncateWithEllipsis(event.EpisodeTitle, colWidths[4])
+		quality := truncateWithEllipsis(event.Quality, colWidths[5])
+		formats := truncateWithEllipsis(strings.Join(event.Formats, ", "), colWidths[6])
+
+		vals := []string{
+			center(timeStr, colWidths[0]),
+			center(event.Action, colWidths[1]),
+			center(title, colWidths[2]),
+			center(event.Episode, colWidths[3]),
+			center(epiTitle, colWidths[4]),
+			center(quality, colWidths[5]),
+			center(formats, colWidths[6]),
+		}
+		if cfg.ShowSubtitles {
+			subs := truncateWithEllipsis(subtitlesDisplay(event.Subtitles), colWidths[7])
+			vals = append(vals, center(subs, colWidths[7]))
+		}
+
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, vals[0])
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, color(actionColor))
+		fmt.Fprint(bw, vals[1])
+		fmt.Fprint(bw, color(colors.Reset))
+		fmt.Fprint(bw, "│")
+		for i := 2; i < len(vals); i++ {
+			fmt.Fprint(bw, vals[i])
+			fmt.Fprint(bw, "│")
+		}
+		fmt.Fprintln(bw)
+	}
+
+	boxBottom(bw, colWidths, cfg.ShowSubtitles)
+
+	fmt.Fprintf(bw, "\n%sTotal events: %d%s\n", color(colors.Bold), len(events), color(colors.Reset))
+
+	bw.Flush()
+	os.Stdout.Write(buf.Bytes())
 }
 
 func renderJSON(events []HistoryEvent) {
