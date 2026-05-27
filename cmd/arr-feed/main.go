@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/feed"
@@ -10,7 +12,7 @@ import (
 func main() {
 	tk, err := config.LoadToolkitConfig()
 	if err != nil {
-		println("Warning:", err.Error())
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
 	}
 	cfg := feed.BuildToolConfig(tk)
 
@@ -42,6 +44,20 @@ func main() {
 	cfg.ShowIgnored = *showIgnored
 	cfg.MaxEvents = *maxEvents
 	cfg.Quiet = *quiet
+
+	if tk != nil {
+		if err := tk.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
+		}
+	}
+	if cfg.MaxEvents < 0 || cfg.MaxEvents > 100 {
+		fmt.Fprintf(os.Stderr, "ERROR: -events must be between 0 and 100\n")
+		os.Exit(1)
+	}
+	if cfg.PollInterval <= 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: -poll must be positive\n")
+		os.Exit(1)
+	}
 
 	feed.Run(cfg)
 }

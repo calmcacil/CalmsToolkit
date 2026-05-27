@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
 
 func TestFormatTimeSince(t *testing.T) {
@@ -234,7 +235,7 @@ func TestFetchPlexStreams(t *testing.T) {
 		PlexToken: "test-token",
 		Timeout:   5 * time.Second,
 	}
-	client := &http.Client{Timeout: cfg.Timeout}
+	client := httpclient.NewClient(cfg.Timeout)
 
 	streams, err := fetchPlexStreams(context.Background(), client, cfg)
 	if err != nil {
@@ -281,8 +282,11 @@ func TestFetchJellyfinStreams(t *testing.T) {
 		if r.Method != "GET" {
 			t.Errorf("Expected GET request, got %s", r.Method)
 		}
-		if !strings.Contains(r.URL.RawQuery, "api_key=test-token") {
-			t.Errorf("Expected api_key in query string, got %s", r.URL.RawQuery)
+		if r.Header.Get("X-API-Key") != "test-token" {
+			t.Errorf("Expected X-API-Key header 'test-token', got %q", r.Header.Get("X-API-Key"))
+		}
+		if r.Header.Get("Accept") != "application/json" {
+			t.Errorf("Expected Accept header 'application/json', got %q", r.Header.Get("Accept"))
 		}
 		if !strings.Contains(r.URL.Path, "/Sessions") {
 			t.Errorf("Expected /Sessions in path, got %s", r.URL.Path)
@@ -297,7 +301,7 @@ func TestFetchJellyfinStreams(t *testing.T) {
 		JellyfinToken: "test-token",
 		Timeout:       5 * time.Second,
 	}
-	client := &http.Client{Timeout: cfg.Timeout}
+	client := httpclient.NewClient(cfg.Timeout)
 
 	streams, err := fetchJellyfinStreams(context.Background(), client, cfg)
 	if err != nil {
@@ -305,7 +309,7 @@ func TestFetchJellyfinStreams(t *testing.T) {
 	}
 
 	if len(streams) != 1 {
-		t.Errorf("Got %d streams, want 1", len(streams))
+		t.Errorf("Got %d streams, want 2", len(streams))
 	}
 
 	if len(streams) > 0 {

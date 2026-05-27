@@ -21,20 +21,30 @@ import (
 )
 
 const (
-	StatusPending  = 1
+	// StatusPending indicates a media request is awaiting approval.
+	StatusPending = 1
+	// StatusApproved indicates a media request has been approved.
 	StatusApproved = 2
+	// StatusDeclined indicates a media request has been declined.
 	StatusDeclined = 3
 )
 
 const (
-	MediaStatusUnknown            = 1
-	MediaStatusPending            = 2
-	MediaStatusProcessing         = 3
+	// MediaStatusUnknown indicates the media availability is unknown.
+	MediaStatusUnknown = 1
+	// MediaStatusPending indicates the media request is pending.
+	MediaStatusPending = 2
+	// MediaStatusProcessing indicates the media is being processed.
+	MediaStatusProcessing = 3
+	// MediaStatusPartiallyAvailable indicates partial media availability.
 	MediaStatusPartiallyAvailable = 4
-	MediaStatusAvailable          = 5
-	MediaStatusDeleted            = 6
+	// MediaStatusAvailable indicates the media is fully available.
+	MediaStatusAvailable = 5
+	// MediaStatusDeleted indicates the media record has been deleted.
+	MediaStatusDeleted = 6
 )
 
+// ToolConfig holds configuration for the media requests tool.
 type ToolConfig struct {
 	ServerURL  string
 	APIKey     string
@@ -47,6 +57,7 @@ type ToolConfig struct {
 	client     *http.Client
 }
 
+// SearchResponse is the Overseerr search API response.
 type SearchResponse struct {
 	Page         int            `json:"page"`
 	TotalPages   int            `json:"totalPages"`
@@ -54,6 +65,7 @@ type SearchResponse struct {
 	Results      []SearchResult `json:"results"`
 }
 
+// SearchResult represents a single search result from Overseerr.
 type SearchResult struct {
 	ID            int        `json:"id"`
 	MediaType     string     `json:"mediaType"`
@@ -70,6 +82,7 @@ type SearchResult struct {
 	MediaInfo     *MediaInfo `json:"mediaInfo,omitempty"`
 }
 
+// MediaInfo contains availability and request info for a media item.
 type MediaInfo struct {
 	ID             int              `json:"id"`
 	TmdbID         int              `json:"tmdbId"`
@@ -81,11 +94,13 @@ type MediaInfo struct {
 	UpdatedAt      string           `json:"updatedAt,omitempty"`
 }
 
+// DownloadStatus describes the download state for a media item.
 type DownloadStatus struct {
 	ExternalID int    `json:"externalId"`
 	Status     string `json:"status"`
 }
 
+// MediaRequest represents a user media request in Overseerr.
 type MediaRequest struct {
 	ID          int             `json:"id"`
 	Status      int             `json:"status"`
@@ -102,6 +117,7 @@ type MediaRequest struct {
 	Type        string          `json:"type,omitempty"`
 }
 
+// SeasonRequest represents a season-level request.
 type SeasonRequest struct {
 	ID           int    `json:"id"`
 	SeasonNumber int    `json:"seasonNumber"`
@@ -110,6 +126,7 @@ type SeasonRequest struct {
 	UpdatedAt    string `json:"updatedAt"`
 }
 
+// User represents an Overseerr user.
 type User struct {
 	ID           int    `json:"id"`
 	Email        string `json:"email"`
@@ -119,18 +136,21 @@ type User struct {
 	Avatar       string `json:"avatar,omitempty"`
 }
 
+// AuthMe is the response from the /auth/me endpoint.
 type AuthMe struct {
 	ID          int    `json:"id"`
 	Email       string `json:"email"`
 	Permissions int    `json:"permissions"`
 }
 
+// RequestCount summarizes request counts.
 type RequestCount struct {
 	Pending  int `json:"pending"`
 	Approved int `json:"approved"`
 	Total    int `json:"total"`
 }
 
+// CreateRequest is the payload for creating a new media request.
 type CreateRequest struct {
 	MediaType  string      `json:"mediaType"`
 	MediaID    int         `json:"mediaId"`
@@ -142,12 +162,14 @@ type CreateRequest struct {
 	RootFolder string      `json:"rootFolder,omitempty"`
 }
 
+// RequestOverrides specifies server/root folder overrides for a request.
 type RequestOverrides struct {
 	ServerID   int
 	ServerName string
 	RootFolder string
 }
 
+// ServiceInstance represents a configured Sonarr/Radarr server instance.
 type ServiceInstance struct {
 	ID        int    `json:"id"`
 	Name      string `json:"name"`
@@ -155,26 +177,31 @@ type ServiceInstance struct {
 	IsDefault bool   `json:"isDefault"`
 }
 
+// ServiceProfile is a quality profile on a Sonarr/Radarr instance.
 type ServiceProfile struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 }
 
+// ServiceRootFolder is a root folder path on a Sonarr/Radarr instance.
 type ServiceRootFolder struct {
 	ID   int    `json:"id"`
 	Path string `json:"path"`
 }
 
+// ServiceDetails contains profiles and root folders for a service instance.
 type ServiceDetails struct {
 	Profiles    []ServiceProfile    `json:"profiles"`
 	RootFolders []ServiceRootFolder `json:"rootFolders"`
 }
 
+// RequestsResponse is the paginated response from /request endpoints.
 type RequestsResponse struct {
 	PageInfo PageInfo       `json:"pageInfo"`
 	Results  []MediaRequest `json:"results"`
 }
 
+// PageInfo contains pagination metadata.
 type PageInfo struct {
 	Pages    int `json:"pages"`
 	PageSize int `json:"pageSize"`
@@ -182,6 +209,7 @@ type PageInfo struct {
 	Page     int `json:"page"`
 }
 
+// TVDetails contains season/episode info for a TV show.
 type TVDetails struct {
 	ID               int      `json:"id"`
 	Name             string   `json:"name"`
@@ -190,6 +218,7 @@ type TVDetails struct {
 	Seasons          []Season `json:"seasons"`
 }
 
+// Season represents a single TV season.
 type Season struct {
 	ID           int    `json:"id"`
 	SeasonNumber int    `json:"seasonNumber"`
@@ -198,6 +227,7 @@ type Season struct {
 	AirDate      string `json:"airDate,omitempty"`
 }
 
+// BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg := ToolConfig{}
 	if tk == nil {
@@ -228,6 +258,7 @@ var (
 	cMagenta = colors.Magenta
 )
 
+// Run executes the media requests interactive tool.
 func Run(cfg ToolConfig) {
 	cfg.ctx = context.Background()
 	cfg.client = &http.Client{Timeout: cfg.Timeout}
@@ -345,17 +376,17 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 		return
 	}
 
-	fmt.Printf("\n%sSearching...%s\n", clr(cYellow), clr(cReset))
+	fmt.Fprintf(os.Stderr, "\n%sSearching...%s\n", clr(cYellow), clr(cReset))
 	results, err := searchMedia(cfg, query)
 	if err != nil {
-		fmt.Printf("\n%sError searching: %v%s\n", clr(cRed), err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sError searching: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
 	if len(results) == 0 {
-		fmt.Printf("\n%sNo results found.%s\n", clr(cYellow), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sNo results found.%s\n", clr(cYellow), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -383,7 +414,7 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 
 	selection, err := strconv.Atoi(selectionStr)
 	if err != nil || selection < 1 || selection > len(results) {
-		fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -394,13 +425,13 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 	if selectedMedia.MediaInfo != nil {
 		status := selectedMedia.MediaInfo.Status
 		if status == MediaStatusAvailable || status == MediaStatusPartiallyAvailable {
-			fmt.Printf("\n%sThis media is already available!%s\n", clr(cGreen), clr(cReset))
+			fmt.Fprintf(os.Stderr, "\n%sThis media is already available!%s\n", clr(cGreen), clr(cReset))
 			fmt.Printf("\nPress any key to continue...")
 			readKeystroke(cfg)
 			return
 		}
 		if len(selectedMedia.MediaInfo.Requests) > 0 {
-			fmt.Printf("\n%sThis media has already been requested.%s\n", clr(cYellow), clr(cReset))
+			fmt.Fprintf(os.Stderr, "\n%sThis media has already been requested.%s\n", clr(cYellow), clr(cReset))
 			fmt.Printf("\nPress any key to continue...")
 			readKeystroke(cfg)
 			return
@@ -458,26 +489,26 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 	confirm := readKeyOrDefault(cfg, "n")
 
 	if confirm != "y" {
-		fmt.Printf("\n%sRequest cancelled.%s\n", clr(cYellow), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sRequest cancelled.%s\n", clr(cYellow), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
-	fmt.Printf("\n%sSubmitting request...%s\n", clr(cYellow), clr(cReset))
+	fmt.Fprintf(os.Stderr, "\n%sSubmitting request...%s\n", clr(cYellow), clr(cReset))
 	request, err := createRequest(cfg, selectedMedia, seasons, overrides)
 	if err != nil {
-		fmt.Printf("\n%sError creating request: %v%s\n", clr(cRed), err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sError creating request: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
 	}
 
-	fmt.Printf("\n%s✓ Request submitted successfully!%s\n", clr(cGreen), clr(cReset))
-	fmt.Printf("Request ID: %s%d%s\n", clr(cCyan), request.ID, clr(cReset))
+	fmt.Fprintf(os.Stderr, "\n%s✓ Request submitted successfully!%s\n", clr(cGreen), clr(cReset))
+	fmt.Fprintf(os.Stderr, "Request ID: %s%d%s\n", clr(cCyan), request.ID, clr(cReset))
 
 	statusText := getStatusText(request.Status)
-	fmt.Printf("Status: %s%s%s\n", clr(cYellow), statusText, clr(cReset))
+	fmt.Fprintf(os.Stderr, "Status: %s%s%s\n", clr(cYellow), statusText, clr(cReset))
 
 	fmt.Printf("\nPress any key to continue...")
 	readKeystroke(cfg)
@@ -493,11 +524,11 @@ func handleViewRequests(cfg ToolConfig, reader *bufio.Reader) {
 	}
 
 	fmt.Printf("%s%s=== Pending Requests ===%s\n\n", clr(cBold), clr(cCyan), clr(cReset))
-	fmt.Printf("%sLoading...%s\n", clr(cYellow), clr(cReset))
+	fmt.Fprintf(os.Stderr, "%sLoading...%s\n", clr(cYellow), clr(cReset))
 
 	requests, err := getPendingRequests(cfg)
 	if err != nil {
-		fmt.Printf("\n%sError fetching requests: %v%s\n", clr(cRed), err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sError fetching requests: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -527,7 +558,7 @@ func handleViewRequests(cfg ToolConfig, reader *bufio.Reader) {
 
 	selection, err := strconv.Atoi(selectionStr)
 	if err != nil || selection < 1 || selection > len(requests) {
-		fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return
@@ -566,13 +597,13 @@ func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Rea
 			return
 		}
 
-		fmt.Printf("\n%sApproving request...%s\n", clr(cYellow), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sApproving request...%s\n", clr(cYellow), clr(cReset))
 		if err := approveRequestWithOverrides(cfg, request.ID, overrides); err != nil {
-			fmt.Printf("\n%sError approving: %v%s\n", clr(cRed), err, clr(cReset))
+			fmt.Fprintf(os.Stderr, "\n%sError approving: %v%s\n", clr(cRed), err, clr(cReset))
 		} else {
-			fmt.Printf("\n%s✓ Request approved!%s\n", clr(cGreen), clr(cReset))
+			fmt.Fprintf(os.Stderr, "\n%s✓ Request approved!%s\n", clr(cGreen), clr(cReset))
 			if overrides != nil && overrides.RootFolder != "" {
-				fmt.Printf("%s  Root folder set to: %s%s\n", clr(cGray), overrides.RootFolder, clr(cReset))
+				fmt.Fprintf(os.Stderr, "%s  Root folder set to: %s%s\n", clr(cGray), overrides.RootFolder, clr(cReset))
 			}
 		}
 		fmt.Printf("\nPress any key to continue...")
@@ -583,14 +614,14 @@ func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Rea
 		confirm := readKeyOrDefault(cfg, "n")
 
 		if confirm == "y" {
-			fmt.Printf("\n%sDeclining request...%s\n", clr(cYellow), clr(cReset))
+			fmt.Fprintf(os.Stderr, "\n%sDeclining request...%s\n", clr(cYellow), clr(cReset))
 			if err := declineRequest(cfg, request.ID); err != nil {
-				fmt.Printf("\n%sError declining: %v%s\n", clr(cRed), err, clr(cReset))
+				fmt.Fprintf(os.Stderr, "\n%sError declining: %v%s\n", clr(cRed), err, clr(cReset))
 			} else {
-				fmt.Printf("\n%s✓ Request declined.%s\n", clr(cGreen), clr(cReset))
+				fmt.Fprintf(os.Stderr, "\n%s✓ Request declined.%s\n", clr(cGreen), clr(cReset))
 			}
 		} else {
-			fmt.Printf("\n%sCancelled.%s\n", clr(cYellow), clr(cReset))
+			fmt.Fprintf(os.Stderr, "\n%sCancelled.%s\n", clr(cYellow), clr(cReset))
 		}
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
@@ -599,7 +630,7 @@ func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Rea
 		return
 
 	default:
-		fmt.Printf("\n%sInvalid action.%s\n", clr(cRed), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sInvalid action.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 	}
@@ -738,7 +769,7 @@ func selectSeasons(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (in
 
 	details, err := getTVDetails(cfg, media.ID)
 	if err != nil {
-		fmt.Printf("\n%sError fetching TV show details: %v%s\n", clr(cRed), err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sError fetching TV show details: %v%s\n", clr(cRed), err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, err
@@ -780,7 +811,7 @@ func selectSeasons(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (in
 			part = strings.TrimSpace(part)
 			season, err := strconv.Atoi(part)
 			if err != nil || season < 1 || season > details.NumberOfSeasons {
-				fmt.Printf("\n%sInvalid season number: %s%s\n", clr(cRed), part, clr(cReset))
+				fmt.Fprintf(os.Stderr, "\n%sInvalid season number: %s%s\n", clr(cRed), part, clr(cReset))
 				fmt.Printf("\nPress any key to continue...")
 				readKeystroke(cfg)
 				return nil, fmt.Errorf("invalid season number")
@@ -798,7 +829,7 @@ func selectSeasons(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (in
 		return nil, fmt.Errorf("cancelled")
 
 	default:
-		fmt.Printf("\n%sInvalid option.%s\n", clr(cRed), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sInvalid option.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, fmt.Errorf("invalid option")
@@ -829,7 +860,7 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 			}
 			return code
 		}
-		fmt.Printf("\n%sError fetching %s servers: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sError fetching %s servers: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, err
@@ -884,13 +915,13 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 				if selected == nil {
 					selected = &servers[0]
 				}
-				fmt.Printf("Using default %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
+				fmt.Fprintf(os.Stderr, "Using default %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
 			case "back", "b":
 				return nil, fmt.Errorf("cancelled")
 			default:
 				index, convErr := strconv.Atoi(input)
 				if convErr != nil || index < 1 || index > len(servers) {
-					fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
+					fmt.Fprintf(os.Stderr, "\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 					continue
 				}
 				selected = &servers[index-1]
@@ -902,19 +933,19 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 		}
 	} else {
 		selected = &servers[0]
-		fmt.Printf("Using %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
+		fmt.Fprintf(os.Stderr, "Using %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
 	}
 
 	details, err := fetchServiceDetails(cfg, service, selected.ID)
 	if err != nil {
-		fmt.Printf("\n%sError fetching %s details: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sError fetching %s details: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, err
 	}
 
 	if len(details.RootFolders) == 0 {
-		fmt.Printf("\n%sNo root folders configured for %s.%s\n", clr(cYellow), selected.Name, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sNo root folders configured for %s.%s\n", clr(cYellow), selected.Name, clr(cReset))
 		fmt.Printf("Press Enter to continue...")
 		reader.ReadString('\n')
 		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
@@ -938,7 +969,7 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 		default:
 			index, convErr := strconv.Atoi(input)
 			if convErr != nil || index < 1 || index > len(details.RootFolders) {
-				fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
+				fmt.Fprintf(os.Stderr, "\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 				continue
 			}
 			folder := details.RootFolders[index-1]
@@ -1487,8 +1518,8 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 
 	servers, err := fetchServiceInstances(cfg, service)
 	if err != nil {
-		fmt.Printf("\n%sError fetching %s servers: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
-		fmt.Printf("Proceeding with approval without overrides...\n")
+		fmt.Fprintf(os.Stderr, "\n%sError fetching %s servers: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "Proceeding with approval without overrides...\n")
 		return nil, nil
 	}
 
@@ -1530,7 +1561,7 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 		break
 
 	default:
-		fmt.Printf("\n%sInvalid option.%s\n", clr(cRed), clr(cReset))
+		fmt.Fprintf(os.Stderr, "\n%sInvalid option.%s\n", clr(cRed), clr(cReset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, fmt.Errorf("invalid option")
@@ -1570,7 +1601,7 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 			default:
 				index, convErr := strconv.Atoi(input)
 				if convErr != nil || index < 1 || index > len(servers) {
-					fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
+					fmt.Fprintf(os.Stderr, "\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 					fmt.Printf("\nPress Enter to continue...")
 					reader.ReadString('\n')
 					continue
@@ -1584,21 +1615,21 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 		}
 	} else {
 		selected = &servers[0]
-		fmt.Printf("\nUsing %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
+		fmt.Fprintf(os.Stderr, "\nUsing %s server: %s%s%s\n", serviceLabel, clr(cBold), selected.Name, clr(cReset))
 	}
 
 	details, err := fetchServiceDetails(cfg, service, selected.ID)
 	if err != nil {
-		fmt.Printf("\n%sError fetching %s details: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
-		fmt.Printf("Proceeding with approval without overrides...\n")
+		fmt.Fprintf(os.Stderr, "\n%sError fetching %s details: %v%s\n", clr(cRed), serviceLabel, err, clr(cReset))
+		fmt.Fprintf(os.Stderr, "Proceeding with approval without overrides...\n")
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return nil, nil
 	}
 
 	if len(details.RootFolders) == 0 {
-		fmt.Printf("\n%sNo root folders configured for %s.%s\n", clr(cYellow), selected.Name, clr(cReset))
-		fmt.Printf("Proceeding with approval without overrides...\n")
+		fmt.Fprintf(os.Stderr, "\n%sNo root folders configured for %s.%s\n", clr(cYellow), selected.Name, clr(cReset))
+		fmt.Fprintf(os.Stderr, "Proceeding with approval without overrides...\n")
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
 		return &RequestOverrides{ServerID: selected.ID, ServerName: selected.Name}, nil
@@ -1624,7 +1655,7 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 		default:
 			index, convErr := strconv.Atoi(input)
 			if convErr != nil || index < 1 || index > len(details.RootFolders) {
-				fmt.Printf("\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
+				fmt.Fprintf(os.Stderr, "\n%sInvalid selection.%s\n", clr(cRed), clr(cReset))
 				fmt.Printf("\nPress Enter to continue...")
 				reader.ReadString('\n')
 				continue
