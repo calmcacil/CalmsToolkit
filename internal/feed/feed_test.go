@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
 
 func TestMapSonarrEventType(t *testing.T) {
@@ -353,7 +354,7 @@ func TestFetchSonarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -379,7 +380,7 @@ func TestFetchRadarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -409,7 +410,7 @@ func TestFetchAllHistory(t *testing.T) {
 	}))
 	defer radarrServer.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	cfg := ToolConfig{
 		SonarrInstances: []config.ArrInstance{
 			{Name: "Sonarr", URL: sonarrServer.URL, APIKey: "token"},
@@ -448,7 +449,7 @@ func TestCustomFormatsInSonarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -484,7 +485,7 @@ func TestCustomFormatsInRadarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -515,7 +516,7 @@ func TestFetchAllHistoryErrorHandling(t *testing.T) {
 	}))
 	defer goodServer.Close()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	cfg := ToolConfig{
 		SonarrInstances: []config.ArrInstance{
 			{Name: "Bad", URL: badServer.URL, APIKey: "token"},
@@ -542,7 +543,7 @@ func TestEventSortOrder(t *testing.T) {
 		{ID: 3, When: now.Add(-10 * time.Minute), Action: "Grabbed"},
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := httpclient.NewClient(5 * time.Second)
 	cfg := ToolConfig{
 		SonarrInstances: []config.ArrInstance{},
 		RadarrInstances: []config.ArrInstance{},

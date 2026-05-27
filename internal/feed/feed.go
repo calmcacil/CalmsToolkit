@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"slices"
@@ -15,8 +14,10 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
 
+// ToolConfig holds configuration for the Arr event feed tool.
 type ToolConfig struct {
 	SonarrInstances []config.ArrInstance
 	RadarrInstances []config.ArrInstance
@@ -35,6 +36,7 @@ type ToolConfig struct {
 	Quiet           bool
 }
 
+// HistoryEvent represents a normalized Sonarr/Radarr history event.
 type HistoryEvent struct {
 	Server       string    `json:"server"`
 	When         time.Time `json:"when"`
@@ -49,6 +51,7 @@ type HistoryEvent struct {
 	ID           int       `json:"id"`
 }
 
+// SonarrHistory is the raw Sonarr history API response entry.
 type SonarrHistory struct {
 	EpisodeID     int                    `json:"episodeId"`
 	SeriesID      int                    `json:"seriesId"`
@@ -64,12 +67,14 @@ type SonarrHistory struct {
 	ID            int                    `json:"id"`
 }
 
+// SonarrQuality wraps the quality info in Sonarr history.
 type SonarrQuality struct {
 	Quality       SonarrQualityItem `json:"quality"`
 	CustomFormats []CustomFormat    `json:"customFormats"`
 	Revision      QualityRevision   `json:"revision,omitempty"`
 }
 
+// SonarrQualityItem is a single quality definition.
 type SonarrQualityItem struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
@@ -77,17 +82,20 @@ type SonarrQualityItem struct {
 	Resolution int    `json:"resolution,omitempty"`
 }
 
+// CustomFormat represents a Sonarr/Radarr custom format.
 type CustomFormat struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 }
 
+// QualityRevision represents a quality revision entry.
 type QualityRevision struct {
 	Version  int  `json:"version"`
 	Real     int  `json:"real"`
 	IsRepack bool `json:"isRepack"`
 }
 
+// SonarrEpisode is an episode reference in Sonarr history.
 type SonarrEpisode struct {
 	ID            int    `json:"id"`
 	SeasonNumber  int    `json:"seasonNumber"`
@@ -95,11 +103,13 @@ type SonarrEpisode struct {
 	Title         string `json:"title"`
 }
 
+// SonarrSeries is a series reference in Sonarr history.
 type SonarrSeries struct {
 	ID    int    `json:"id"`
 	Title string `json:"title"`
 }
 
+// RadarrHistory is the raw Radarr history API response entry.
 type RadarrHistory struct {
 	MovieID       int                    `json:"movieId"`
 	SourceTitle   string                 `json:"sourceTitle"`
@@ -113,12 +123,14 @@ type RadarrHistory struct {
 	ID            int                    `json:"id"`
 }
 
+// RadarrQuality wraps the quality info in Radarr history.
 type RadarrQuality struct {
 	Quality       RadarrQualityItem `json:"quality"`
 	CustomFormats []CustomFormat    `json:"customFormats"`
 	Revision      QualityRevision   `json:"revision,omitempty"`
 }
 
+// RadarrQualityItem is a single quality definition.
 type RadarrQualityItem struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
@@ -126,12 +138,14 @@ type RadarrQualityItem struct {
 	Resolution int    `json:"resolution,omitempty"`
 }
 
+// RadarrMovie is a movie reference in Radarr history.
 type RadarrMovie struct {
 	ID    int    `json:"id"`
 	Title string `json:"title"`
 	Year  int    `json:"year"`
 }
 
+// BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg := ToolConfig{}
 	if tk == nil {
@@ -182,6 +196,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	return cfg
 }
 
+// Run executes the Arr event feed tool.
 func Run(cfg ToolConfig) {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
 		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
@@ -189,7 +204,7 @@ func Run(cfg ToolConfig) {
 		os.Exit(1)
 	}
 
-	client := &http.Client{Timeout: cfg.Timeout}
+	client := httpclient.NewClient(cfg.Timeout)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -200,7 +215,7 @@ func Run(cfg ToolConfig) {
 	}
 }
 
-func runSingleMode(ctx context.Context, cfg ToolConfig, client *http.Client) {
+func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client) {
 	since := time.Now().Add(-cfg.HistoryWindow)
 	events, err := fetchAllHistory(ctx, client, cfg, since)
 	if err != nil {
@@ -217,7 +232,7 @@ func runSingleMode(ctx context.Context, cfg ToolConfig, client *http.Client) {
 	}
 }
 
-func runWatchMode(ctx context.Context, cfg ToolConfig, client *http.Client) {
+func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client) {
 	if !cfg.JSON {
 		fmt.Print(colors.HideCursor)
 		defer fmt.Print(colors.ShowCursor)
@@ -273,7 +288,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *http.Client) {
 	}
 }
 
-func fetchAllHistory(ctx context.Context, client *http.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
+func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
 	var wg sync.WaitGroup
 	eventsChan := make(chan []HistoryEvent, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
 	errorsChan := make(chan error, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
@@ -329,30 +344,17 @@ func fetchAllHistory(ctx context.Context, client *http.Client, cfg ToolConfig, s
 	return allEvents, nil
 }
 
-func fetchSonarrHistory(ctx context.Context, client *http.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
+func fetchSonarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", inst.URL, sinceStr)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
+	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("X-Api-Key", inst.APIKey)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("status %d: %s", status, string(body))
 	}
 
 	var wrapper struct {
@@ -373,30 +375,17 @@ func fetchSonarrHistory(ctx context.Context, client *http.Client, inst config.Ar
 	return events, nil
 }
 
-func fetchRadarrHistory(ctx context.Context, client *http.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
+func fetchRadarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", inst.URL, sinceStr)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	headers := map[string]string{"X-Api-Key": inst.APIKey}
+	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	req.Header.Set("X-Api-Key", inst.APIKey)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("status %d: %s", status, string(body))
 	}
 
 	var wrapper struct {

@@ -5,22 +5,25 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
 
 const (
-	ServerPlex     = "plex"
+	// ServerPlex indicates the Plex server type.
+	ServerPlex = "plex"
+	// ServerJellyfin indicates the Jellyfin server type.
 	ServerJellyfin = "jellyfin"
-	ServerBoth     = "both"
+	// ServerBoth indicates both Plex and Jellyfin server types.
+	ServerBoth = "both"
 )
 
+// PlexMediaContainer is the top-level XML response from Plex /status/sessions.
 type PlexMediaContainer struct {
 	XMLName xml.Name    `xml:"MediaContainer"`
 	Size    int         `xml:"size,attr"`
@@ -28,6 +31,7 @@ type PlexMediaContainer struct {
 	Tracks  []PlexTrack `xml:"Track"`
 }
 
+// PlexVideo represents a video stream from Plex.
 type PlexVideo struct {
 	Title            string                `xml:"title,attr"`
 	Year             string                `xml:"year,attr"`
@@ -42,6 +46,7 @@ type PlexVideo struct {
 	TranscodeSession *PlexTranscodeSession `xml:"TranscodeSession"`
 }
 
+// PlexTrack represents a music track stream from Plex.
 type PlexTrack struct {
 	Title            string      `xml:"title,attr"`
 	GrandparentTitle string      `xml:"grandparentTitle,attr"`
@@ -51,19 +56,23 @@ type PlexTrack struct {
 	Media            []PlexMedia `xml:"Media"`
 }
 
+// PlexUser represents a Plex user.
 type PlexUser struct {
 	Title string `xml:"title,attr"`
 }
 
+// PlexPlayer represents a Plex playback client.
 type PlexPlayer struct {
 	Title  string `xml:"title,attr"`
 	Device string `xml:"device,attr"`
 }
 
+// PlexSession contains session metadata from Plex.
 type PlexSession struct {
 	Bandwidth int `xml:"bandwidth,attr"`
 }
 
+// PlexMedia represents media metadata from Plex.
 type PlexMedia struct {
 	VideoResolution string     `xml:"videoResolution,attr"`
 	VideoCodec      string     `xml:"videoCodec,attr"`
@@ -71,16 +80,19 @@ type PlexMedia struct {
 	Parts           []PlexPart `xml:"Part"`
 }
 
+// PlexPart represents a media part from Plex.
 type PlexPart struct {
 	VideoDecision string `xml:"videoDecision,attr"`
 	AudioDecision string `xml:"audioDecision,attr"`
 }
 
+// PlexTranscodeSession represents a Plex transcode session.
 type PlexTranscodeSession struct {
 	VideoDecision string `xml:"videoDecision,attr"`
 	AudioDecision string `xml:"audioDecision,attr"`
 }
 
+// JellyfinSession represents a Jellyfin playback session.
 type JellyfinSession struct {
 	PlayState          JellyfinPlayState        `json:"PlayState"`
 	NowPlayingItem     *JellyfinNowPlayingItem  `json:"NowPlayingItem"`
@@ -92,12 +104,14 @@ type JellyfinSession struct {
 	PlayableMediaTypes []string                 `json:"PlayableMediaTypes"`
 }
 
+// JellyfinPlayState represents the playback state from Jellyfin.
 type JellyfinPlayState struct {
 	PositionTicks int64  `json:"PositionTicks"`
 	IsPaused      bool   `json:"IsPaused"`
 	PlayMethod    string `json:"PlayMethod"`
 }
 
+// JellyfinNowPlayingItem represents the currently playing item from Jellyfin.
 type JellyfinNowPlayingItem struct {
 	Name              string                `json:"Name"`
 	SeriesName        string                `json:"SeriesName"`
@@ -108,12 +122,14 @@ type JellyfinNowPlayingItem struct {
 	MediaStreams      []JellyfinMediaStream `json:"MediaStreams"`
 }
 
+// JellyfinMediaStream represents a media stream from Jellyfin.
 type JellyfinMediaStream struct {
 	Type   string `json:"Type"`
 	Codec  string `json:"Codec"`
 	Height int    `json:"Height"`
 }
 
+// JellyfinTranscodingInfo contains transcode details from Jellyfin.
 type JellyfinTranscodingInfo struct {
 	IsVideoDirect    bool     `json:"IsVideoDirect"`
 	IsAudioDirect    bool     `json:"IsAudioDirect"`
@@ -124,6 +140,7 @@ type JellyfinTranscodingInfo struct {
 	TranscodeReasons []string `json:"TranscodeReasons"`
 }
 
+// ToolConfig holds configuration for the media streams tool.
 type ToolConfig struct {
 	ServerType      string
 	PlexURL         string
@@ -139,6 +156,7 @@ type ToolConfig struct {
 	Quiet           bool
 }
 
+// StreamInfo describes a single media stream.
 type StreamInfo struct {
 	Server      string  `json:"server"`
 	User        string  `json:"user"`
@@ -159,6 +177,7 @@ type StreamInfo struct {
 	IsPaused    bool    `json:"is_paused,omitempty"`
 }
 
+// SessionRecord tracks a stream session with start and optional end time.
 type SessionRecord struct {
 	Stream    StreamInfo
 	StartTime time.Time
@@ -166,10 +185,12 @@ type SessionRecord struct {
 	SessionID string
 }
 
+// SessionHistory maintains a map of session records for change detection.
 type SessionHistory struct {
 	Records map[string]*SessionRecord
 }
 
+// Summary provides an overview of current streams.
 type Summary struct {
 	TotalStreams     int          `json:"total_streams"`
 	TranscodingCount int          `json:"transcoding_count"`
@@ -180,6 +201,7 @@ type Summary struct {
 	Streams          []StreamInfo `json:"streams"`
 }
 
+// BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg := ToolConfig{}
 	if tk == nil {
@@ -216,6 +238,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	return cfg
 }
 
+// Run executes the media streams monitor tool.
 func Run(cfg ToolConfig) {
 	if cfg.WatchMode {
 		fmt.Print(colors.HideCursor)
@@ -253,7 +276,7 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history 
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
-	client := &http.Client{Timeout: cfg.Timeout}
+	client := httpclient.NewClient(cfg.Timeout)
 
 	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
 		if streams, err := fetchPlexStreams(ctx, client, cfg); err == nil {
@@ -282,7 +305,7 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
 
-	client := &http.Client{Timeout: cfg.Timeout}
+	client := httpclient.NewClient(cfg.Timeout)
 
 	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
 		if streams, err := fetchPlexStreams(ctx, client, cfg); err == nil {
@@ -305,31 +328,11 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig) error {
 	return displayTerminalOutput(allStreams, plexCount, jellyfinCount, cfg.NoColor)
 }
 
-func fetchPlexStreams(ctx context.Context, client *http.Client, cfg ToolConfig) ([]StreamInfo, error) {
+func fetchPlexStreams(ctx context.Context, client *httpclient.Client, cfg ToolConfig) ([]StreamInfo, error) {
 	url := fmt.Sprintf("%s/status/sessions?X-Plex-Token=%s", cfg.PlexURL, cfg.PlexToken)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("plex returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
 	var container PlexMediaContainer
-	if err := xml.Unmarshal(body, &container); err != nil {
+	if err := client.DoXML(ctx, "GET", url, nil, nil, &container); err != nil {
 		return nil, err
 	}
 
@@ -344,32 +347,15 @@ func fetchPlexStreams(ctx context.Context, client *http.Client, cfg ToolConfig) 
 	return streams, nil
 }
 
-func fetchJellyfinStreams(ctx context.Context, client *http.Client, cfg ToolConfig) ([]StreamInfo, error) {
-	url := fmt.Sprintf("%s/Sessions?api_key=%s", cfg.JellyfinURL, cfg.JellyfinToken)
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jellyfin returned status %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+func fetchJellyfinStreams(ctx context.Context, client *httpclient.Client, cfg ToolConfig) ([]StreamInfo, error) {
+	url := fmt.Sprintf("%s/Sessions", cfg.JellyfinURL)
+	headers := map[string]string{
+		"Accept":    "application/json",
+		"X-API-Key": cfg.JellyfinToken,
 	}
 
 	var sessions []JellyfinSession
-	if err := json.Unmarshal(body, &sessions); err != nil {
+	if err := client.DoJSON(ctx, "GET", url, headers, nil, &sessions); err != nil {
 		return nil, err
 	}
 

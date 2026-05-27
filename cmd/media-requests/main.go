@@ -33,5 +33,18 @@ func main() {
 	cfg.JSONOutput = *jsonOutput
 	cfg.Quiet = *quiet
 
+	if tk != nil {
+		if err := tk.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
+		}
+	}
+	if cfg.ServerURL == "" {
+		fmt.Fprintf(os.Stderr, "ERROR: server URL is required (use -url flag or set overseerr_url in config)\n")
+		os.Exit(1)
+	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = 10
+	}
+
 	requests.Run(cfg)
 }

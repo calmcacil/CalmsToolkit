@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// ToolkitConfig is the top-level configuration structure for CalmsToolkit.
 type ToolkitConfig struct {
 	Version       int            `json:"version"`
 	General       GeneralConfig  `json:"general"`
@@ -20,17 +21,20 @@ type ToolkitConfig struct {
 	ArrFeed       FeedConfig     `json:"arr_feed"`
 }
 
+// ArrInstance represents a Sonarr or Radarr server instance.
 type ArrInstance struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`
 	APIKey string `json:"api_key"`
 }
 
+// GeneralConfig holds general toolkit settings.
 type GeneralConfig struct {
 	Timeout string `json:"timeout"`
 	NoColor bool   `json:"no_color"`
 }
 
+// CalendarConfig holds media calendar tool settings.
 type CalendarConfig struct {
 	Days          int  `json:"days"`
 	DaysPast      int  `json:"days_past"`
@@ -38,6 +42,7 @@ type CalendarConfig struct {
 	Debug         bool `json:"debug"`
 }
 
+// StreamsConfig holds media streams monitoring configuration.
 type StreamsConfig struct {
 	PlexURL         string `json:"plex_url"`
 	PlexToken       string `json:"plex_token"`
@@ -48,12 +53,14 @@ type StreamsConfig struct {
 	HistoryDuration string `json:"history_duration"`
 }
 
+// RequestsConfig holds media requests (Overseerr) configuration.
 type RequestsConfig struct {
 	OverseerrURL string `json:"overseerr_url"`
 	APIKey       string `json:"api_key"`
 	Verbose      bool   `json:"verbose"`
 }
 
+// FeedConfig holds Arr event feed tool settings.
 type FeedConfig struct {
 	PollInterval  string `json:"poll_interval"`
 	HistoryWindow string `json:"history_window"`
@@ -65,6 +72,7 @@ type FeedConfig struct {
 	MaxEvents     int    `json:"max_events"`
 }
 
+// ConfigPath returns the default config file path (~/.config/calmstoolkit/config.json).
 func ConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -73,6 +81,7 @@ func ConfigPath() string {
 	return filepath.Join(home, ".config", "calmstoolkit", "config.json")
 }
 
+// DefaultToolkitConfig returns a ToolkitConfig with sensible defaults.
 func DefaultToolkitConfig() *ToolkitConfig {
 	return &ToolkitConfig{
 		Version: 1,
@@ -113,6 +122,7 @@ func DefaultToolkitConfig() *ToolkitConfig {
 	}
 }
 
+// LoadToolkitConfig reads and parses the config file from the default path.
 func LoadToolkitConfig() (*ToolkitConfig, error) {
 	path := ConfigPath()
 	if path == "" {
@@ -146,6 +156,7 @@ func LoadToolkitConfig() (*ToolkitConfig, error) {
 	return cfg, nil
 }
 
+// Validate checks the configuration for required fields and valid values.
 func (c *ToolkitConfig) Validate() error {
 	if c.Version != 1 {
 		return fmt.Errorf("unsupported version: %d", c.Version)
@@ -214,6 +225,7 @@ func (c *ToolkitConfig) Validate() error {
 	return nil
 }
 
+// Save writes the configuration to the default config file path.
 func (c *ToolkitConfig) Save() error {
 	path := ConfigPath()
 	if path == "" {

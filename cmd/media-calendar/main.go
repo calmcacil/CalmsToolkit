@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/calmcacil/CalmsToolkit/internal/calendar"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
@@ -42,6 +43,29 @@ func main() {
 	cfg.Quiet = *quiet
 	cfg.Filter = *filter
 	cfg.MonitoredOnly = *monitoredOnly
+
+	if tk != nil {
+		if err := tk.Validate(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
+		}
+	}
+	if cfg.Days < 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: -days must be >= 0\n")
+		os.Exit(1)
+	}
+	if cfg.DaysPast < 0 {
+		fmt.Fprintf(os.Stderr, "ERROR: -days-past must be >= 0\n")
+		os.Exit(1)
+	}
+	if cfg.Filter != "" {
+		validFilters := map[string]bool{"missing": true, "available": true, "premieres": true, "monitored": true}
+		for _, f := range strings.Split(cfg.Filter, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" && !validFilters[f] {
+				fmt.Fprintf(os.Stderr, "Warning: unknown filter value %q (valid: missing, available, premieres, monitored)\n", f)
+			}
+		}
+	}
 
 	calendar.Run(cfg)
 }
