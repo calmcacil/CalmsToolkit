@@ -580,7 +580,7 @@ func TestSonarrToHistoryEventWithFileID(t *testing.T) {
 		Date:      now.UTC().Format(time.RFC3339),
 		SourceTitle: "Test.Source.2024",
 		Data: map[string]interface{}{
-			"FileId": "42",
+			"fileId": "42",
 		},
 		Quality: SonarrQuality{
 			Quality: SonarrQualityItem{Name: "HD-1080p"},
@@ -611,7 +611,7 @@ func TestRadarrToHistoryEventWithFileID(t *testing.T) {
 		Date:      now.UTC().Format(time.RFC3339),
 		SourceTitle: "Test.Movie.2024.1080p",
 		Data: map[string]interface{}{
-			"FileId": "99",
+			"fileId": "99",
 		},
 		Quality: RadarrQuality{
 			Quality: RadarrQualityItem{Name: "HD-1080p"},
