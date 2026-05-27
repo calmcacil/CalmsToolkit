@@ -23,6 +23,7 @@ func main() {
 	jellyfinURL := flag.String("jellyfin-url", cfg.JellyfinURL, "Jellyfin server URL")
 	jellyfinToken := flag.String("jellyfin-token", cfg.JellyfinToken, "Jellyfin API token")
 	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
+	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
 	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
 	watchMode := flag.Bool("watch", false, "Continuously monitor streams")
@@ -38,6 +39,7 @@ func main() {
 	cfg.JellyfinToken = *jellyfinToken
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
+	cfg.Theme = *theme
 	cfg.JSONOutput = *jsonOutput
 	cfg.WatchMode = *watchMode
 	cfg.WatchSeconds = *watchSeconds

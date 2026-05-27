@@ -32,6 +32,7 @@ type ArrInstance struct {
 type GeneralConfig struct {
 	Timeout string `json:"timeout"`
 	NoColor bool   `json:"no_color"`
+	Theme   string `json:"theme"`
 }
 
 // CalendarConfig holds media calendar tool settings.
@@ -89,6 +90,7 @@ func DefaultToolkitConfig() *ToolkitConfig {
 		General: GeneralConfig{
 			Timeout: "10s",
 			NoColor: false,
+			Theme:   "default",
 		},
 		MediaCalendar: CalendarConfig{
 			Days:          1,

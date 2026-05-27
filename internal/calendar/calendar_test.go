@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
 )
@@ -325,16 +326,14 @@ func TestApplyFilters(t *testing.T) {
 	}
 }
 
-
-
 func TestGetStatusColor(t *testing.T) {
 	now := time.Now()
+	p := colors.GetPalette("default")
 
 	tests := []struct {
-		name    string
-		item    CalendarItem
-		now     time.Time
-		noColor bool
+		name string
+		item CalendarItem
+		now  time.Time
 	}{
 		{
 			name: "Downloaded episode",
@@ -343,8 +342,7 @@ func TestGetStatusColor(t *testing.T) {
 				HasFile: true,
 				AirTime: now.Add(-24 * time.Hour),
 			},
-			now:     now,
-			noColor: true,
+			now: now,
 		},
 		{
 			name: "Aired but not downloaded",
@@ -353,8 +351,7 @@ func TestGetStatusColor(t *testing.T) {
 				HasFile: false,
 				AirTime: now.Add(-24 * time.Hour),
 			},
-			now:     now,
-			noColor: true,
+			now: now,
 		},
 		{
 			name: "Future episode",
@@ -363,14 +360,13 @@ func TestGetStatusColor(t *testing.T) {
 				HasFile: false,
 				AirTime: now.Add(48 * time.Hour),
 			},
-			now:     now,
-			noColor: true,
+			now: now,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_ = getStatusColor(tt.item, tt.now, tt.noColor)
+			_ = getStatusColor(tt.item, tt.now, p)
 		})
 	}
 }
