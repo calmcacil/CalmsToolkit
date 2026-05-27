@@ -175,7 +175,7 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.HomeCursor+colors.EraseDown)
+	fmt.Fprint(bw, colors.HomeCursor)
 
 	if !cfg.Quiet && len(queueIssues) > 0 {
 		totalIssues := 0
@@ -194,6 +194,7 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	if len(items) == 0 {
 		fmt.Fprintf(bw, "%sNo items match the current filters.%s\n",
 			clr(p.NoReleases), clr(p.Reset))
+		fmt.Fprint(bw, colors.EraseDown)
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return
@@ -264,6 +265,7 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 
 	renderSummary(bw, items, now, clr, p)
 
+	fmt.Fprint(bw, colors.EraseDown)
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
 }

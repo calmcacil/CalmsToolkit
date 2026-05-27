@@ -1063,7 +1063,7 @@ func readKeyOrDefault(cfg ToolConfig, defaultKey string) string {
 }
 
 func clearScreen() {
-	fmt.Print(colors.HomeCursor + colors.EraseDown)
+	fmt.Print(colors.HomeCursor)
 }
 
 func fetchServiceInstances(cfg ToolConfig, service string) ([]ServiceInstance, error) {
