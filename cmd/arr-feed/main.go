@@ -19,6 +19,7 @@ func main() {
 	poll := flag.Duration("poll", cfg.PollInterval, "Poll interval for watch mode")
 	duration := flag.Duration("duration", cfg.HistoryWindow, "History lookback window")
 	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP request timeout")
+	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
 	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
 	json := flag.Bool("json", false, "Output JSON instead of table")
 	watch := flag.Bool("watch", false, "Continuous monitoring mode")
@@ -36,6 +37,7 @@ func main() {
 	cfg.HistoryWindow = *duration
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *json
+	cfg.Theme = *theme
 	cfg.JSON = *json
 	cfg.Watch = *watch
 	cfg.ShowGrabbed = *showGrabbed

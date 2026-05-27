@@ -94,6 +94,7 @@ type ToolConfig struct {
 	Days            int
 	DaysPast        int
 	NoColor         bool
+	Theme           string
 	JSONOutput      bool
 	WatchMode       bool
 	WatchSeconds    int
@@ -159,6 +160,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	}
 	cfg.Timeout = dur
 	cfg.NoColor = tk.General.NoColor
+	cfg.Theme = tk.General.Theme
 
 	cfg.SonarrInstances = slices.Clone(tk.Sonarr)
 	cfg.RadarrInstances = slices.Clone(tk.Radarr)
@@ -211,8 +213,9 @@ func Run(cfg ToolConfig) {
 		return
 	}
 
+	p := colors.GetPalette(cfg.Theme)
 	ctx := context.Background()
-	if err := runWithSubagents(ctx, cfg); err != nil {
+	if err := runWithSubagents(ctx, cfg, p); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 		os.Exit(1)
 	}
@@ -526,22 +529,18 @@ func applyFilters(items []CalendarItem, cfg ToolConfig) []CalendarItem {
 	return items
 }
 
-func getStatusColor(item CalendarItem, now time.Time, noColor bool) string {
-	if noColor {
-		return ""
-	}
-
+func getStatusColor(item CalendarItem, now time.Time, p *colors.Palette) string {
 	if item.HasFile {
-		return colors.Green
+		return p.Success
 	}
 
 	if item.AirTime.Before(now) {
-		return colors.Red
+		return p.Error
 	}
 
 	if item.IsPremiere {
-		return colors.Orange
+		return p.Premiere
 	}
 
-	return colors.Blue
+	return p.Info
 }

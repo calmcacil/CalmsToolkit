@@ -31,6 +31,7 @@ type ToolConfig struct {
 	HistoryWindow   time.Duration
 	Timeout         time.Duration
 	NoColor         bool
+	Theme           string
 	JSON            bool
 	Watch           bool
 	ShowGrabbed     bool
@@ -106,14 +107,14 @@ type QualityRevision struct {
 
 // SonarrEpisodeFileResponse is the Sonarr episode file API response.
 type SonarrEpisodeFileResponse struct {
-	ID        int                  `json:"id"`
-	MediaInfo *SonarrMediaInfo     `json:"mediaInfo,omitempty"`
+	ID        int              `json:"id"`
+	MediaInfo *SonarrMediaInfo `json:"mediaInfo,omitempty"`
 }
 
 // RadarrMovieFileResponse is the Radarr movie file API response.
 type RadarrMovieFileResponse struct {
-	ID        int                `json:"id"`
-	MediaInfo *RadarrMediaInfo   `json:"mediaInfo,omitempty"`
+	ID        int              `json:"id"`
+	MediaInfo *RadarrMediaInfo `json:"mediaInfo,omitempty"`
 }
 
 // SonarrMediaInfo holds media info including subtitle languages (V3 API).
@@ -196,6 +197,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	}
 	cfg.Timeout = dur
 	cfg.NoColor = tk.General.NoColor
+	cfg.Theme = tk.General.Theme
 	cfg.SonarrInstances = slices.Clone(tk.Sonarr)
 	cfg.RadarrInstances = slices.Clone(tk.Radarr)
 
@@ -240,14 +242,16 @@ func Run(cfg ToolConfig) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	p := colors.GetPalette(cfg.Theme)
+
 	if cfg.Watch {
-		runWatchMode(ctx, cfg, client)
+		runWatchMode(ctx, cfg, client, p)
 	} else {
-		runSingleMode(ctx, cfg, client)
+		runSingleMode(ctx, cfg, client, p)
 	}
 }
 
-func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client) {
+func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client, p *colors.Palette) {
 	since := time.Now().Add(-cfg.HistoryWindow)
 	events, err := fetchAllHistory(ctx, client, cfg, since)
 	if err != nil {
@@ -260,11 +264,11 @@ func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Clien
 	if cfg.JSON {
 		renderJSON(events)
 	} else {
-		renderTable(events, cfg)
+		renderTable(events, cfg, p)
 	}
 }
 
-func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client) {
+func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client, p *colors.Palette) {
 	if !cfg.JSON {
 		fmt.Print(colors.HideCursor)
 		defer fmt.Print(colors.ShowCursor)
@@ -278,8 +282,8 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 		if err != nil {
 			if !cfg.JSON {
 				fmt.Print(colors.ClearScreen + colors.HomeCursor)
-				clr := getColorFunc(cfg)
-				fmt.Printf("%sERROR: %v%s\n", clr(colors.Red), err, clr(colors.Reset))
+				clr := getColorFunc(cfg, p)
+				fmt.Printf("%sERROR: %v%s\n", clr(p.Error), err, clr(p.Reset))
 				fmt.Printf("Retrying in %v...\n", cfg.PollInterval)
 			}
 		} else {
@@ -301,7 +305,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 				renderJSON(filteredEvents)
 			} else {
 				fmt.Print(colors.ClearScreen + colors.HomeCursor)
-				renderTable(filteredEvents, cfg)
+				renderTable(filteredEvents, cfg, p)
 			}
 
 			if len(newEvents) > 0 {
@@ -812,8 +816,8 @@ func boxBottom(bw *bufio.Writer, colWidths []int, hasSubtitles bool) {
 	fmt.Fprint(bw, "┘\n")
 }
 
-func renderTable(events []HistoryEvent, cfg ToolConfig) {
-	color := getColorFunc(cfg)
+func renderTable(events []HistoryEvent, cfg ToolConfig, p *colors.Palette) {
+	color := getColorFunc(cfg, p)
 
 	termWidth := 120
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
@@ -848,7 +852,7 @@ func renderTable(events []HistoryEvent, cfg ToolConfig) {
 
 	if len(events) == 0 {
 		boxTop(bw, colWidths, cfg.ShowSubtitles)
-		fmt.Fprint(bw, color(colors.Bold))
+		fmt.Fprint(bw, color(p.Bold))
 		fmt.Fprint(bw, "│")
 		totalW := 0
 		for _, w := range colWidths {
@@ -862,7 +866,7 @@ func renderTable(events []HistoryEvent, cfg ToolConfig) {
 		fmt.Fprint(bw, "No events found")
 		fmt.Fprint(bw, padRight("", totalW-mid-len("No events found")))
 		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, color(colors.Reset))
+		fmt.Fprint(bw, color(p.Reset))
 		fmt.Fprintln(bw)
 		boxBottom(bw, colWidths, cfg.ShowSubtitles)
 		bw.Flush()
@@ -873,9 +877,9 @@ func renderTable(events []HistoryEvent, cfg ToolConfig) {
 	boxTop(bw, colWidths, cfg.ShowSubtitles)
 	fmt.Fprint(bw, "│")
 	for i, h := range headers {
-		fmt.Fprint(bw, color(colors.Bold))
+		fmt.Fprint(bw, color(p.Bold))
 		fmt.Fprint(bw, center(h, colWidths[i]))
-		fmt.Fprint(bw, color(colors.Reset))
+		fmt.Fprint(bw, color(p.Reset))
 		fmt.Fprint(bw, "│")
 	}
 	fmt.Fprintln(bw)
@@ -883,7 +887,7 @@ func renderTable(events []HistoryEvent, cfg ToolConfig) {
 	boxSep(bw, colWidths, cfg.ShowSubtitles)
 
 	for _, event := range events {
-		actionColor := getActionColor(event.Action)
+		actionColor := getActionColor(event.Action, p)
 		timeStr := formatRelativeTime(event.When)
 		title := truncateWithEllipsis(event.Title, colWidths[2])
 		epiTitle := truncateWithEllipsis(event.EpisodeTitle, colWidths[4])
@@ -909,7 +913,7 @@ func renderTable(events []HistoryEvent, cfg ToolConfig) {
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, color(actionColor))
 		fmt.Fprint(bw, vals[1])
-		fmt.Fprint(bw, color(colors.Reset))
+		fmt.Fprint(bw, color(p.Reset))
 		fmt.Fprint(bw, "│")
 		for i := 2; i < len(vals); i++ {
 			fmt.Fprint(bw, vals[i])
@@ -920,7 +924,7 @@ func renderTable(events []HistoryEvent, cfg ToolConfig) {
 
 	boxBottom(bw, colWidths, cfg.ShowSubtitles)
 
-	fmt.Fprintf(bw, "\n%sTotal events: %d%s\n", color(colors.Bold), len(events), color(colors.Reset))
+	fmt.Fprintf(bw, "\n%sTotal events: %d%s\n", color(p.Bold), len(events), color(p.Reset))
 
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
@@ -932,26 +936,26 @@ func renderJSON(events []HistoryEvent) {
 	encoder.Encode(events)
 }
 
-func getActionColor(action string) string {
+func getActionColor(action string, p *colors.Palette) string {
 	switch action {
 	case "Imported", "Bulk Import":
-		return colors.Green
+		return p.Success
 	case "Grabbed":
-		return colors.Cyan
+		return p.Grabbed
 	case "Failed":
-		return colors.Red
+		return p.Error
 	case "Deleted":
-		return colors.Yellow
+		return p.Warning
 	case "Ignored":
-		return colors.Gray
+		return p.Subdued
 	case "Renamed":
-		return colors.Blue
+		return p.Renamed
 	default:
-		return colors.Reset
+		return p.Reset
 	}
 }
 
-func getColorFunc(cfg ToolConfig) func(string) string {
+func getColorFunc(cfg ToolConfig, p *colors.Palette) func(string) string {
 	if cfg.NoColor || cfg.JSON {
 		return func(s string) string { return "" }
 	}
