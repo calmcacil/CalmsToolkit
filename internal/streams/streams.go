@@ -1,13 +1,19 @@
 package streams
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/term"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
@@ -39,6 +45,7 @@ type PlexVideo struct {
 	GrandparentTitle string                `xml:"grandparentTitle,attr"`
 	ParentIndex      string                `xml:"parentIndex,attr"`
 	Index            string                `xml:"index,attr"`
+	ViewOffset       int                   `xml:"viewOffset,attr"`
 	User             PlexUser              `xml:"User"`
 	Player           PlexPlayer            `xml:"Player"`
 	Session          PlexSession           `xml:"Session"`
@@ -77,6 +84,7 @@ type PlexMedia struct {
 	VideoResolution string     `xml:"videoResolution,attr"`
 	VideoCodec      string     `xml:"videoCodec,attr"`
 	AudioCodec      string     `xml:"audioCodec,attr"`
+	Duration        int        `xml:"duration,attr"`
 	Parts           []PlexPart `xml:"Part"`
 }
 
@@ -119,6 +127,7 @@ type JellyfinNowPlayingItem struct {
 	ProductionYear    int                   `json:"ProductionYear"`
 	IndexNumber       int                   `json:"IndexNumber"`
 	ParentIndexNumber int                   `json:"ParentIndexNumber"`
+	RunTimeTicks      int64                 `json:"RunTimeTicks"`
 	MediaStreams      []JellyfinMediaStream `json:"MediaStreams"`
 }
 
@@ -175,6 +184,7 @@ type StreamInfo struct {
 	AudioCodec  string  `json:"audio_codec,omitempty"`
 	Resolution  string  `json:"resolution,omitempty"`
 	IsPaused    bool    `json:"is_paused,omitempty"`
+	Progress    float64 `json:"progress,omitempty"`
 }
 
 // SessionRecord tracks a stream session with start and optional end time.
@@ -465,6 +475,14 @@ func plexVideoToStream(video PlexVideo) StreamInfo {
 		stream.Resolution = video.Media[0].VideoResolution
 	}
 
+	if len(video.Media) > 0 && video.Media[0].Duration > 0 && video.ViewOffset > 0 {
+		pct := float64(video.ViewOffset) / float64(video.Media[0].Duration) * 100.0
+		if pct > 100 {
+			pct = 100
+		}
+		stream.Progress = pct
+	}
+
 	videoDecision, audioDecision := getPlexDecisions(video.Media, video.TranscodeSession)
 	stream.Transcoding = video.TranscodeSession != nil ||
 		videoDecision == "transcode" || audioDecision == "transcode"
@@ -542,6 +560,14 @@ func jellyfinSessionToStream(session JellyfinSession) StreamInfo {
 		}
 	}
 
+	if session.NowPlayingItem != nil && session.NowPlayingItem.RunTimeTicks > 0 && session.PlayState.PositionTicks > 0 {
+		pct := float64(session.PlayState.PositionTicks) / float64(session.NowPlayingItem.RunTimeTicks) * 100.0
+		if pct > 100 {
+			pct = 100
+		}
+		stream.Progress = pct
+	}
+
 	if stream.Transcoding {
 		stream.Status = "Transcoding"
 	} else {
@@ -615,9 +641,86 @@ func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error
 	return encoder.Encode(summary)
 }
 
-func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, noColor bool) error {
-	var buf strings.Builder
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+func visibleLen(s string) int {
+	return utf8.RuneCountInString(ansiRe.ReplaceAllString(s, ""))
+}
+
+func padRight(s string, width int) string {
+	v := visibleLen(s)
+	if v >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-v)
+}
+
+func renderProgressBar(pct float64, width int) string {
+	if pct <= 0 {
+		return strings.Repeat(" ", width)
+	}
+	filled := int(pct * float64(width) / 100.0)
+	if filled > width {
+		filled = width
+	}
+	empty := width - filled
+	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
+}
+
+const maxBoxInnerWidth = 120
+
+func getTermWidth() int {
+	w, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || w <= 0 {
+		return 80
+	}
+	return w
+}
+
+func getBoxWidth(termW int) (inner, outer int) {
+	outer = termW
+	inner = outer - 2
+	if inner < 40 {
+		inner = 40
+		outer = inner + 2
+	}
+	if inner > maxBoxInnerWidth {
+		inner = maxBoxInnerWidth
+		outer = inner + 2
+	}
+	return
+}
+
+func buildServerLabel(plexCount, jellyfinCount int) string {
+	var parts []string
+	if plexCount > 0 {
+		parts = append(parts, fmt.Sprintf("Plex: %d", plexCount))
+	}
+	if jellyfinCount > 0 {
+		parts = append(parts, fmt.Sprintf("Jellyfin: %d", jellyfinCount))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func boxStreamTop(bw *bufio.Writer, termW int) {
+	fmt.Fprint(bw, "┌")
+	fmt.Fprint(bw, strings.Repeat("─", termW-2))
+	fmt.Fprint(bw, "┐\n")
+}
+
+func boxStreamSep(bw *bufio.Writer, termW int) {
+	fmt.Fprint(bw, "├")
+	fmt.Fprint(bw, strings.Repeat("─", termW-2))
+	fmt.Fprint(bw, "┤\n")
+}
+
+func boxStreamBottom(bw *bufio.Writer, termW int) {
+	fmt.Fprint(bw, "└")
+	fmt.Fprint(bw, strings.Repeat("─", termW-2))
+	fmt.Fprint(bw, "┘\n")
+}
+
+func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, noColor bool) error {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -625,34 +728,77 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 		return code
 	}
 
-	buf.WriteString(fmt.Sprintf("%s%s=== Media Streams Monitor ===%s\n",
-		clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset)))
-	buf.WriteString(fmt.Sprintf("Total Sessions: %s%d%s", clr(colors.Bold), len(streams), clr(colors.Reset)))
-	if plexCount > 0 || jellyfinCount > 0 {
-		buf.WriteString(fmt.Sprintf(" (Plex: %d, Jellyfin: %d)", plexCount, jellyfinCount))
-	}
-	buf.WriteString("\n\n")
+	rawW := getTermWidth()
+	boxW, termW := getBoxWidth(rawW)
 
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+
+	// Title banner
+	title := "Media Streams Monitor"
+	prefix := "┌── " + title + " ──"
+	rc := utf8.RuneCountInString(prefix)
+	padLen := termW - rc - 1
+	if padLen < 0 {
+		padLen = 0
+	}
+	fmt.Fprint(bw, prefix)
+	fmt.Fprint(bw, strings.Repeat("─", padLen))
+	fmt.Fprint(bw, "┐\n")
+
+	// Header
+	serverLabel := buildServerLabel(plexCount, jellyfinCount)
+	header := "Active Sessions"
 	if len(streams) == 0 {
-		buf.WriteString(fmt.Sprintf("%sNo active streams%s\n", clr(colors.Green), clr(colors.Reset)))
-		fmt.Print(buf.String())
+		header = "Active Sessions: 0"
+	} else {
+		header = fmt.Sprintf("Active Sessions: %s%d%s", clr(colors.Bold), len(streams), clr(colors.Reset))
+		if serverLabel != "" {
+			header += fmt.Sprintf(" (%s)", serverLabel)
+		}
+	}
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(" "+header+" ", boxW))
+	fmt.Fprint(bw, "│\n")
+
+	// Empty state
+	if len(streams) == 0 {
+		boxStreamBottom(bw, termW)
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, clr(colors.Green))
+		fmt.Fprint(bw, padRight(" No active streams ", boxW))
+		fmt.Fprint(bw, clr(colors.Reset))
+		fmt.Fprint(bw, "│\n")
+		boxStreamBottom(bw, termW)
+		bw.Flush()
+		os.Stdout.Write(buf.Bytes())
 		return nil
 	}
 
-	for _, stream := range streams {
-		displayStreamToBuffer(&buf, stream, noColor)
+	// Stream separator (between header and first stream)
+	boxStreamSep(bw, termW)
+
+	// Each stream
+	for i, stream := range streams {
+		if i > 0 {
+			boxStreamSep(bw, termW)
+		}
+		displayStreamToBox(bw, stream, boxW, noColor)
 	}
 
-	displayStreamSummaryToBuffer(&buf, streams, noColor)
+	// Summary separator and content
+	boxStreamSep(bw, termW)
+	displayStreamSummaryToBox(bw, streams, boxW, noColor)
 
-	fmt.Print(buf.String())
+	// Bottom
+	boxStreamBottom(bw, termW)
 
+	bw.Flush()
+	os.Stdout.Write(buf.Bytes())
 	return nil
 }
 
 func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool) error {
-	var buf strings.Builder
-
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -660,98 +806,157 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		return code
 	}
 
-	buf.WriteString(fmt.Sprintf("%s%s=== Media Streams Monitor ===%s\n",
-		clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset)))
+	rawW := getTermWidth()
+	boxW, termW := getBoxWidth(rawW)
+
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+
+	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+
+	// Title
+	title := "Media Streams Monitor"
+	prefix := "┌── " + title + " ──"
+	rc := utf8.RuneCountInString(prefix)
+	padLen := termW - rc - 1
+	if padLen < 0 {
+		padLen = 0
+	}
+	fmt.Fprint(bw, prefix)
+	fmt.Fprint(bw, strings.Repeat("─", padLen))
+	fmt.Fprint(bw, "┐\n")
 
 	active, ended := getActiveAndEndedSessions(history)
+	serverLabel := buildServerLabel(plexCount, jellyfinCount)
 
-	buf.WriteString(fmt.Sprintf("Active Sessions: %s%d%s", clr(colors.Bold), len(active), clr(colors.Reset)))
-	if plexCount > 0 || jellyfinCount > 0 {
-		buf.WriteString(fmt.Sprintf(" (Plex: %d, Jellyfin: %d)", plexCount, jellyfinCount))
+	// Active count
+	header := fmt.Sprintf("Active Sessions: %s%d%s", clr(colors.Bold), len(active), clr(colors.Reset))
+	if serverLabel != "" {
+		header += fmt.Sprintf(" (%s)", serverLabel)
 	}
-	buf.WriteString("\n")
-
 	if len(ended) > 0 {
-		buf.WriteString(fmt.Sprintf("Recently Ended: %s%d%s\n", clr(colors.Gray), len(ended), clr(colors.Reset)))
+		header += fmt.Sprintf("    Ended: %s%d%s", clr(colors.Gray), len(ended), clr(colors.Reset))
 	}
-	buf.WriteString("\n")
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(" "+header+" ", boxW))
+	fmt.Fprint(bw, "│\n")
 
-	if len(active) == 0 {
-		buf.WriteString(fmt.Sprintf("%sNo active streams%s\n", clr(colors.Green), clr(colors.Reset)))
-	} else {
+	if len(active) == 0 && len(ended) == 0 {
+		boxStreamSep(bw, termW)
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, clr(colors.Green))
+		fmt.Fprint(bw, padRight(" No active streams ", boxW))
+		fmt.Fprint(bw, clr(colors.Reset))
+		fmt.Fprint(bw, "│\n")
+		boxStreamBottom(bw, termW)
+		bw.Flush()
+		os.Stdout.Write(buf.Bytes())
+		return nil
+	}
+
+	// Active streams
+	if len(active) > 0 {
+		boxStreamSep(bw, termW)
 		for _, record := range active {
-			displayStreamToBuffer(&buf, record.Stream, noColor)
+			displayStreamToBox(bw, record.Stream, boxW, noColor)
 		}
 	}
 
+	// Ended sessions
 	if len(ended) > 0 {
-		buf.WriteString("\n")
-		buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-			clr(colors.Bold), clr(colors.Gray), clr(colors.Reset)))
-		buf.WriteString(fmt.Sprintf("%s%sRecently Ended Sessions:%s\n\n",
-			clr(colors.Bold), clr(colors.Gray), clr(colors.Reset)))
+		boxStreamSep(bw, termW)
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, clr(colors.Gray))
+		fmt.Fprint(bw, padRight(" Recently Ended Sessions ", boxW))
+		fmt.Fprint(bw, clr(colors.Reset))
+		fmt.Fprint(bw, "│\n")
 
 		for _, record := range ended {
-			displayEndedStreamToBuffer(&buf, record, noColor)
+			displayEndedStreamToBox(bw, record, boxW, noColor)
 		}
 	}
 
+	// Summary
 	if len(active) > 0 {
+		boxStreamSep(bw, termW)
 		var activeStreams []StreamInfo
 		for _, record := range active {
 			activeStreams = append(activeStreams, record.Stream)
 		}
-		displayStreamSummaryToBuffer(&buf, activeStreams, noColor)
+		displayStreamSummaryToBox(bw, activeStreams, boxW, noColor)
 	}
 
-	fmt.Print(buf.String())
-
+	boxStreamBottom(bw, termW)
+	bw.Flush()
+	os.Stdout.Write(buf.Bytes())
 	return nil
 }
 
-func displayStreamToBuffer(buf *strings.Builder, stream StreamInfo, noColor bool) {
+func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor bool) {
 	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
 		return code
 	}
-
-	buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-		clr(colors.Bold), clr(colors.Blue), clr(colors.Reset)))
 
 	serverColor := colors.Magenta
 	if stream.Server == "plex" {
 		serverColor = colors.Yellow
 	}
-	buf.WriteString(fmt.Sprintf("%s[%s]%s ", clr(serverColor), strings.ToUpper(stream.Server), clr(colors.Reset)))
-	buf.WriteString(fmt.Sprintf("%sUser%s: %s%s%s\n", clr(colors.Bold), clr(colors.Reset),
-		clr(colors.Yellow), stream.User, clr(colors.Reset)))
 
+	// Server + User line
+	line := fmt.Sprintf(" %s%s%s %sUser%s: %s%s%s",
+		clr(serverColor), strings.ToUpper(stream.Server), clr(colors.Reset),
+		clr(colors.Bold), clr(colors.Reset),
+		clr(colors.Yellow), stream.User, clr(colors.Reset))
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(line, boxW))
+	fmt.Fprint(bw, "│\n")
+
+	// Show/Title line
 	if stream.Type == "episode" && stream.Show != "" {
-		buf.WriteString(fmt.Sprintf("%sShow%s: %s\n", clr(colors.Bold), clr(colors.Reset), stream.Show))
-		if stream.Season != "" {
-			buf.WriteString(fmt.Sprintf("%sSeason%s: %s\n", clr(colors.Bold), clr(colors.Reset), stream.Season))
-		}
-		if stream.Episode != "" {
-			buf.WriteString(fmt.Sprintf("%sEpisode%s: %s - %s\n", clr(colors.Bold), clr(colors.Reset),
-				stream.Episode, stream.Title))
+		line := fmt.Sprintf(" %sShow%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Show)
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
+		if stream.Season != "" || stream.Episode != "" {
+			epStr := ""
+			if stream.Season != "" {
+				epStr += fmt.Sprintf("S%02s", stream.Season)
+			}
+			if stream.Episode != "" {
+				epStr += fmt.Sprintf("E%02s", stream.Episode)
+			}
+			line := fmt.Sprintf("  %s - %s", epStr, stream.Title)
+			fmt.Fprint(bw, "│")
+			fmt.Fprint(bw, padRight(line, boxW))
+			fmt.Fprint(bw, "│\n")
 		}
 	} else {
-		buf.WriteString(fmt.Sprintf("%sTitle%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Title))
+		line := fmt.Sprintf(" %sTitle%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Title)
 		if stream.Year != "" {
-			buf.WriteString(fmt.Sprintf(" %s(%s)%s", clr(colors.Cyan), stream.Year, clr(colors.Reset)))
+			line += fmt.Sprintf(" %s(%s)%s", clr(colors.Cyan), stream.Year, clr(colors.Reset))
 		}
-		buf.WriteString("\n")
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
 
-	if stream.Device != "" {
-		buf.WriteString(fmt.Sprintf("%sClient%s: %s (%s)\n", clr(colors.Bold), clr(colors.Reset),
-			stream.Client, stream.Device))
-	} else {
-		buf.WriteString(fmt.Sprintf("%sClient%s: %s\n", clr(colors.Bold), clr(colors.Reset), stream.Client))
+	// Client line
+	if stream.Client != "" {
+		var clientLine string
+		if stream.Device != "" {
+			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(colors.Bold), clr(colors.Reset), stream.Client, stream.Device)
+		} else {
+			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(colors.Bold), clr(colors.Reset), stream.Client)
+		}
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(clientLine, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
 
+	// Status line
 	statusColor := colors.Green
 	if stream.Transcoding {
 		statusColor = colors.Red
@@ -760,69 +965,106 @@ func displayStreamToBuffer(buf *strings.Builder, stream StreamInfo, noColor bool
 	if stream.IsPaused {
 		statusText += " (Paused)"
 	}
-	buf.WriteString(fmt.Sprintf("%sStatus%s: %s%s%s\n", clr(colors.Bold), clr(colors.Reset),
-		clr(statusColor), statusText, clr(colors.Reset)))
+	line = fmt.Sprintf(" %sStatus%s: %s%s%s", clr(colors.Bold), clr(colors.Reset), clr(statusColor), statusText, clr(colors.Reset))
+	if stream.Transcoding {
+		line += " ⚠"
+	}
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(line, boxW))
+	fmt.Fprint(bw, "│\n")
 
+	// Bandwidth line
 	if stream.Bandwidth > 0 {
-		buf.WriteString(fmt.Sprintf("%sBandwidth%s: %s%.2f Mbps%s\n", clr(colors.Bold), clr(colors.Reset),
-			clr(colors.Magenta), stream.Bandwidth, clr(colors.Reset)))
+		line := fmt.Sprintf(" %sBandwidth%s: %s%.2f Mbps%s", clr(colors.Bold), clr(colors.Reset), clr(colors.Magenta), stream.Bandwidth, clr(colors.Reset))
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
 
+	// Quality line
 	if stream.Resolution != "" || stream.VideoCodec != "" {
-		buf.WriteString(fmt.Sprintf("%sQuality%s: ", clr(colors.Bold), clr(colors.Reset)))
+		line := fmt.Sprintf(" %sQuality%s: ", clr(colors.Bold), clr(colors.Reset))
 		if stream.Resolution != "" {
-			buf.WriteString(fmt.Sprintf("%s ", stream.Resolution))
+			line += fmt.Sprintf("%s ", stream.Resolution)
 		}
 		if stream.VideoCodec != "" {
-			buf.WriteString(fmt.Sprintf("(%s", stream.VideoCodec))
+			line += fmt.Sprintf("(%s", stream.VideoCodec)
 			if stream.AudioCodec != "" {
-				buf.WriteString(fmt.Sprintf("/%s", stream.AudioCodec))
+				line += fmt.Sprintf("/%s", stream.AudioCodec)
 			}
-			buf.WriteString(")")
+			line += ")"
 		}
-		buf.WriteString("\n")
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
+	}
+
+	// Progress bar
+	if stream.Progress > 0 {
+		barW := boxW - 15
+		if barW > 30 {
+			barW = 30
+		}
+		if barW < 10 {
+			barW = 10
+		}
+		bar := renderProgressBar(stream.Progress, barW)
+		line := fmt.Sprintf(" %sPlayback%s: %s %s%5.1f%%%s",
+			clr(colors.Bold), clr(colors.Reset),
+			bar,
+			clr(colors.Cyan), stream.Progress, clr(colors.Reset))
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
 }
 
-func displayEndedStreamToBuffer(buf *strings.Builder, record SessionRecord, noColor bool) {
+func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, noColor bool) {
 	clr := func(code string) string {
 		if noColor {
 			return ""
 		}
 		return code
 	}
-
 	stream := record.Stream
 
-	buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-		clr(colors.Gray), clr(colors.Bold), clr(colors.Reset)))
-
-	serverColor := colors.Gray
-	buf.WriteString(fmt.Sprintf("%s[%s]%s ", clr(serverColor), strings.ToUpper(stream.Server), clr(colors.Reset)))
-	buf.WriteString(fmt.Sprintf("%sUser%s: %s%s%s ", clr(colors.Gray), clr(colors.Reset),
-		clr(colors.Gray), stream.User, clr(colors.Reset)))
-	buf.WriteString(fmt.Sprintf("%s[ENDED %s]%s\n", clr(colors.Gray), formatTimeSince(*record.EndTime), clr(colors.Reset)))
+	endedStr := fmt.Sprintf("%s[ENDED %s]%s", clr(colors.Gray), formatTimeSince(*record.EndTime), clr(colors.Reset))
+	line := fmt.Sprintf(" %s%s%s %sUser%s: %s %s",
+		clr(colors.Gray), strings.ToUpper(stream.Server), clr(colors.Reset),
+		clr(colors.Bold), clr(colors.Reset), stream.User, endedStr)
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(line, boxW))
+	fmt.Fprint(bw, "│\n")
 
 	if stream.Type == "episode" && stream.Show != "" {
-		buf.WriteString(fmt.Sprintf("%sShow%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Show))
+		line := fmt.Sprintf(" %sShow%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Show)
 		if stream.Season != "" && stream.Episode != "" {
-			buf.WriteString(fmt.Sprintf(" S%sE%s", stream.Season, stream.Episode))
+			line += fmt.Sprintf(" S%sE%s", stream.Season, stream.Episode)
 		}
-		buf.WriteString("\n")
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
 	} else {
-		buf.WriteString(fmt.Sprintf("%sTitle%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Title))
+		line := fmt.Sprintf(" %sTitle%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Title)
 		if stream.Year != "" {
-			buf.WriteString(fmt.Sprintf(" (%s)", stream.Year))
+			line += fmt.Sprintf(" (%s)", stream.Year)
 		}
-		buf.WriteString("\n")
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
 
-	buf.WriteString(fmt.Sprintf("%sClient%s: %s\n", clr(colors.Gray), clr(colors.Reset), stream.Client))
+	line = fmt.Sprintf(" %sClient%s: %s", clr(colors.Gray), clr(colors.Reset), stream.Client)
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(line, boxW))
+	fmt.Fprint(bw, "│\n")
 
 	if record.EndTime != nil {
 		duration := record.EndTime.Sub(record.StartTime)
-		buf.WriteString(fmt.Sprintf("%sDuration%s: %s\n", clr(colors.Gray), clr(colors.Reset),
-			formatDuration(duration)))
+		line = fmt.Sprintf(" %sDuration%s: %s", clr(colors.Gray), clr(colors.Reset), formatDuration(duration))
+		fmt.Fprint(bw, "│")
+		fmt.Fprint(bw, padRight(line, boxW))
+		fmt.Fprint(bw, "│\n")
 	}
 }
 
@@ -843,7 +1085,7 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%dh %dm", hours, minutes)
 }
 
-func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, noColor bool) {
+func displayStreamSummaryToBox(bw *bufio.Writer, streams []StreamInfo, boxW int, noColor bool) {
 	clr := func(code string) string {
 		if noColor {
 			return ""
@@ -851,13 +1093,8 @@ func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, no
 		return code
 	}
 
-	buf.WriteString("\n")
-	buf.WriteString(fmt.Sprintf("%s%s━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━%s\n",
-		clr(colors.Bold), clr(colors.Cyan), clr(colors.Reset)))
-
 	transcodeCount := 0
 	totalBandwidth := 0.0
-
 	for _, stream := range streams {
 		if stream.Transcoding {
 			transcodeCount++
@@ -865,8 +1102,11 @@ func displayStreamSummaryToBuffer(buf *strings.Builder, streams []StreamInfo, no
 		totalBandwidth += stream.Bandwidth
 	}
 
-	buf.WriteString(fmt.Sprintf("%sTotal Streams%s: %d\n", clr(colors.Bold), clr(colors.Reset), len(streams)))
-	buf.WriteString(fmt.Sprintf("%sTranscoding%s: %d\n", clr(colors.Bold), clr(colors.Reset), transcodeCount))
-	buf.WriteString(fmt.Sprintf("%sTotal Bandwidth%s: %s%.2f Mbps%s\n", clr(colors.Bold), clr(colors.Reset),
-		clr(colors.Magenta), totalBandwidth, clr(colors.Reset)))
+	line := fmt.Sprintf(" %sTotal Streams%s: %d    %sTranscoding%s: %d    %sBandwidth%s: %.2f Mbps",
+		clr(colors.Bold), clr(colors.Reset), len(streams),
+		clr(colors.Bold), clr(colors.Reset), transcodeCount,
+		clr(colors.Bold), clr(colors.Reset), totalBandwidth)
+	fmt.Fprint(bw, "│")
+	fmt.Fprint(bw, padRight(line, boxW))
+	fmt.Fprint(bw, "│\n")
 }

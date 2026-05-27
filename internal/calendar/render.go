@@ -268,7 +268,14 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	os.Stdout.Write(buf.Bytes())
 }
 
+func boxExtra(totalWidth, colWidth, numCols int) int {
+	return totalWidth - (numCols*colWidth + numCols + 1)
+}
+
 func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now time.Time, days []*dayGroup, colWidth, totalWidth int, title string, _ bool) {
+	extra := boxExtra(totalWidth, colWidth, len(days))
+	numCols := len(days)
+
 	if title != "" {
 		prefix := "┌── " + title + " ──"
 		rc := utf8.RuneCountInString(prefix)
@@ -280,17 +287,21 @@ func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now ti
 		fmt.Fprint(bw, strings.Repeat("─", padLen))
 		fmt.Fprint(bw, "┐\n")
 	} else {
-		boxTop(bw, colWidth, len(days))
+		boxTop(bw, colWidth, numCols, extra)
 	}
 
-	headerRow(bw, clr, days, colWidth)
+	headerRow(bw, clr, days, colWidth, extra)
 
-	boxSep(bw, colWidth, len(days))
+	boxSep(bw, colWidth, numCols, extra)
 
-	dayLines := make([][]string, len(days))
+	dayLines := make([][]string, numCols)
 	maxLines := 0
 	for i, dg := range days {
-		lines := buildDayLines(dg, clr, now, colWidth, cfg.NoColor)
+		width := colWidth
+		if i == numCols-1 {
+			width += extra
+		}
+		lines := buildDayLines(dg, clr, now, width, cfg.NoColor)
 		dayLines[i] = lines
 		if len(lines) > maxLines {
 			maxLines = len(lines)
@@ -299,24 +310,32 @@ func renderBox(bw *bufio.Writer, cfg ToolConfig, clr func(string) string, now ti
 
 	for row := 0; row < maxLines; row++ {
 		fmt.Fprint(bw, "│")
-		for i := 0; i < len(days); i++ {
+		for i := 0; i < numCols; i++ {
+			width := colWidth
+			if i == numCols-1 {
+				width += extra
+			}
 			if row < len(dayLines[i]) {
 				fmt.Fprint(bw, dayLines[i][row])
 			} else {
-				fmt.Fprint(bw, strings.Repeat(" ", colWidth))
+				fmt.Fprint(bw, strings.Repeat(" ", width))
 			}
 			fmt.Fprint(bw, "│")
 		}
 		fmt.Fprintln(bw)
 	}
 
-	boxBottom(bw, colWidth, len(days))
+	boxBottom(bw, colWidth, numCols, extra)
 }
 
-func boxTop(bw *bufio.Writer, colWidth, numCols int) {
+func boxTop(bw *bufio.Writer, colWidth, numCols, extra int) {
 	fmt.Fprint(bw, "├")
 	for i := 0; i < numCols; i++ {
-		fmt.Fprint(bw, strings.Repeat("─", colWidth))
+		w := colWidth
+		if i == numCols-1 {
+			w += extra
+		}
+		fmt.Fprint(bw, strings.Repeat("─", w))
 		if i < numCols-1 {
 			fmt.Fprint(bw, "┼")
 		}
@@ -324,14 +343,18 @@ func boxTop(bw *bufio.Writer, colWidth, numCols int) {
 	fmt.Fprint(bw, "┤\n")
 }
 
-func boxSep(bw *bufio.Writer, colWidth, numCols int) {
-	boxTop(bw, colWidth, numCols)
+func boxSep(bw *bufio.Writer, colWidth, numCols, extra int) {
+	boxTop(bw, colWidth, numCols, extra)
 }
 
-func boxBottom(bw *bufio.Writer, colWidth, numCols int) {
+func boxBottom(bw *bufio.Writer, colWidth, numCols, extra int) {
 	fmt.Fprint(bw, "└")
 	for i := 0; i < numCols; i++ {
-		fmt.Fprint(bw, strings.Repeat("─", colWidth))
+		w := colWidth
+		if i == numCols-1 {
+			w += extra
+		}
+		fmt.Fprint(bw, strings.Repeat("─", w))
 		if i < numCols-1 {
 			fmt.Fprint(bw, "┴")
 		}
@@ -339,14 +362,18 @@ func boxBottom(bw *bufio.Writer, colWidth, numCols int) {
 	fmt.Fprint(bw, "┘\n")
 }
 
-func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colWidth int) {
+func headerRow(bw *bufio.Writer, clr func(string) string, days []*dayGroup, colWidth, extra int) {
 	fmt.Fprint(bw, "│")
-	for _, dg := range days {
+	for i, dg := range days {
+		w := colWidth
+		if i == len(days)-1 {
+			w += extra
+		}
 		dateStr := dg.date.Format("Mon 01/02")
 		countStr := fmt.Sprintf("(%d Show%s)", len(dg.items), pluralS(len(dg.items)))
 		full := fmt.Sprintf(" %s%s%s %s",
 			clr(colors.Bold), dateStr, clr(colors.Reset), countStr)
-		fmt.Fprint(bw, padRight(full, colWidth))
+		fmt.Fprint(bw, padRight(full, w))
 		fmt.Fprint(bw, "│")
 	}
 	fmt.Fprintln(bw)
