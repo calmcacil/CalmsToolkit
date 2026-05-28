@@ -1474,9 +1474,10 @@ func approveRequest(cfg ToolConfig, requestID int) error {
 }
 
 func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *RequestOverrides) error {
-	if overrides != nil && overrides.RootFolder != "" {
-		updateData := map[string]interface{}{
-			"rootFolder": overrides.RootFolder,
+	if overrides != nil && (overrides.RootFolder != "" || overrides.ServerID > 0) {
+		updateData := make(map[string]interface{})
+		if overrides.RootFolder != "" {
+			updateData["rootFolder"] = overrides.RootFolder
 		}
 		if overrides.ServerID > 0 {
 			updateData["serverId"] = overrides.ServerID
@@ -1485,13 +1486,13 @@ func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *Reque
 		endpoint := fmt.Sprintf("/request/%d", requestID)
 		resp, err := makeRequest(cfg, "PUT", endpoint, updateData)
 		if err != nil {
-			return fmt.Errorf("failed to set root folder before approval: %w", err)
+			return fmt.Errorf("failed to set request overrides before approval: %w", err)
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := readBodyLimited(resp.Body)
-			return fmt.Errorf("failed to set root folder before approval: status %d - %s", resp.StatusCode, string(bodyBytes))
+			return fmt.Errorf("failed to set request overrides before approval: status %d - %s", resp.StatusCode, string(bodyBytes))
 		}
 	}
 
