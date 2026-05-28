@@ -59,6 +59,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: -days-past must be >= 0\n")
 		os.Exit(1)
 	}
+	if cfg.WatchSeconds < 1 {
+		fmt.Fprintf(os.Stderr, "ERROR: -interval must be >= 1\n")
+		os.Exit(1)
+	}
 	if cfg.Filter != "" {
 		validFilters := map[string]bool{"missing": true, "available": true, "premieres": true, "monitored": true}
 		for _, f := range strings.Split(cfg.Filter, ",") {

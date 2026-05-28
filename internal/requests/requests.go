@@ -243,7 +243,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg.Timeout = dur
 	cfg.NoColor = tk.General.NoColor
 	cfg.Theme = tk.General.Theme
-	cfg.ServerURL = tk.MediaRequests.OverseerrURL
+	cfg.ServerURL = strings.TrimSuffix(tk.MediaRequests.OverseerrURL, "/")
 	cfg.APIKey = tk.MediaRequests.APIKey
 	cfg.Verbose = tk.MediaRequests.Verbose
 	return cfg
@@ -1468,28 +1468,26 @@ func approveRequest(cfg ToolConfig, requestID int) error {
 }
 
 func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *RequestOverrides) error {
+	if overrides != nil && overrides.RootFolder != "" {
+		updateData := map[string]interface{}{
+			"rootFolder": overrides.RootFolder,
+		}
+
+		endpoint := fmt.Sprintf("/request/%d", requestID)
+		resp, err := makeRequest(cfg, "PUT", endpoint, updateData)
+		if err != nil {
+			return fmt.Errorf("failed to set root folder before approval: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("failed to set root folder before approval: status %d - %s", resp.StatusCode, string(bodyBytes))
+		}
+	}
+
 	if err := approveRequest(cfg, requestID); err != nil {
 		return err
-	}
-
-	if overrides == nil || overrides.RootFolder == "" {
-		return nil
-	}
-
-	updateData := map[string]interface{}{
-		"rootFolder": overrides.RootFolder,
-	}
-
-	endpoint := fmt.Sprintf("/request/%d", requestID)
-	resp, err := makeRequest(cfg, "PUT", endpoint, updateData)
-	if err != nil {
-		return fmt.Errorf("approved but failed to update root folder: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("approved but root folder update failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	return nil

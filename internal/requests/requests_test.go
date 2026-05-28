@@ -1439,7 +1439,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			approveStatus:    http.StatusInternalServerError,
 			updateStatus:     http.StatusOK,
 			expectError:      true,
-			expectUpdate:     false,
+			expectUpdate:     true,
 			expectedErrorMsg: "approval failed",
 		},
 		{
@@ -1454,7 +1454,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			updateStatus:     http.StatusInternalServerError,
 			expectError:      true,
 			expectUpdate:     true,
-			expectedErrorMsg: "approved but root folder update failed",
+			expectedErrorMsg: "failed to set root folder before approval",
 		},
 	}
 
@@ -1496,8 +1496,20 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 
 			err := approveRequestWithOverrides(cfg, tt.requestID, tt.overrides)
 
-			if !approveCalled {
-				t.Error("Approve endpoint was not called")
+			updateShouldHaveBeenCalled := tt.expectUpdate
+			updateSucceeded := updateShouldHaveBeenCalled && tt.updateStatus == http.StatusOK
+			updateNotNeeded := !updateShouldHaveBeenCalled && (tt.overrides == nil || tt.overrides.RootFolder == "")
+			updateCalledAndFailed := updateShouldHaveBeenCalled && tt.updateStatus != http.StatusOK
+
+			if updateSucceeded || updateNotNeeded {
+				if !approveCalled {
+					t.Error("Approve endpoint was not called when it should have been")
+				}
+			}
+			if updateCalledAndFailed {
+				if approveCalled {
+					t.Error("Approve endpoint was called when update already failed")
+				}
 			}
 
 			if tt.expectUpdate != updateCalled {

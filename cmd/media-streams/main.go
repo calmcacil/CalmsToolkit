@@ -58,6 +58,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.WatchSeconds < 1 {
+		fmt.Fprintf(os.Stderr, "ERROR: -interval must be >= 1\n")
+		os.Exit(1)
+	}
+
 	cfg.PlexURL = strings.TrimSuffix(cfg.PlexURL, "/")
 	cfg.JellyfinURL = strings.TrimSuffix(cfg.JellyfinURL, "/")
 
