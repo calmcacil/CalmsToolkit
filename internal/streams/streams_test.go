@@ -219,8 +219,8 @@ func TestFetchPlexStreams(t *testing.T) {
 		if r.Method != "GET" {
 			t.Errorf("Expected GET request, got %s", r.Method)
 		}
-		if !strings.Contains(r.URL.RawQuery, "X-Plex-Token=test-token") {
-			t.Errorf("Expected X-Plex-Token in query string, got %s", r.URL.RawQuery)
+		if r.Header.Get("X-Plex-Token") != "test-token" {
+			t.Errorf("Expected X-Plex-Token header 'test-token', got %q", r.Header.Get("X-Plex-Token"))
 		}
 		if !strings.Contains(r.URL.Path, "/status/sessions") {
 			t.Errorf("Expected /status/sessions in path, got %s", r.URL.Path)

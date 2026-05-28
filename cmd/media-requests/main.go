@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/requests"
@@ -26,7 +28,7 @@ func main() {
 	quiet := flag.Bool("quiet", false, "Suppress warnings")
 	flag.Parse()
 
-	cfg.ServerURL = *url
+	cfg.ServerURL = strings.TrimSuffix(*url, "/")
 	cfg.APIKey = *token
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
@@ -45,7 +47,7 @@ func main() {
 		os.Exit(1)
 	}
 	if cfg.Timeout <= 0 {
-		cfg.Timeout = 10
+		cfg.Timeout = 10 * time.Second
 	}
 
 	requests.Run(cfg)

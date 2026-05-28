@@ -292,6 +292,76 @@ func TestCalculateDateRange(t *testing.T) {
 	}
 }
 
+func TestAggregateCalendarPartialFailureDoesNotCancelSuccessfulSources(t *testing.T) {
+	badHit := make(chan struct{})
+	badServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/calendar" {
+			http.NotFound(w, r)
+			return
+		}
+
+		close(badHit)
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer badServer.Close()
+
+	goodEpisode := []SonarrEpisode{
+		{
+			Title:         "Successful Episode",
+			SeasonNumber:  1,
+			EpisodeNumber: 1,
+			AirDateUtc:    time.Now().Add(time.Hour),
+			Monitored:     true,
+			Series: &Series{
+				Title: "Successful Show",
+				Year:  2026,
+			},
+		},
+	}
+	goodServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v3/calendar":
+			select {
+			case <-badHit:
+				time.Sleep(100 * time.Millisecond)
+			case <-time.After(2 * time.Second):
+				t.Error("timed out waiting for failing source")
+				http.Error(w, "timeout", http.StatusInternalServerError)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(goodEpisode)
+		case "/api/v3/queue":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(QueueResponse{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer goodServer.Close()
+
+	cfg := ToolConfig{
+		SonarrInstances: []config.ArrInstance{
+			{Name: "Failing", URL: badServer.URL, APIKey: "bad-token"},
+			{Name: "Successful", URL: goodServer.URL, APIKey: "good-token"},
+		},
+		Days:    1,
+		Timeout: 2 * time.Second,
+	}
+
+	items, _, err := aggregateCalendar(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("aggregateCalendar returned error for partial failure: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("aggregateCalendar returned %d items, want 1", len(items))
+	}
+	if items[0].ShowTitle != "Successful Show" {
+		t.Fatalf("aggregateCalendar item ShowTitle = %q, want Successful Show", items[0].ShowTitle)
+	}
+}
+
 func TestApplyFilters(t *testing.T) {
 	now := time.Now()
 	items := []CalendarItem{

@@ -1403,7 +1403,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			expectUpdate:  false,
 		},
 		{
-			name:      "Approve with empty root folder",
+			name:      "Approve with server override and default root folder",
 			requestID: 123,
 			overrides: &RequestOverrides{
 				ServerID:   1,
@@ -1413,7 +1413,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			approveStatus: http.StatusOK,
 			updateStatus:  http.StatusOK,
 			expectError:   false,
-			expectUpdate:  false,
+			expectUpdate:  true,
 		},
 		{
 			name:      "Approve with root folder override",
@@ -1439,7 +1439,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			approveStatus:    http.StatusInternalServerError,
 			updateStatus:     http.StatusOK,
 			expectError:      true,
-			expectUpdate:     false,
+			expectUpdate:     true,
 			expectedErrorMsg: "approval failed",
 		},
 		{
@@ -1454,7 +1454,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			updateStatus:     http.StatusInternalServerError,
 			expectError:      true,
 			expectUpdate:     true,
-			expectedErrorMsg: "approved but root folder update failed",
+			expectedErrorMsg: "failed to set request overrides before approval",
 		},
 	}
 
@@ -1496,8 +1496,20 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 
 			err := approveRequestWithOverrides(cfg, tt.requestID, tt.overrides)
 
-			if !approveCalled {
-				t.Error("Approve endpoint was not called")
+			updateShouldHaveBeenCalled := tt.expectUpdate
+			updateSucceeded := updateShouldHaveBeenCalled && tt.updateStatus == http.StatusOK
+			updateNotNeeded := !updateShouldHaveBeenCalled && (tt.overrides == nil || (tt.overrides.RootFolder == "" && tt.overrides.ServerID <= 0))
+			updateCalledAndFailed := updateShouldHaveBeenCalled && tt.updateStatus != http.StatusOK
+
+			if updateSucceeded || updateNotNeeded {
+				if !approveCalled {
+					t.Error("Approve endpoint was not called when it should have been")
+				}
+			}
+			if updateCalledAndFailed {
+				if approveCalled {
+					t.Error("Approve endpoint was called when update already failed")
+				}
 			}
 
 			if tt.expectUpdate != updateCalled {
@@ -1505,8 +1517,17 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			}
 
 			if updateCalled {
-				if rootFolder, ok := updateBody["rootFolder"].(string); !ok || rootFolder != tt.overrides.RootFolder {
-					t.Errorf("Update body rootFolder = %v, want %v", updateBody["rootFolder"], tt.overrides.RootFolder)
+				if tt.overrides.RootFolder != "" {
+					rootFolder, ok := updateBody["rootFolder"].(string)
+					if !ok || rootFolder != tt.overrides.RootFolder {
+						t.Errorf("Update body rootFolder = %v, want %v", updateBody["rootFolder"], tt.overrides.RootFolder)
+					}
+				}
+				if tt.overrides.ServerID > 0 {
+					serverID, ok := updateBody["serverId"].(float64)
+					if !ok || int(serverID) != tt.overrides.ServerID {
+						t.Errorf("Update body serverId = %v, want %v", updateBody["serverId"], tt.overrides.ServerID)
+					}
 				}
 			}
 

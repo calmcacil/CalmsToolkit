@@ -9,8 +9,10 @@ import (
 	"encoding/xml"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mattn/go-runewidth"
@@ -263,7 +265,7 @@ func Run(cfg ToolConfig) {
 			Records: make(map[string]*SessionRecord),
 		}
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer cancel()
 
 		fmt.Print(colors.ClearScreen + colors.HomeCursor)
@@ -293,24 +295,35 @@ func Run(cfg ToolConfig) {
 func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory, lastHash *string, p *colors.Palette) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
+	var plexErr, jellyfinErr error
 
 	client := httpclient.NewClient(cfg.Timeout)
 
 	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
-		if streams, err := fetchPlexStreams(ctx, client, cfg); err == nil {
+		streams, err := fetchPlexStreams(ctx, client, cfg)
+		if err == nil {
 			allStreams = append(allStreams, streams...)
 			plexCount = len(streams)
+		} else {
+			plexErr = err
 		}
 	}
 
 	if cfg.ServerType == ServerJellyfin || cfg.ServerType == ServerBoth {
-		if streams, err := fetchJellyfinStreams(ctx, client, cfg); err == nil {
+		streams, err := fetchJellyfinStreams(ctx, client, cfg)
+		if err == nil {
 			allStreams = append(allStreams, streams...)
 			jellyfinCount = len(streams)
+		} else {
+			jellyfinErr = err
 		}
 	}
 
 	updateHistory(history, allStreams, cfg.HistoryDuration)
+
+	if allFailed(cfg.ServerType, plexErr, jellyfinErr) {
+		return fmt.Errorf("all servers failed: plex: %v, jellyfin: %v", maybeError(plexErr), maybeError(jellyfinErr))
+	}
 
 	if cfg.JSONOutput {
 		return displayJSONOutput(allStreams, plexCount, jellyfinCount)
@@ -328,21 +341,32 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history 
 func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) error {
 	var allStreams []StreamInfo
 	var plexCount, jellyfinCount int
+	var plexErr, jellyfinErr error
 
 	client := httpclient.NewClient(cfg.Timeout)
 
 	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
-		if streams, err := fetchPlexStreams(ctx, client, cfg); err == nil {
+		streams, err := fetchPlexStreams(ctx, client, cfg)
+		if err == nil {
 			allStreams = append(allStreams, streams...)
 			plexCount = len(streams)
+		} else {
+			plexErr = err
 		}
 	}
 
 	if cfg.ServerType == ServerJellyfin || cfg.ServerType == ServerBoth {
-		if streams, err := fetchJellyfinStreams(ctx, client, cfg); err == nil {
+		streams, err := fetchJellyfinStreams(ctx, client, cfg)
+		if err == nil {
 			allStreams = append(allStreams, streams...)
 			jellyfinCount = len(streams)
+		} else {
+			jellyfinErr = err
 		}
+	}
+
+	if allFailed(cfg.ServerType, plexErr, jellyfinErr) {
+		return fmt.Errorf("all servers failed: plex: %v, jellyfin: %v", maybeError(plexErr), maybeError(jellyfinErr))
 	}
 
 	if cfg.JSONOutput {
@@ -352,11 +376,30 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) 
 	return displayTerminalOutput(allStreams, plexCount, jellyfinCount, cfg.NoColor, p)
 }
 
+func allFailed(serverType string, plexErr, jellyfinErr error) bool {
+	needsPlex := serverType == ServerPlex || serverType == ServerBoth
+	needsJellyfin := serverType == ServerJellyfin || serverType == ServerBoth
+	if serverType == ServerBoth {
+		return (needsPlex && plexErr != nil) && (needsJellyfin && jellyfinErr != nil)
+	}
+	return (needsPlex && plexErr != nil) || (needsJellyfin && jellyfinErr != nil)
+}
+
+func maybeError(err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return "not configured"
+}
+
 func fetchPlexStreams(ctx context.Context, client *httpclient.Client, cfg ToolConfig) ([]StreamInfo, error) {
-	url := fmt.Sprintf("%s/status/sessions?X-Plex-Token=%s", cfg.PlexURL, cfg.PlexToken)
+	url := fmt.Sprintf("%s/status/sessions", cfg.PlexURL)
+	headers := map[string]string{
+		"X-Plex-Token": cfg.PlexToken,
+	}
 
 	var container PlexMediaContainer
-	if err := client.DoXML(ctx, "GET", url, nil, nil, &container); err != nil {
+	if err := client.DoXML(ctx, "GET", url, headers, nil, &container); err != nil {
 		return nil, err
 	}
 
@@ -667,8 +710,6 @@ func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(summary)
 }
-
-
 
 func renderProgressBar(pct float64, width int) string {
 	if pct <= 0 {
