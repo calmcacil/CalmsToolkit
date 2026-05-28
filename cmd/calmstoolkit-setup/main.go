@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
@@ -27,7 +29,7 @@ func main() {
 	fmt.Printf("Config file: %s\n", path)
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Cannot create config directory: %v\n", err)
 		os.Exit(1)
 	}
@@ -73,14 +75,14 @@ func main() {
 	fmt.Println(strings.Repeat("─", 50))
 	if promptYesNo("Configure Plex?", cfg.MediaStreams.PlexToken != "") {
 		cfg.MediaStreams.PlexURL = prompt("Plex URL", cfg.MediaStreams.PlexURL)
-		cfg.MediaStreams.PlexToken = prompt("Plex Token", cfg.MediaStreams.PlexToken)
+		cfg.MediaStreams.PlexToken = promptSecret("Plex Token", cfg.MediaStreams.PlexToken)
 	} else {
 		cfg.MediaStreams.PlexURL = ""
 		cfg.MediaStreams.PlexToken = ""
 	}
 	if promptYesNo("Configure Jellyfin?", cfg.MediaStreams.JellyfinToken != "") {
 		cfg.MediaStreams.JellyfinURL = prompt("Jellyfin URL", cfg.MediaStreams.JellyfinURL)
-		cfg.MediaStreams.JellyfinToken = prompt("Jellyfin Token", cfg.MediaStreams.JellyfinToken)
+		cfg.MediaStreams.JellyfinToken = promptSecret("Jellyfin Token", cfg.MediaStreams.JellyfinToken)
 	} else {
 		cfg.MediaStreams.JellyfinURL = ""
 		cfg.MediaStreams.JellyfinToken = ""
@@ -95,7 +97,7 @@ func main() {
 	fmt.Println(strings.Repeat("─", 50))
 	if promptYesNo("Configure media request server?", cfg.MediaRequests.APIKey != "") {
 		cfg.MediaRequests.OverseerrURL = prompt("Server URL", cfg.MediaRequests.OverseerrURL)
-		cfg.MediaRequests.APIKey = prompt("API Key", cfg.MediaRequests.APIKey)
+		cfg.MediaRequests.APIKey = promptSecret("API Key", cfg.MediaRequests.APIKey)
 		cfg.MediaRequests.Verbose = promptYesNo("Verbose output", cfg.MediaRequests.Verbose)
 	} else {
 		cfg.MediaRequests.OverseerrURL = ""
@@ -141,6 +143,11 @@ func main() {
 
 	cfg.Version = 1
 
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: Configuration has validation errors: %v\n", err)
+		fmt.Fprintf(os.Stderr, "You can still write it, but some tools may not work correctly.\n")
+	}
+
 	if !promptYesNo("Write configuration to "+path+"?", true) {
 		fmt.Println("Setup cancelled.")
 		return
@@ -152,8 +159,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Cannot write config: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Cannot set config permissions: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -171,6 +182,38 @@ func prompt(label, defaultVal string) string {
 	} else {
 		fmt.Printf("  %s: ", label)
 	}
+	scanner.Scan()
+	input := strings.TrimSpace(scanner.Text())
+	if input == "" {
+		return defaultVal
+	}
+	return input
+}
+
+func promptSecret(label, defaultVal string) string {
+	masked := ""
+	if defaultVal != "" {
+		masked = "****"
+	}
+	if masked != "" {
+		fmt.Printf("  %s [%s]: ", label, masked)
+	} else {
+		fmt.Printf("  %s: ", label)
+	}
+
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		byteInput, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println()
+		if err != nil {
+			return defaultVal
+		}
+		input := strings.TrimSpace(string(byteInput))
+		if input == "" {
+			return defaultVal
+		}
+		return input
+	}
+
 	scanner.Scan()
 	input := strings.TrimSpace(scanner.Text())
 	if input == "" {
@@ -220,7 +263,7 @@ func promptInstances(kind string, existing []config.ArrInstance) []config.ArrIns
 			fmt.Printf("\n  --- %s Instance %d ---\n", kind, i+1)
 			instances[i].Name = prompt("Friendly name", instances[i].Name)
 			instances[i].URL = prompt("URL", instances[i].URL)
-			token := prompt("API Key (enter blank to keep current)", instances[i].APIKey)
+			token := promptSecret("API Key (enter blank to keep current)", instances[i].APIKey)
 			if token != "" {
 				instances[i].APIKey = token
 			}
@@ -233,7 +276,7 @@ func promptInstances(kind string, existing []config.ArrInstance) []config.ArrIns
 			fmt.Printf("\n--- New %s Instance ---\n", kind)
 			name := prompt("Friendly name", kind+" HD")
 			url := prompt("URL", "http://localhost:8989")
-			token := prompt("API Key", "")
+			token := promptSecret("API Key", "")
 			if token == "" {
 				fmt.Println("  API Key is required. Skipping this instance.")
 			} else {

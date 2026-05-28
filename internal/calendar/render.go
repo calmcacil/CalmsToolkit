@@ -103,7 +103,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 	resizeCh := make(chan resizeEvent, 1)
 	dataCh := make(chan dataEvent, 1)
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	go resizeAgent(ctx, resizeCh)
@@ -522,8 +522,6 @@ func renderSummary(bw *bufio.Writer, items []CalendarItem, now time.Time, clr fu
 		clr(p.Error), missing, clr(p.Reset),
 		future)
 }
-
-
 
 func truncateWithEllipsis(s string, maxLen int) string {
 	if maxLen <= 0 {

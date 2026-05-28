@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -238,7 +240,7 @@ func Run(cfg ToolConfig) {
 	}
 
 	client := httpclient.NewClient(cfg.Timeout)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	p := colors.GetPalette(cfg.Theme)
@@ -259,6 +261,10 @@ func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Clien
 	}
 
 	events = filterEvents(events, cfg)
+
+	if cfg.MaxEvents > 0 && len(events) > cfg.MaxEvents {
+		events = events[:cfg.MaxEvents]
+	}
 
 	if cfg.JSON {
 		renderJSON(events)
