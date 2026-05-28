@@ -1119,6 +1119,12 @@ func fetchServiceDetails(cfg ToolConfig, service string, id int) (*ServiceDetail
 	return &details, nil
 }
 
+const maxBodySize = 10 * 1024 * 1024
+
+func readBodyLimited(r io.Reader) ([]byte, error) {
+	return io.ReadAll(io.LimitReader(r, maxBodySize))
+}
+
 func makeRequest(cfg ToolConfig, method, endpoint string, body interface{}) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
@@ -1163,7 +1169,7 @@ func searchMedia(cfg ToolConfig, query string) ([]SearchResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := readBodyLimited(resp.Body)
 		return nil, fmt.Errorf("search failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -1221,7 +1227,7 @@ func createRequest(cfg ToolConfig, media SearchResult, seasons interface{}, over
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := readBodyLimited(resp.Body)
 		return nil, fmt.Errorf("request creation failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -1241,7 +1247,7 @@ func checkUserPermissions(cfg ToolConfig) (*AuthMe, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := readBodyLimited(resp.Body)
 		return nil, fmt.Errorf("failed to get user info: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -1261,7 +1267,7 @@ func getRequestCount(cfg ToolConfig) (*RequestCount, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := readBodyLimited(resp.Body)
 		return nil, fmt.Errorf("failed to get request count: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -1336,7 +1342,7 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
+			bodyBytes, _ := readBodyLimited(resp.Body)
 			resp.Body.Close()
 			return nil, fmt.Errorf("failed to get requests: status %d - %s", resp.StatusCode, string(bodyBytes))
 		}
@@ -1399,7 +1405,7 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 			}
 
 			if resp.StatusCode != http.StatusOK {
-				bodyBytes, _ := io.ReadAll(resp.Body)
+				bodyBytes, _ := readBodyLimited(resp.Body)
 				resp.Body.Close()
 				return nil, fmt.Errorf("fallback fetch failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 			}
@@ -1460,7 +1466,7 @@ func approveRequest(cfg ToolConfig, requestID int) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := readBodyLimited(resp.Body)
 		return fmt.Errorf("approval failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -1472,6 +1478,9 @@ func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *Reque
 		updateData := map[string]interface{}{
 			"rootFolder": overrides.RootFolder,
 		}
+		if overrides.ServerID > 0 {
+			updateData["serverId"] = overrides.ServerID
+		}
 
 		endpoint := fmt.Sprintf("/request/%d", requestID)
 		resp, err := makeRequest(cfg, "PUT", endpoint, updateData)
@@ -1481,7 +1490,7 @@ func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *Reque
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			bodyBytes, _ := io.ReadAll(resp.Body)
+			bodyBytes, _ := readBodyLimited(resp.Body)
 			return fmt.Errorf("failed to set root folder before approval: status %d - %s", resp.StatusCode, string(bodyBytes))
 		}
 	}
@@ -1678,7 +1687,7 @@ func declineRequest(cfg ToolConfig, requestID int) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyBytes, _ := readBodyLimited(resp.Body)
 		return fmt.Errorf("decline failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 	}
 

@@ -240,6 +240,9 @@ func (c *ToolkitConfig) Save() error {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return fmt.Errorf("setting config directory permissions: %w", err)
+	}
 
 	data, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {

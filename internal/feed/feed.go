@@ -309,7 +309,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 
 			filteredEvents := filterEvents(eventCache, cfg)
 
-			if len(filteredEvents) > cfg.MaxEvents {
+			if cfg.MaxEvents > 0 && len(filteredEvents) > cfg.MaxEvents {
 				filteredEvents = filteredEvents[:cfg.MaxEvents]
 			}
 

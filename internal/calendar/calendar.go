@@ -284,7 +284,7 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
 	}
 
-	if len(items) == 0 && totalSources > 0 {
+	if successes == 0 && totalSources > 0 {
 		return items, queueIssues, fmt.Errorf("all %d source(s) failed to return data", totalSources)
 	}
 
