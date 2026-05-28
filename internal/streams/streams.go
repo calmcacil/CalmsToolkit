@@ -379,7 +379,10 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) 
 func allFailed(serverType string, plexErr, jellyfinErr error) bool {
 	needsPlex := serverType == ServerPlex || serverType == ServerBoth
 	needsJellyfin := serverType == ServerJellyfin || serverType == ServerBoth
-	return (needsPlex && plexErr != nil) && (needsJellyfin && jellyfinErr != nil)
+	if serverType == ServerBoth {
+		return (needsPlex && plexErr != nil) && (needsJellyfin && jellyfinErr != nil)
+	}
+	return (needsPlex && plexErr != nil) || (needsJellyfin && jellyfinErr != nil)
 }
 
 func maybeError(err error) string {

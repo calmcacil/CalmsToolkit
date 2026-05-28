@@ -33,6 +33,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: Cannot create config directory: %v\n", err)
 		os.Exit(1)
 	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Cannot set config directory permissions: %v\n", err)
+		os.Exit(1)
+	}
 
 	cfg := config.DefaultToolkitConfig()
 
