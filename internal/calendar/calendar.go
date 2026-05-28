@@ -181,6 +181,21 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	return cfg
 }
 
+func parseDateFlexible(s string) (time.Time, error) {
+	formats := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("unrecognized date format: %s", s)
+}
+
 func calculateDateRange(days, daysPast int) (start, end time.Time) {
 	now := time.Now()
 	start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
@@ -233,24 +248,44 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 	var mu sync.Mutex
 	var qMu sync.Mutex
 
-	g, gCtx := errgroup.WithContext(ctx)
+	var g errgroup.Group
+
+	totalSources := len(cfg.SonarrInstances) + len(cfg.RadarrInstances)
+	var successes int
+	var successMu sync.Mutex
 
 	for _, inst := range cfg.SonarrInstances {
 		inst := inst
 		g.Go(func() error {
-			return fetchSonarrInstance(gCtx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenEpisodes)
+			err := fetchSonarrInstance(ctx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenEpisodes)
+			if err == nil {
+				successMu.Lock()
+				successes++
+				successMu.Unlock()
+			}
+			return err
 		})
 	}
 
 	for _, inst := range cfg.RadarrInstances {
 		inst := inst
 		g.Go(func() error {
-			return fetchRadarrInstance(gCtx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenMovies)
+			err := fetchRadarrInstance(ctx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenMovies)
+			if err == nil {
+				successMu.Lock()
+				successes++
+				successMu.Unlock()
+			}
+			return err
 		})
 	}
 
 	if err := g.Wait(); err != nil {
 		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+	}
+
+	if successes == 0 && totalSources > 0 {
+		return items, queueIssues, fmt.Errorf("all %d source(s) failed to return data", totalSources)
 	}
 
 	sort.Slice(items, func(i, j int) bool {
@@ -337,13 +372,13 @@ func fetchRadarrInstance(ctx context.Context, client *httpclient.Client, inst co
 
 		var releaseTime time.Time
 		if movie.DigitalDate != "" {
-			releaseTime, err = time.Parse("2006-01-02T15:04:05Z", movie.DigitalDate)
+			releaseTime, err = parseDateFlexible(movie.DigitalDate)
 		}
 		if releaseTime.IsZero() && movie.ReleaseDate != "" {
-			releaseTime, err = time.Parse("2006-01-02T15:04:05Z", movie.ReleaseDate)
+			releaseTime, err = parseDateFlexible(movie.ReleaseDate)
 		}
 		if releaseTime.IsZero() && movie.InCinemas != "" {
-			releaseTime, err = time.Parse("2006-01-02T15:04:05Z", movie.InCinemas)
+			releaseTime, err = parseDateFlexible(movie.InCinemas)
 		}
 		if releaseTime.IsZero() {
 			if debug {
@@ -426,7 +461,7 @@ func fetchRadarrCalendar(ctx context.Context, client *httpclient.Client, inst co
 }
 
 func fetchQueue(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, debug bool) (*QueueResponse, error) {
-	apiURL := fmt.Sprintf("%s/api/v3/queue?pageSize=1", inst.URL)
+	apiURL := fmt.Sprintf("%s/api/v3/queue?pageSize=100", inst.URL)
 
 	if debug {
 		fmt.Fprintf(os.Stderr, "DEBUG: Queue %s: GET %s\n", inst.Name, apiURL)
@@ -443,6 +478,8 @@ func fetchQueue(ctx context.Context, client *httpclient.Client, inst config.ArrI
 func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg ToolConfig) error {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 	now := time.Now()
+
+	items = applyFilters(items, cfg)
 
 	episodes := 0
 	movies := 0

@@ -54,9 +54,13 @@ func (c *Client) DoRequest(ctx context.Context, method, url string, headers map[
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	const maxBodySize = 10 * 1024 * 1024
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
+	}
+	if len(data) > maxBodySize {
+		return nil, resp.StatusCode, fmt.Errorf("response body too large (exceeds %d bytes)", maxBodySize)
 	}
 	return data, resp.StatusCode, nil
 }
