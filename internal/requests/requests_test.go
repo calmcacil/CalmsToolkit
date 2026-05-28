@@ -1403,7 +1403,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			expectUpdate:  false,
 		},
 		{
-			name:      "Approve with empty root folder",
+			name:      "Approve with server override and default root folder",
 			requestID: 123,
 			overrides: &RequestOverrides{
 				ServerID:   1,
@@ -1413,7 +1413,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			approveStatus: http.StatusOK,
 			updateStatus:  http.StatusOK,
 			expectError:   false,
-			expectUpdate:  false,
+			expectUpdate:  true,
 		},
 		{
 			name:      "Approve with root folder override",
@@ -1454,7 +1454,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			updateStatus:     http.StatusInternalServerError,
 			expectError:      true,
 			expectUpdate:     true,
-			expectedErrorMsg: "failed to set root folder before approval",
+			expectedErrorMsg: "failed to set request overrides before approval",
 		},
 	}
 
@@ -1498,7 +1498,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 
 			updateShouldHaveBeenCalled := tt.expectUpdate
 			updateSucceeded := updateShouldHaveBeenCalled && tt.updateStatus == http.StatusOK
-			updateNotNeeded := !updateShouldHaveBeenCalled && (tt.overrides == nil || tt.overrides.RootFolder == "")
+			updateNotNeeded := !updateShouldHaveBeenCalled && (tt.overrides == nil || (tt.overrides.RootFolder == "" && tt.overrides.ServerID <= 0))
 			updateCalledAndFailed := updateShouldHaveBeenCalled && tt.updateStatus != http.StatusOK
 
 			if updateSucceeded || updateNotNeeded {
@@ -1517,8 +1517,17 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			}
 
 			if updateCalled {
-				if rootFolder, ok := updateBody["rootFolder"].(string); !ok || rootFolder != tt.overrides.RootFolder {
-					t.Errorf("Update body rootFolder = %v, want %v", updateBody["rootFolder"], tt.overrides.RootFolder)
+				if tt.overrides.RootFolder != "" {
+					rootFolder, ok := updateBody["rootFolder"].(string)
+					if !ok || rootFolder != tt.overrides.RootFolder {
+						t.Errorf("Update body rootFolder = %v, want %v", updateBody["rootFolder"], tt.overrides.RootFolder)
+					}
+				}
+				if tt.overrides.ServerID > 0 {
+					serverID, ok := updateBody["serverId"].(float64)
+					if !ok || int(serverID) != tt.overrides.ServerID {
+						t.Errorf("Update body serverId = %v, want %v", updateBody["serverId"], tt.overrides.ServerID)
+					}
 				}
 			}
 

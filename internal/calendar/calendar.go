@@ -248,7 +248,7 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 	var mu sync.Mutex
 	var qMu sync.Mutex
 
-	g, gCtx := errgroup.WithContext(ctx)
+	var g errgroup.Group
 
 	totalSources := len(cfg.SonarrInstances) + len(cfg.RadarrInstances)
 	var successes int
@@ -257,7 +257,7 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 	for _, inst := range cfg.SonarrInstances {
 		inst := inst
 		g.Go(func() error {
-			err := fetchSonarrInstance(gCtx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenEpisodes)
+			err := fetchSonarrInstance(ctx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenEpisodes)
 			if err == nil {
 				successMu.Lock()
 				successes++
@@ -270,7 +270,7 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 	for _, inst := range cfg.RadarrInstances {
 		inst := inst
 		g.Go(func() error {
-			err := fetchRadarrInstance(gCtx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenMovies)
+			err := fetchRadarrInstance(ctx, client, inst, start, end, cfg.Debug, &mu, &qMu, &items, &queueIssues, seenMovies)
 			if err == nil {
 				successMu.Lock()
 				successes++
