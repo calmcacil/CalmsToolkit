@@ -743,7 +743,7 @@ func formatRelativeTime(t time.Time) string {
 		return fmt.Sprintf("%d days ago", days)
 	}
 
-	return t.Format("2006-01-02 15:04")
+	return t.Local().Format("2006-01-02 15:04")
 }
 
 func filterEvents(events []HistoryEvent, cfg ToolConfig) []HistoryEvent {
