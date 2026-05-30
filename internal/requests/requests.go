@@ -1010,7 +1010,7 @@ func formatDate(dateStr string) string {
 	if err != nil {
 		return dateStr
 	}
-	return t.Format("2006-01-02 15:04")
+	return t.Local().Format("2006-01-02 15:04")
 }
 
 func readKeystroke(cfg ToolConfig) (string, error) {
