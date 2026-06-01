@@ -240,6 +240,9 @@ func Run(query string, cfg ToolConfig) {
 
 	selected := pickCandidate(ctx, candidates, query, cfg)
 	if selected == nil {
+		if ctx.Err() != nil {
+			os.Exit(130)
+		}
 		os.Exit(3)
 	}
 
