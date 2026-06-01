@@ -99,6 +99,15 @@ type SeriesOrMovie struct {
 	InCinemas       string
 }
 
+// EpisodeInfo holds a single episode for full-season display.
+type EpisodeInfo struct {
+	EpisodeNumber int
+	Title         string
+	AirDateUtc    time.Time
+	HasFile       bool
+	Aired         bool
+}
+
 // AirtimeInfo holds the resolved airtime for a matched item.
 type AirtimeInfo struct {
 	Title  string
@@ -119,6 +128,8 @@ type AirtimeInfo struct {
 	NextLabel string
 	TVDBID    int
 	TMDBID    int
+
+	SeasonEpisodes []EpisodeInfo // populated when FullSeason is true
 }
 
 // SelectionEvent is emitted when the user picks a candidate.
@@ -143,6 +154,7 @@ type ToolConfig struct {
 	JSONOutput      bool
 	Debug           bool
 	NoBanner        bool
+	FullSeason      bool
 }
 
 // BuildToolConfig constructs ToolConfig from the global config.
@@ -459,11 +471,23 @@ func resolveAirtime(ctx context.Context, client *httputil.Client, selected score
 				return season[i].AirDateUtc.Before(season[j].AirDateUtc)
 			})
 
-			var lastAir, nextAir *time.Time
-			var lastLabel, nextLabel string
-			now := time.Now()
+			var (
+				lastAir, nextAir     *time.Time
+				lastLabel, nextLabel string
+				now                  = time.Now()
+				epInfos              []EpisodeInfo
+			)
 
 			for _, ep := range season {
+				if cfg.FullSeason {
+					epInfos = append(epInfos, EpisodeInfo{
+						EpisodeNumber: ep.EpisodeNumber,
+						Title:         ep.Title,
+						AirDateUtc:    ep.AirDateUtc,
+						HasFile:       ep.HasFile,
+						Aired:         !ep.AirDateUtc.IsZero() && !ep.AirDateUtc.After(now),
+					})
+				}
 				if ep.AirDateUtc.IsZero() {
 					continue
 				}
@@ -476,6 +500,10 @@ func resolveAirtime(ctx context.Context, client *httputil.Client, selected score
 					nextAir = &t
 					nextLabel = fmt.Sprintf("S%02dE%02d %q", ep.SeasonNumber, ep.EpisodeNumber, ep.Title)
 				}
+			}
+
+			if cfg.FullSeason {
+				info.SeasonEpisodes = epInfos
 			}
 
 			info.LastAir = lastAir
