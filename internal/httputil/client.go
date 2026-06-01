@@ -80,36 +80,58 @@ func jitter(d time.Duration) time.Duration {
 }
 
 // DoRequest performs an HTTP request and returns the raw body bytes and HTTP status code.
-func (c *Client) DoRequest(ctx context.Context, method, url string, headers map[string]string, body io.Reader) ([]byte, int, error) {
+func (c *Client) DoRequest(ctx context.Context, method, url string, headers map[string]string, body io.Reader) ([]byte, int, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	defer resp.Body.Close()
+
+	retryAfter := parseRetryAfterHeader(resp)
+
 	maxSize := c.MaxBodySize
 	if maxSize <= 0 {
 		maxSize = 10 * 1024 * 1024
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, retryAfter, err
 	}
 	if int64(len(data)) > maxSize {
-		return nil, resp.StatusCode, fmt.Errorf("response body too large (exceeds %d bytes)", maxSize)
+		return nil, resp.StatusCode, retryAfter, fmt.Errorf("response body too large (exceeds %d bytes)", maxSize)
 	}
-	return data, resp.StatusCode, nil
+	return data, resp.StatusCode, retryAfter, nil
+}
+
+func parseRetryAfterHeader(resp *http.Response) time.Duration {
+	if resp == nil {
+		return 0
+	}
+	h := resp.Header.Get("Retry-After")
+	if h == "" {
+		return 0
+	}
+	if s, err := strconv.Atoi(h); err == nil && s > 0 {
+		return time.Duration(s) * time.Second
+	}
+	if t, err := time.Parse(time.RFC1123, h); err == nil {
+		if d := time.Until(t); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
 
 // DoJSON performs an HTTP request and decodes the JSON response into result.
 func (c *Client) DoJSON(ctx context.Context, method, url string, headers map[string]string, body io.Reader, result interface{}) error {
-	data, status, err := c.DoRequest(ctx, method, url, headers, body)
+	data, status, _, err := c.DoRequest(ctx, method, url, headers, body)
 	if err != nil {
 		return err
 	}
@@ -126,7 +148,7 @@ func (c *Client) DoJSON(ctx context.Context, method, url string, headers map[str
 
 // DoXML performs an HTTP request and decodes the XML response into result.
 func (c *Client) DoXML(ctx context.Context, method, url string, headers map[string]string, body io.Reader, result interface{}) error {
-	data, status, err := c.DoRequest(ctx, method, url, headers, body)
+	data, status, _, err := c.DoRequest(ctx, method, url, headers, body)
 	if err != nil {
 		return err
 	}
@@ -172,11 +194,13 @@ type responseHandler func([]byte, int) error
 func (c *Client) doWithRetry(ctx context.Context, method, url string, headers map[string]string, body io.Reader, fn responseHandler, rc RetryConfig) error {
 	backoff := rc.InitialBackoff
 	for attempt := 1; attempt <= rc.MaxAttempts; attempt++ {
-		data, status, err := c.DoRequest(ctx, method, url, headers, body)
+		data, status, retryAfter, err := c.DoRequest(ctx, method, url, headers, body)
 		if err == nil {
 			if rc.shouldRetry(status) && attempt < rc.MaxAttempts {
 				if rc.RespectRetryAfter {
-					if ra := parseRetryAfter(string(data)); ra > 0 && ra < rc.MaxBackoff {
+					if retryAfter > 0 && retryAfter < rc.MaxBackoff {
+						backoff = retryAfter
+					} else if ra := parseRetryAfter(string(data)); ra > 0 && ra < rc.MaxBackoff {
 						backoff = ra
 					}
 				}

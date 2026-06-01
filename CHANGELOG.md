@@ -32,7 +32,6 @@ Architecture refactor — no user-facing API changes.
 - Hard-coded 10 MiB body cap in `DoRequest`.
 - Duplicated theme/flag/validation code in every `main.go`.
 - Duplicated timeout/no-color/theme parsing in every `BuildToolConfig`.
-- `NewTransportClient` (dead code).
 
 ### Fixed
 - Error messages now consistently go to stderr (via slog).

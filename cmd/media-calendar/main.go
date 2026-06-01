@@ -34,7 +34,7 @@ func main() {
 	cfg.NoColor = cu.NoColor
 	cfg.Theme = cu.Theme
 	cfg.JSONOutput = cu.JSONFlag()
-	cfg.WatchMode = cu.Watch
+	cfg.Watch = cu.Watch
 	cfg.WatchSeconds = cu.WatchSeconds
 	cfg.Debug = cu.Debug
 	cfg.NoBanner = *noBanner

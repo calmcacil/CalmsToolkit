@@ -33,7 +33,7 @@ func TestDoRequest(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient(5 * time.Second)
 
-	body, status, err := client.DoRequest(ctx, "GET", server.URL, nil, nil)
+	body, status, _, err := client.DoRequest(ctx, "GET", server.URL, nil, nil)
 	if err != nil {
 		t.Fatalf("DoRequest error: %v", err)
 	}
@@ -121,11 +121,34 @@ func TestLargeBodyRejection(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient(5 * time.Second)
 
-	_, _, err := client.DoRequest(ctx, "GET", server.URL, nil, nil)
+	_, _, _, err := client.DoRequest(ctx, "GET", server.URL, nil, nil)
 	if err == nil {
 		t.Fatal("Expected error for large body, got nil")
 	}
 	if !strings.Contains(err.Error(), "too large") {
 		t.Errorf("Error should mention too large, got: %v", err)
+	}
+}
+
+func TestRetryAfterFromHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	client := NewClient(5 * time.Second)
+
+	_, status, retryAfter, err := client.DoRequest(ctx, "GET", server.URL, nil, nil)
+	if err != nil {
+		t.Fatalf("DoRequest error: %v", err)
+	}
+	if status != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", status)
+	}
+	if retryAfter != 30*time.Second {
+		t.Errorf("retryAfter = %v, want 30s", retryAfter)
 	}
 }

@@ -94,8 +94,6 @@ type ToolConfig struct {
 	RadarrInstances []config.ArrInstance
 	Days            int
 	DaysPast        int
-	WatchMode       bool
-	WatchSeconds    int
 	NoBanner        bool
 	Filter          string
 	MonitoredOnly   bool
@@ -149,6 +147,7 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 		cfg.Timeout = 10 * time.Second
 		cfg.Days = 1
 		cfg.WatchSeconds = 300
+		cfg.Watch = false
 		return cfg
 	}
 

@@ -74,7 +74,7 @@ func fetchSonarrHistory(ctx context.Context, client *httputil.Client, inst confi
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", inst.URL, sinceStr)
 
 	headers := map[string]string{"X-Api-Key": inst.APIKey}
-	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
+	body, status, _, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func enrichSonarrSubtitles(ctx context.Context, client *httputil.Client, inst co
 	}
 
 	headers := map[string]string{"X-Api-Key": inst.APIKey}
-	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
+	body, status, _, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
 	if err != nil || status != http.StatusOK {
 		return
 	}
@@ -155,7 +155,7 @@ func fetchRadarrHistory(ctx context.Context, client *httputil.Client, inst confi
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", inst.URL, sinceStr)
 
 	headers := map[string]string{"X-Api-Key": inst.APIKey}
-	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
+	body, status, _, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func enrichRadarrSubtitles(ctx context.Context, client *httputil.Client, inst co
 	}
 
 	headers := map[string]string{"X-Api-Key": inst.APIKey}
-	body, status, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
+	body, status, _, err := client.DoRequest(ctx, "GET", endpoint, headers, nil)
 	if err != nil || status != http.StatusOK {
 		return
 	}

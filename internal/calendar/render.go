@@ -80,7 +80,7 @@ func dataAgent(ctx context.Context, cfg ToolConfig, ch chan<- dataEvent) {
 		case <-ctx.Done():
 			return
 		}
-		if !cfg.WatchMode {
+		if !cfg.Watch {
 			return
 		}
 		if err != nil {
@@ -123,7 +123,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 			termWidth = re.width
 		case de := <-dataCh:
 			if de.err != nil {
-				if !cfg.WatchMode {
+				if !cfg.Watch {
 					return de.err
 				}
 				fmt.Fprintf(os.Stderr, "WARNING: %v (retrying)\n", de.err)
@@ -137,7 +137,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 	fmt.Print(colors.ClearScreen + colors.HomeCursor)
 	renderCalendar(cfg, items, issues, termWidth, p)
 
-	if !cfg.WatchMode {
+	if !cfg.Watch {
 		return nil
 	}
 

@@ -125,11 +125,11 @@ func (c *Common) JSONFlag() bool {
 func LoadAndValidate() *config.ToolkitConfig {
 	tk, err := config.LoadToolkitConfig()
 	if err != nil {
-		slogx.Default().Warn("config not loaded, using defaults", "err", err)
+		fmt.Fprintf(os.Stderr, "WARN: config not loaded, using defaults: %v\n", err)
 	}
 	if tk != nil {
 		if err := tk.Validate(); err != nil {
-			slogx.Default().Warn("config validation", "err", err)
+			fmt.Fprintf(os.Stderr, "WARN: config validation: %v\n", err)
 		}
 	}
 	return tk
