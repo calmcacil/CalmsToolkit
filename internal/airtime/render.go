@@ -36,6 +36,22 @@ func interactiveSelect(ctx context.Context, candidates []scoredMatch, query stri
 	}
 
 	reader := bufio.NewReader(os.Stdin)
+	lineCh := make(chan string, 1)
+	go func() {
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			line = strings.TrimSpace(strings.ToLower(line))
+			select {
+			case lineCh <- line:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	for {
 		var buf bytes.Buffer
 		bw := bufio.NewWriter(&buf)
@@ -92,26 +108,29 @@ func interactiveSelect(ctx context.Context, candidates []scoredMatch, query stri
 		fmt.Fprint(os.Stdout, "\033[s")
 		os.Stdout.Write(buf.Bytes())
 
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return &candidates[0]
-		}
-		line = strings.TrimSpace(strings.ToLower(line))
+		select {
+		case line, ok := <-lineCh:
+			if !ok {
+				return nil
+			}
+			fmt.Fprint(os.Stdout, "\033[u\033[J")
 
-		fmt.Fprint(os.Stdout, "\033[u\033[J")
+			if line == "q" {
+				fmt.Fprintln(os.Stderr, "Quit.")
+				return nil
+			}
+			if line == "s" {
+				fmt.Fprintf(os.Stderr, "Start a new search with: media-airtime <new query>\n")
+				return nil
+			}
 
-		if line == "q" {
-			fmt.Fprintln(os.Stderr, "Quit.")
+			var idx int
+			if _, err := fmt.Sscanf(line, "%d", &idx); err == nil && idx >= 1 && idx <= len(candidates) {
+				return &candidates[idx-1]
+			}
+		case <-ctx.Done():
+			fmt.Fprint(os.Stdout, "\033[u\033[J")
 			return nil
-		}
-		if line == "s" {
-			fmt.Fprintf(os.Stderr, "Start a new search with: media-airtime <new query>\n")
-			return nil
-		}
-
-		var idx int
-		if _, err := fmt.Sscanf(line, "%d", &idx); err == nil && idx >= 1 && idx <= len(candidates) {
-			return &candidates[idx-1]
 		}
 	}
 }
