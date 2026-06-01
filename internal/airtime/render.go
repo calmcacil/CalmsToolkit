@@ -127,43 +127,34 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 		termWidth = 40
 	}
 
-	boxW := termWidth - 2
-	if boxW > 100 {
-		boxW = 100
-	}
-
-	icon := iconForType(info.Type)
-	title := fmt.Sprintf(" %s %s (%d) ─ %s ", icon, info.Title, info.Year, info.Source)
-	topRem := boxW - len(title)
-	if topRem < 1 {
-		topRem = 1
+	innerW := termWidth - 2
+	if innerW > 100 {
+		innerW = 100
 	}
 
 	var bodyBuf bytes.Buffer
 	bw := bufio.NewWriter(&bodyBuf)
 
-	fmt.Fprint(bw, "┌──")
-	fmt.Fprint(bw, title)
-	fmt.Fprint(bw, strings.Repeat("─", topRem))
-	fmt.Fprint(bw, "┐\n")
+	icon := iconForType(info.Type)
+	title := fmt.Sprintf("─ %s %s (%d) ─ %s ─", icon, info.Title, info.Year, info.Source)
+	topContent := colors.PadRight(title, innerW)
+	fmt.Fprint(bw, "┌"+topContent+"┐\n")
 
 	now := time.Now()
 
 	addLine := func(key, val string) {
-		line := fmt.Sprintf("│  %s%s%s %s%s", clr(p.Bold), key, clr(p.Reset), val, clr(p.Reset))
-		rem := boxW - len("│ ") - len(key) - len(" ") - colors.VisibleLen(val)
-		if rem < 1 {
-			rem = 1
-		}
-		line += strings.Repeat(" ", rem-1)
-		line += "│\n"
-		fmt.Fprint(bw, line)
+		content := fmt.Sprintf("  %s%s%s %s%s", clr(p.Bold), key, clr(p.Reset), val, clr(p.Reset))
+		content = colors.PadRight(content, innerW)
+		fmt.Fprint(bw, "│"+content+"│\n")
 	}
 
 	addSep := func() {
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, strings.Repeat(" ", boxW-1))
-		fmt.Fprint(bw, "│\n")
+		content := strings.Repeat(" ", innerW)
+		fmt.Fprint(bw, "│"+content+"│\n")
+	}
+
+	addSepDashed := func() {
+		fmt.Fprint(bw, "├"+strings.Repeat("─", innerW)+"┤\n")
 	}
 
 	if info.Type == "series" {
@@ -195,26 +186,23 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 
 		if info.LastAir != nil {
 			rel := formatRelativeDate(now, *info.LastAir)
-			lastStr := fmt.Sprintf("%s", info.LastLabel)
-			if len(lastStr) > boxW-20 {
-				lastStr = truncate(lastStr, boxW-23)
-			}
-			addLine("  Last air:", fmt.Sprintf("%s", lastStr))
+			addLine("  Last air:", info.LastLabel)
 			addLine("           ", rel)
 		}
 
 		if info.NextAir != nil {
 			rel := formatRelativeDate(now, *info.NextAir)
-			nextStr := fmt.Sprintf("%s", info.NextLabel)
-			if len(nextStr) > boxW-20 {
-				nextStr = truncate(nextStr, boxW-23)
-			}
-			addLine("  Next air:", fmt.Sprintf("%s", nextStr))
+			addLine("  Next air:", info.NextLabel)
 			addLine("           ", rel)
 		} else if info.Status == "ended" {
 			addLine("  Next air:", clr(p.Subdued)+"— (series has ended)"+clr(p.Reset))
 		} else {
 			addLine("  Next air:", clr(p.Subdued)+"— (TBA)"+clr(p.Reset))
+		}
+
+		if cfg.FullSeason && len(info.SeasonEpisodes) > 0 {
+			addSepDashed()
+			renderFullSeason(bw, info, cfg, now, p, clr, innerW)
 		}
 	} else {
 		statusColor := statusColor(info.Status, p)
@@ -245,12 +233,42 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 		}
 	}
 
-	fmt.Fprint(bw, "└")
-	fmt.Fprint(bw, strings.Repeat("─", boxW))
-	fmt.Fprint(bw, "┘\n")
+	bottomContent := strings.Repeat("─", innerW)
+	fmt.Fprint(bw, "└"+bottomContent+"┘\n")
 
 	bw.Flush()
 	os.Stdout.Write(bodyBuf.Bytes())
+}
+
+func renderFullSeason(bw *bufio.Writer, info AirtimeInfo, cfg ToolConfig, now time.Time, p *colors.Palette, clr func(string) string, innerW int) {
+	header := fmt.Sprintf(" %s ", fmt.Sprintf("Season %d episodes", info.Season))
+	header = colors.PadRight(header, innerW)
+	fmt.Fprint(bw, "│"+header+"│\n")
+
+	for _, ep := range info.SeasonEpisodes {
+		epNum := ep.EpisodeNumber
+		icon := " "
+		if ep.HasFile {
+			icon = "D"
+		}
+		if ep.Aired {
+			rel := formatRelativeDate(now, ep.AirDateUtc)
+			line := fmt.Sprintf("  E%02d [%s] %s — %s", epNum, icon, ep.Title, rel)
+			if colors.VisibleLen(line) > innerW {
+				line = truncateVis(line, innerW)
+			}
+			line = colors.PadRight(line, innerW)
+			fmt.Fprint(bw, "│"+line+"│\n")
+		} else {
+			rel := formatRelativeDate(now, ep.AirDateUtc)
+			line := fmt.Sprintf("  E%02d [%s] %s — %s", epNum, icon, ep.Title, rel)
+			if colors.VisibleLen(line) > innerW {
+				line = truncateVis(line, innerW)
+			}
+			line = colors.PadRight(line, innerW)
+			fmt.Fprint(bw, "│"+line+"│\n")
+		}
+	}
 }
 
 func iconForType(t string) string {
@@ -356,4 +374,24 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
+}
+
+func truncateVis(s string, maxLen int) string {
+	visLen := colors.VisibleLen(s)
+	if visLen <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		runes := []rune(s)
+		if len(runes) > maxLen {
+			return string(runes[:maxLen])
+		}
+		return s
+	}
+	ellipsis := "..."
+	elLen := len(ellipsis)
+	for colors.VisibleLen(s[:len(s)-elLen]) > maxLen-elLen {
+		s = s[:len(s)-1]
+	}
+	return s + ellipsis
 }

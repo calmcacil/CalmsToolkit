@@ -30,6 +30,7 @@ func main() {
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
 	debug := flag.Bool("debug", cfg.Debug, "Enable debug logging")
 	noBanner := flag.Bool("no-banner", false, "Suppress decorative banner")
+	fullSeason := flag.Bool("full-season", false, "Show all episodes of the current season")
 	flag.Parse()
 
 	query := strings.TrimSpace(strings.Join(flag.Args(), " "))
@@ -57,6 +58,7 @@ func main() {
 	cfg.JSONOutput = *jsonOutput
 	cfg.Debug = *debug
 	cfg.NoBanner = *noBanner
+	cfg.FullSeason = *fullSeason
 
 	if tk != nil {
 		if err := tk.Validate(); err != nil {
