@@ -93,6 +93,29 @@ Display upcoming TV episodes and movie releases from Sonarr and Radarr in a conc
 ./bin/media-calendar -json
 ```
 
+### Media Airtime
+
+Look up next upcoming and last aired dates for any show or movie in your Sonarr/Radarr library with fuzzy matching and an interactive selection prompt.
+
+#### Features
+
+- Fuzzy Search: Find shows and movies with partial or approximate name matching
+- Interactive Selection: Pick from multiple matches with a numbered menu
+- Airtime Display: Shows next upcoming airtime or last aired episode with relative dates ("in 3 days", "yesterday")
+- Per-Season Detail: Current season detection with episode on-disk status
+- Multi-Instance: Searches across all configured Sonarr and Radarr instances
+- JSON Output: Machine-readable format for automation
+
+#### Quick Start
+
+```bash
+./bin/media-airtime "clarkson"
+./bin/media-airtime "clarkson's farm"
+./bin/media-airtime -type movie "inception 2010"
+./bin/media-airtime -exact "Clarkson's Farm"
+./bin/media-airtime -json "dune"
+```
+
 ### ARR Feed
 
 Monitor Sonarr and Radarr history events (grabbed, imported, failed) in real-time.
