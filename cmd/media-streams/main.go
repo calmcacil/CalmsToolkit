@@ -6,16 +6,13 @@ import (
 	"os"
 	"strings"
 
-	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/cmdutil"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/streams"
 )
 
 func main() {
-	tk, err := config.LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
+	tk := cmdutil.LoadAndValidate()
 	cfg := streams.BuildToolConfig(tk)
 
 	server := flag.String("server", cfg.ServerType, "Server type: plex, jellyfin, or both")
@@ -23,40 +20,28 @@ func main() {
 	plexToken := flag.String("plex-token", config.TokenFromEnv("PLEX_TOKEN", cfg.PlexToken), "Plex authentication token")
 	jellyfinURL := flag.String("jellyfin-url", cfg.JellyfinURL, "Jellyfin server URL")
 	jellyfinToken := flag.String("jellyfin-token", config.TokenFromEnv("JELLYFIN_TOKEN", cfg.JellyfinToken), "Jellyfin API token")
-	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
-	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
-	jsonOutput := flag.Bool("json", false, "Output in JSON format")
-	watchMode := flag.Bool("watch", false, "Continuously monitor streams")
-	watchSeconds := flag.Int("interval", cfg.WatchSeconds, "Watch mode refresh interval in seconds")
 	historyDuration := flag.Duration("history-duration", cfg.HistoryDuration, "How long to keep session history in watch mode")
-	quiet := flag.Bool("quiet", false, "Suppress non-error output")
+
+	cu := cmdutil.RegisterCommonFlags(flag.CommandLine, tk, cmdutil.Options{
+		IncludeWatch: true,
+		IncludeQuiet: true,
+	})
 	flag.Parse()
+	cu.Apply()
 
 	cfg.ServerType = *server
-	cfg.PlexURL = *plexURL
+	cfg.PlexURL = strings.TrimSuffix(*plexURL, "/")
 	cfg.PlexToken = *plexToken
-	cfg.JellyfinURL = *jellyfinURL
+	cfg.JellyfinURL = strings.TrimSuffix(*jellyfinURL, "/")
 	cfg.JellyfinToken = *jellyfinToken
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *jsonOutput
-	cfg.Theme = *theme
-	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
-		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
-			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
-		cfg.Theme = "default"
-	}
-	cfg.JSONOutput = *jsonOutput
-	cfg.WatchMode = *watchMode
-	cfg.WatchSeconds = *watchSeconds
+	cfg.Timeout = cu.Timeout
+	cfg.NoColor = cu.NoColor
+	cfg.Theme = cu.Theme
+	cfg.JSONOutput = cu.JSONFlag()
+	cfg.Watch = cu.Watch
+	cfg.WatchSeconds = cu.WatchSeconds
 	cfg.HistoryDuration = *historyDuration
-	cfg.Quiet = *quiet
-
-	if tk != nil {
-		if err := tk.Validate(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
-		}
-	}
+	cfg.Quiet = cu.Quiet
 
 	validServers := map[string]bool{"plex": true, "jellyfin": true, "both": true}
 	if cfg.ServerType != "" && !validServers[cfg.ServerType] {
@@ -68,9 +53,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "ERROR: -interval must be >= 1\n")
 		os.Exit(1)
 	}
-
-	cfg.PlexURL = strings.TrimSuffix(cfg.PlexURL, "/")
-	cfg.JellyfinURL = strings.TrimSuffix(cfg.JellyfinURL, "/")
 
 	if cfg.ServerType == streams.ServerPlex || cfg.ServerType == streams.ServerBoth {
 		if cfg.PlexToken == "" {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/core"
 )
 
 func TestGetYear(t *testing.T) {
@@ -265,7 +266,9 @@ func TestSearchMedia(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			results, err := searchMedia(context.Background(), cfg, tt.query)
@@ -308,7 +311,9 @@ func TestGetTVDetails(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	details, err := getTVDetails(context.Background(), cfg, 1)
@@ -379,7 +384,9 @@ func TestCreateRequest(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			_, err := createRequest(context.Background(), cfg, tt.media, nil, nil)
@@ -430,7 +437,9 @@ func TestGetPendingRequests(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -458,7 +467,9 @@ func TestApproveRequest(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	err := approveRequest(context.Background(), cfg, 123)
@@ -482,7 +493,9 @@ func TestDeclineRequest(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	err := declineRequest(context.Background(), cfg, 123)
@@ -525,7 +538,9 @@ func TestTestConnection(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			err := testConnection(context.Background(), cfg)
@@ -558,7 +573,9 @@ func TestFetchServiceInstances(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	instances, err := fetchServiceInstances(context.Background(), cfg, "radarr")
@@ -592,7 +609,9 @@ func TestFetchServiceDetails(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	details, err := fetchServiceDetails(context.Background(), cfg, "radarr", 1)
@@ -654,7 +673,9 @@ func TestSearchMediaWithSpaces(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			_, err := searchMedia(context.Background(), cfg, tt.query)
@@ -703,7 +724,9 @@ func TestSearchMediaErrorDiagnostics(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			_, err := searchMedia(context.Background(), cfg, "test query")
@@ -808,7 +831,9 @@ func TestCheckUserPermissions(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			authMe, err := checkUserPermissions(context.Background(), cfg)
@@ -890,7 +915,9 @@ func TestGetRequestCount(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			count, err := getRequestCount(context.Background(), cfg)
@@ -991,7 +1018,9 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -1041,7 +1070,9 @@ func TestGetPendingRequestsNoPending(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -1111,7 +1142,9 @@ func TestGetPendingRequestsPagination(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -1191,7 +1224,9 @@ func TestGetPendingRequestsWithFallback(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -1266,7 +1301,9 @@ func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -1359,7 +1396,9 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	requests, err := getPendingRequests(context.Background(), cfg)
@@ -1492,7 +1531,9 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 			cfg := ToolConfig{
 				ServerURL: server.URL,
 				APIKey:    "test-key",
-				Timeout:   5 * time.Second,
+				CommonConfig: core.CommonConfig{
+					Timeout: 5 * time.Second,
+				},
 			}
 
 			err := approveRequestWithOverrides(context.Background(), cfg, tt.requestID, tt.overrides)
@@ -1568,7 +1609,9 @@ func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	overrides := &RequestOverrides{
@@ -1611,7 +1654,9 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 	cfg := ToolConfig{
 		ServerURL: server.URL,
 		APIKey:    "test-key",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	err := approveRequestWithOverrides(context.Background(), cfg, 789, nil)

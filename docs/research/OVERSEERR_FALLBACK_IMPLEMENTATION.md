@@ -233,9 +233,9 @@ With `pageSize=50`:
 4. **User Preference**: Allow disabling fallback via flag
 
 ## Related Documentation
+- `docs/research/OVERSEERR_API_RESEARCH.md` - API endpoint documentation
 
-- `docs/OVERSEERR_API_RESEARCH.md` - API endpoint documentation
-- `docs/TEST_SUMMARY.md` - Complete test suite overview
+- `docs/research/TEST_SUMMARY.md` - Complete test suite overview
 - `EXAMPLES_MEDIA_REQUESTS.md` - Usage examples
 - GitHub Issue: https://github.com/sct/overseerr/issues/3949
 

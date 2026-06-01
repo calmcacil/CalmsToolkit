@@ -1,4 +1,4 @@
-.PHONY: all build build-all clean install test help setup setup-install fmt tidy
+.PHONY: all build build-all clean clean-all install test help setup setup-install fmt tidy
 
 # Installation parameters
 prefix?=/usr/local
@@ -21,8 +21,14 @@ GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 
-# Build flags
-LDFLAGS=-ldflags "-s -w"
+# Build flags with version injection
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+BUILDINFO=-X github.com/calmcacil/CalmsToolkit/internal/buildinfo.Version=$(VERSION) \
+          -X github.com/calmcacil/CalmsToolkit/internal/buildinfo.Commit=$(COMMIT) \
+          -X github.com/calmcacil/CalmsToolkit/internal/buildinfo.Date=$(DATE)
+LDFLAGS=-ldflags "-s -w $(BUILDINFO)"
 
 all: clean build
 
@@ -34,6 +40,7 @@ help:
 	@echo "  make setup         - Interactive config wizard"
 	@echo "  make setup-install - Install setup binary to $(BUILD_DIR)"
 	@echo "  make clean         - Remove build artifacts"
+	@echo "  make clean-all     - Remove build artifacts and stray repo-root binaries"
 	@echo "  make test          - Run tests"
 	@echo "  make fmt           - Format Go source files"
 	@echo "  make tidy          - Tidy go.mod"
@@ -86,6 +93,11 @@ clean:
 	$(GOCLEAN)
 	rm -rf $(BUILD_DIR)
 	@echo "Clean complete!"
+
+clean-all: clean
+	@echo "Removing stray binaries from repo root..."
+	@find . -maxdepth 1 -type f \( -name 'media-*' -o -name 'arr-*' \) -not -name '*.go' -not -name '*.md' -exec rm -v {} \;
+	@echo "Clean-all complete!"
 
 setup:
 	@echo "=== CalmsToolkit Configuration Setup ==="

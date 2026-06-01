@@ -34,8 +34,8 @@ make build
 
 #### Documentation
 
-- **[docs/README_MEDIA_REQUESTS.md](docs/README_MEDIA_REQUESTS.md)** - Complete documentation and usage guide
-- **[docs/OVERSEERR_API_RESEARCH.md](docs/OVERSEERR_API_RESEARCH.md)** - API endpoint reference
+- **[docs/user/README_MEDIA_REQUESTS.md](docs/user/README_MEDIA_REQUESTS.md)** - Complete documentation and usage guide
+- **[docs/research/OVERSEERR_API_RESEARCH.md](docs/research/OVERSEERR_API_RESEARCH.md)** - API endpoint reference
 
 ### Media Streams Monitor
 

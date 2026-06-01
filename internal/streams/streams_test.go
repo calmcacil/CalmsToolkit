@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
@@ -231,9 +232,9 @@ func TestFetchPlexStreams(t *testing.T) {
 	defer server.Close()
 
 	cfg := ToolConfig{
-		PlexURL:   server.URL,
-		PlexToken: "test-token",
-		Timeout:   5 * time.Second,
+		CommonConfig: core.CommonConfig{Timeout: 5 * time.Second},
+		PlexURL:      server.URL,
+		PlexToken:    "test-token",
 	}
 	client := httputil.NewClient(cfg.Timeout)
 
@@ -297,9 +298,9 @@ func TestFetchJellyfinStreams(t *testing.T) {
 	defer server.Close()
 
 	cfg := ToolConfig{
+		CommonConfig:  core.CommonConfig{Timeout: 5 * time.Second},
 		JellyfinURL:   server.URL,
 		JellyfinToken: "test-token",
-		Timeout:       5 * time.Second,
 	}
 	client := httputil.NewClient(cfg.Timeout)
 

@@ -1,0 +1,30 @@
+# CalmsToolkit
+
+Go module (go 1.25) for media server monitoring and management.
+
+## Binaries
+
+- `media-streams` — Monitor Plex/Jellyfin streams
+- `media-calendar` — Sonarr/Radarr calendar view
+- `media-requests` — Overseerr/Jellyseerr interactive request manager
+- `media-airtime`  — Fuzzy airtime lookup in Sonarr/Radarr
+- `arr-feed`       — Sonarr/Radarr history event feed
+- `calmstoolkit-setup` — Interactive config wizard
+
+## Key packages
+
+- `internal/config` — `ToolkitConfig` JSON schema at `~/.config/calmstoolkit/config.json`
+- `internal/httputil` — `DoJSONWithRetry`, `DoXMLWithRetry`, configurable `MaxBodySize`
+- `internal/cmdutil` — Shared `--version`, `--json`, `--no-color`, `--timeout` flags
+- `internal/core` — `CommonConfig` embedded in every tool struct
+- `internal/buildinfo` — Version injected via `-ldflags -X`
+- `internal/slogx` — Structured logging via `log/slog`
+
+## Build
+
+```bash
+make build
+make test
+```
+
+See `CHANGELOG.md`, `CONTRIBUTING.md`, and `docs/user/` for per-tool docs.
