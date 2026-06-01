@@ -111,8 +111,13 @@ func main() {
 	fmt.Println()
 
 	fmt.Println(strings.Repeat("─", 50))
-	fmt.Println("  Step 6/6: Calendar & Feed Settings")
+	fmt.Println("  Step 6/6: Airtime, Calendar & Feed Settings")
 	fmt.Println(strings.Repeat("─", 50))
+
+	fmt.Println("\n  -- Media Airtime --")
+	cfg.MediaAirtime.Limit = promptInt("Search result limit (1-50)", cfg.MediaAirtime.Limit)
+	cfg.MediaAirtime.PastDays = promptInt("Past days for last-aired lookup", cfg.MediaAirtime.PastDays)
+	cfg.MediaAirtime.FutureDays = promptInt("Future days for next-upcoming lookup", cfg.MediaAirtime.FutureDays)
 
 	fmt.Println("\n  -- Media Calendar --")
 	cfg.MediaCalendar.Days = promptInt("Days to show", cfg.MediaCalendar.Days)
@@ -140,6 +145,7 @@ func main() {
 	fmt.Printf("  Plex configured:   %v\n", cfg.MediaStreams.PlexToken != "")
 	fmt.Printf("  Jellyfin configured: %v\n", cfg.MediaStreams.JellyfinToken != "")
 	fmt.Printf("  Requests server:   %v\n", cfg.MediaRequests.APIKey != "")
+	fmt.Printf("  Airtime limit:     %d\n", cfg.MediaAirtime.Limit)
 	fmt.Printf("  Calendar days:     %d (+%d past)\n", cfg.MediaCalendar.Days, cfg.MediaCalendar.DaysPast)
 	fmt.Printf("  Feed max events:   %d\n", cfg.ArrFeed.MaxEvents)
 	fmt.Printf("  Feed subtitles:    %v\n", cfg.ArrFeed.ShowSubtitles)
