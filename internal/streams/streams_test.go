@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
-	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
+	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
 func TestFormatTimeSince(t *testing.T) {
@@ -235,7 +235,7 @@ func TestFetchPlexStreams(t *testing.T) {
 		PlexToken: "test-token",
 		Timeout:   5 * time.Second,
 	}
-	client := httpclient.NewClient(cfg.Timeout)
+	client := httputil.NewClient(cfg.Timeout)
 
 	streams, err := fetchPlexStreams(context.Background(), client, cfg)
 	if err != nil {
@@ -301,7 +301,7 @@ func TestFetchJellyfinStreams(t *testing.T) {
 		JellyfinToken: "test-token",
 		Timeout:       5 * time.Second,
 	}
-	client := httpclient.NewClient(cfg.Timeout)
+	client := httputil.NewClient(cfg.Timeout)
 
 	streams, err := fetchJellyfinStreams(context.Background(), client, cfg)
 	if err != nil {

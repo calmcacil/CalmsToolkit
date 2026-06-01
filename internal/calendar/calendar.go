@@ -15,7 +15,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
-	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
+	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
 // SonarrEpisode represents a Sonarr calendar episode.
@@ -239,7 +239,7 @@ func Run(cfg ToolConfig) {
 func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []QueueIssue, error) {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 
-	client := httpclient.NewTransportClient(cfg.Timeout)
+	client := httputil.NewTransportClient(cfg.Timeout)
 
 	items := make([]CalendarItem, 0)
 	queueIssues := make([]QueueIssue, 0)
@@ -295,7 +295,7 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 	return items, queueIssues, nil
 }
 
-func fetchSonarrInstance(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+func fetchSonarrInstance(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
 		return fmt.Errorf("Sonarr %s: %w", inst.Name, err)
@@ -356,7 +356,7 @@ func fetchSonarrInstance(ctx context.Context, client *httpclient.Client, inst co
 	return nil
 }
 
-func fetchRadarrInstance(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
+func fetchRadarrInstance(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
 		return fmt.Errorf("Radarr %s: %w", inst.Name, err)
@@ -428,7 +428,7 @@ func fetchRadarrInstance(ctx context.Context, client *httpclient.Client, inst co
 	return nil
 }
 
-func fetchSonarrCalendar(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
+func fetchSonarrCalendar(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]SonarrEpisode, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s&includeSeries=true",
 		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
@@ -444,7 +444,7 @@ func fetchSonarrCalendar(ctx context.Context, client *httpclient.Client, inst co
 	return episodes, nil
 }
 
-func fetchRadarrCalendar(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
+func fetchRadarrCalendar(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool) ([]RadarrMovie, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/calendar?start=%s&end=%s",
 		inst.URL, start.Format("2006-01-02"), end.Format("2006-01-02"))
 
@@ -460,7 +460,7 @@ func fetchRadarrCalendar(ctx context.Context, client *httpclient.Client, inst co
 	return movies, nil
 }
 
-func fetchQueue(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, debug bool) (*QueueResponse, error) {
+func fetchQueue(ctx context.Context, client *httputil.Client, inst config.ArrInstance, debug bool) (*QueueResponse, error) {
 	apiURL := fmt.Sprintf("%s/api/v3/queue?pageSize=100", inst.URL)
 
 	if debug {

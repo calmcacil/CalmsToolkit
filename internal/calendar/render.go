@@ -179,12 +179,7 @@ func computeCalendarHash(items []CalendarItem, queueIssues []QueueIssue) string 
 }
 
 func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIssue, termWidth int, p *colors.Palette) {
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	now := time.Now()
 	items = applyFilters(items, cfg)
@@ -199,7 +194,7 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 		for _, issue := range queueIssues {
 			totalIssues += issue.Count
 		}
-		fmt.Fprintf(bw, "%s⚠️  WARNING: %d items require manual intervention%s\n",
+		fmt.Fprintf(bw, "%s!  WARNING: %d items require manual intervention%s\n",
 			clr(p.QueueWarning), totalIssues, clr(p.Reset))
 		for _, issue := range queueIssues {
 			fmt.Fprintf(bw, "%s→ %s: %s%s\n",

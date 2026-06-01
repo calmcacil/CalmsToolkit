@@ -21,7 +21,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
-	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
+	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
 // ToolConfig holds configuration for the Arr event feed tool.
@@ -33,7 +33,7 @@ type ToolConfig struct {
 	Timeout         time.Duration
 	NoColor         bool
 	Theme           string
-	JSON            bool
+	JSONOutput      bool
 	Watch           bool
 	ShowGrabbed     bool
 	ShowImported    bool
@@ -239,7 +239,7 @@ func Run(cfg ToolConfig) {
 		os.Exit(1)
 	}
 
-	client := httpclient.NewClient(cfg.Timeout)
+	client := httputil.NewClient(cfg.Timeout)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -252,7 +252,7 @@ func Run(cfg ToolConfig) {
 	}
 }
 
-func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client, p *colors.Palette) {
+func runSingleMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, p *colors.Palette) {
 	since := time.Now().Add(-cfg.HistoryWindow)
 	events, err := fetchAllHistory(ctx, client, cfg, since)
 	if err != nil {
@@ -266,15 +266,15 @@ func runSingleMode(ctx context.Context, cfg ToolConfig, client *httpclient.Clien
 		events = events[:cfg.MaxEvents]
 	}
 
-	if cfg.JSON {
+	if cfg.JSONOutput {
 		renderJSON(events)
 	} else {
 		renderTable(events, cfg, p)
 	}
 }
 
-func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client, p *colors.Palette) {
-	if !cfg.JSON {
+func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, p *colors.Palette) {
+	if !cfg.JSONOutput {
 		fmt.Print(colors.HideCursor)
 		defer fmt.Print(colors.ShowCursor)
 	}
@@ -289,18 +289,27 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 	for {
 		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
 		if err != nil {
-			if !cfg.JSON {
+			if !cfg.JSONOutput {
 				fmt.Print(colors.HomeCursor)
 				clr := getColorFunc(cfg, p)
-				fmt.Printf("%sERROR: %v%s\n", clr(p.Error), err, clr(p.Reset))
-				fmt.Printf("Retrying in %v...\n", cfg.PollInterval)
+				fmt.Fprintf(os.Stderr, "%sERROR: %v%s\n", clr(p.Error), err, clr(p.Reset))
+				fmt.Fprintf(os.Stderr, "Retrying in %v...\n", cfg.PollInterval)
 				fmt.Print(colors.EraseDown)
 			}
 		} else {
 			newCount := 0
 			for _, event := range newEvents {
-				eventCache = append(eventCache, event)
-				newCount++
+				dup := false
+				for i := len(eventCache) - 1; i >= 0 && i >= len(eventCache)-50; i-- {
+					if eventCache[i].ID == event.ID {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					eventCache = append(eventCache, event)
+					newCount++
+				}
 			}
 
 			if len(eventCache) > 100 {
@@ -313,7 +322,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 				filteredEvents = filteredEvents[:cfg.MaxEvents]
 			}
 
-			if cfg.JSON {
+			if cfg.JSONOutput {
 				renderJSON(filteredEvents)
 			} else {
 				newHash := computeFeedHash(filteredEvents)
@@ -339,7 +348,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httpclient.Client
 
 		select {
 		case <-ctx.Done():
-			if !cfg.JSON {
+			if !cfg.JSONOutput {
 				fmt.Print(colors.ShowCursor)
 			}
 			return
@@ -354,7 +363,7 @@ func computeFeedHash(events []HistoryEvent) string {
 	return string(h[:])
 }
 
-func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
+func fetchAllHistory(ctx context.Context, client *httputil.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
 	var wg sync.WaitGroup
 	eventsChan := make(chan []HistoryEvent, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
 	errorsChan := make(chan error, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
@@ -410,7 +419,7 @@ func fetchAllHistory(ctx context.Context, client *httpclient.Client, cfg ToolCon
 	return allEvents, nil
 }
 
-func fetchSonarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {
+func fetchSonarrHistory(ctx context.Context, client *httputil.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeEpisode=true&includeSeries=true", inst.URL, sinceStr)
 
@@ -445,7 +454,7 @@ func fetchSonarrHistory(ctx context.Context, client *httpclient.Client, inst con
 	return events, nil
 }
 
-func enrichSonarrSubtitles(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, events []HistoryEvent) {
+func enrichSonarrSubtitles(ctx context.Context, client *httputil.Client, inst config.ArrInstance, events []HistoryEvent) {
 	var ids []int
 	seen := make(map[int]bool)
 	for _, ev := range events {
@@ -491,7 +500,7 @@ func enrichSonarrSubtitles(ctx context.Context, client *httpclient.Client, inst 
 	}
 }
 
-func fetchRadarrHistory(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {
+func fetchRadarrHistory(ctx context.Context, client *httputil.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {
 	sinceStr := since.UTC().Format(time.RFC3339)
 	endpoint := fmt.Sprintf("%s/api/v3/history/since?date=%s&includeMovie=true", inst.URL, sinceStr)
 
@@ -526,7 +535,7 @@ func fetchRadarrHistory(ctx context.Context, client *httpclient.Client, inst con
 	return events, nil
 }
 
-func enrichRadarrSubtitles(ctx context.Context, client *httpclient.Client, inst config.ArrInstance, events []HistoryEvent) {
+func enrichRadarrSubtitles(ctx context.Context, client *httputil.Client, inst config.ArrInstance, events []HistoryEvent) {
 	var ids []int
 	seen := make(map[int]bool)
 	for _, ev := range events {
@@ -971,10 +980,10 @@ func getActionColor(action string, p *colors.Palette) string {
 }
 
 func getColorFunc(cfg ToolConfig, p *colors.Palette) func(string) string {
-	if cfg.NoColor || cfg.JSON {
-		return func(s string) string { return "" }
+	if cfg.NoColor || cfg.JSONOutput {
+		return colors.ClrFunc(true)
 	}
-	return func(s string) string { return s }
+	return colors.ClrFunc(false)
 }
 
 func subtitlesDisplay(s string) string {

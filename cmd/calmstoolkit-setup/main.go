@@ -22,7 +22,7 @@ func main() {
 
 	path := ConfigPath()
 	if path == "" {
-		fmt.Println("ERROR: Cannot determine home directory")
+		fmt.Fprintln(os.Stderr, "ERROR: Cannot determine home directory")
 		os.Exit(1)
 	}
 

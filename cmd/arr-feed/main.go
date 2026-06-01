@@ -4,7 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/feed"
 )
@@ -38,7 +40,12 @@ func main() {
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *json
 	cfg.Theme = *theme
-	cfg.JSON = *json
+	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
+		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
+			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
+		cfg.Theme = "default"
+	}
+	cfg.JSONOutput = *json
 	cfg.Watch = *watch
 	cfg.ShowGrabbed = *showGrabbed
 	cfg.ShowImported = *showImported

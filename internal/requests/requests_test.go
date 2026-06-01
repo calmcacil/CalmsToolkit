@@ -1,6 +1,7 @@
 package requests
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -267,7 +268,7 @@ func TestSearchMedia(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			results, err := searchMedia(cfg, tt.query)
+			results, err := searchMedia(context.Background(), cfg, tt.query)
 
 			if tt.expectError {
 				if err == nil {
@@ -310,7 +311,7 @@ func TestGetTVDetails(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	details, err := getTVDetails(cfg, 1)
+	details, err := getTVDetails(context.Background(), cfg, 1)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -381,7 +382,7 @@ func TestCreateRequest(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			_, err := createRequest(cfg, tt.media, nil, nil)
+			_, err := createRequest(context.Background(), cfg, tt.media, nil, nil)
 
 			if tt.expectError {
 				if err == nil {
@@ -432,7 +433,7 @@ func TestGetPendingRequests(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -460,7 +461,7 @@ func TestApproveRequest(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	err := approveRequest(cfg, 123)
+	err := approveRequest(context.Background(), cfg, 123)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -484,7 +485,7 @@ func TestDeclineRequest(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	err := declineRequest(cfg, 123)
+	err := declineRequest(context.Background(), cfg, 123)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -527,7 +528,7 @@ func TestTestConnection(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			err := testConnection(cfg)
+			err := testConnection(context.Background(), cfg)
 
 			if tt.expectError {
 				if err == nil {
@@ -560,7 +561,7 @@ func TestFetchServiceInstances(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	instances, err := fetchServiceInstances(cfg, "radarr")
+	instances, err := fetchServiceInstances(context.Background(), cfg, "radarr")
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -594,7 +595,7 @@ func TestFetchServiceDetails(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	details, err := fetchServiceDetails(cfg, "radarr", 1)
+	details, err := fetchServiceDetails(context.Background(), cfg, "radarr", 1)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -656,7 +657,7 @@ func TestSearchMediaWithSpaces(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			_, err := searchMedia(cfg, tt.query)
+			_, err := searchMedia(context.Background(), cfg, tt.query)
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 			}
@@ -705,7 +706,7 @@ func TestSearchMediaErrorDiagnostics(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			_, err := searchMedia(cfg, "test query")
+			_, err := searchMedia(context.Background(), cfg, "test query")
 			if err == nil {
 				t.Fatal("Expected error, got nil")
 			}
@@ -810,7 +811,7 @@ func TestCheckUserPermissions(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			authMe, err := checkUserPermissions(cfg)
+			authMe, err := checkUserPermissions(context.Background(), cfg)
 
 			if tt.expectError {
 				if err == nil {
@@ -892,7 +893,7 @@ func TestGetRequestCount(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			count, err := getRequestCount(cfg)
+			count, err := getRequestCount(context.Background(), cfg)
 
 			if tt.expectError {
 				if err == nil {
@@ -993,7 +994,7 @@ func TestGetPendingRequestsHappyPath(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1043,7 +1044,7 @@ func TestGetPendingRequestsNoPending(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1113,7 +1114,7 @@ func TestGetPendingRequestsPagination(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1193,7 +1194,7 @@ func TestGetPendingRequestsWithFallback(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1268,7 +1269,7 @@ func TestGetPendingRequestsNoFallbackNeeded(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1361,7 +1362,7 @@ func TestGetPendingRequestsFallbackPagination(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1494,7 +1495,7 @@ func TestApproveRequestWithOverrides(t *testing.T) {
 				Timeout:   5 * time.Second,
 			}
 
-			err := approveRequestWithOverrides(cfg, tt.requestID, tt.overrides)
+			err := approveRequestWithOverrides(context.Background(), cfg, tt.requestID, tt.overrides)
 
 			updateShouldHaveBeenCalled := tt.expectUpdate
 			updateSucceeded := updateShouldHaveBeenCalled && tt.updateStatus == http.StatusOK
@@ -1576,7 +1577,7 @@ func TestApproveRequestWithOverridesEndpoint(t *testing.T) {
 		RootFolder: rootFolder,
 	}
 
-	err := approveRequestWithOverrides(cfg, requestID, overrides)
+	err := approveRequestWithOverrides(context.Background(), cfg, requestID, overrides)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -1613,7 +1614,7 @@ func TestApproveRequestWithOverridesNilOverrides(t *testing.T) {
 		Timeout:   5 * time.Second,
 	}
 
-	err := approveRequestWithOverrides(cfg, 789, nil)
+	err := approveRequestWithOverrides(context.Background(), cfg, 789, nil)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
