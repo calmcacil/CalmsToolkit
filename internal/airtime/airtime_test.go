@@ -344,6 +344,9 @@ func TestFormatRelativeDate(t *testing.T) {
 		{now.Add(1 * time.Hour), "in 1 hour"},
 		{now.Add(3 * 24 * time.Hour), "in 3 days"},
 		{now.Add(1 * 24 * time.Hour), "tomorrow"},
+		{now.Add(45 * time.Hour), "in 2 days"},       // 1d21h should be "in 2 days", not "tomorrow"
+		{now.Add(36 * time.Hour), "in 2 days"},       // 1d12h should be "in 2 days"
+		{now.Add(23 * time.Hour), "in 23 hours"},      // <24h stays in hours
 	}
 	for _, tc := range tests {
 		got := formatRelativeDate(now, tc.t)
