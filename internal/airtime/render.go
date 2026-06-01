@@ -132,13 +132,19 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 		innerW = 100
 	}
 
-	var bodyBuf bytes.Buffer
-	bw := bufio.NewWriter(&bodyBuf)
+	var buf bytes.Buffer
+	bw := bufio.NewWriter(&buf)
+
+	boxTop := fmt.Sprintf("┌%s┐\n", strings.Repeat("─", innerW))
+	fmt.Fprint(bw, boxTop)
 
 	icon := iconForType(info.Type)
-	title := fmt.Sprintf("─ %s %s (%d) ─ %s ─", icon, info.Title, info.Year, info.Source)
-	topContent := colors.PadRight(title, innerW)
-	fmt.Fprint(bw, "┌"+topContent+"┐\n")
+	titleLine := fmt.Sprintf("  %s %s (%d) ─ %s ", icon, info.Title, info.Year, info.Source)
+	titleLine = colors.PadRight(titleLine, innerW)
+	fmt.Fprint(bw, "│"+titleLine+"│\n")
+
+	boxSep := fmt.Sprintf("├%s┤\n", strings.Repeat("─", innerW))
+	fmt.Fprint(bw, boxSep)
 
 	now := time.Now()
 
@@ -153,13 +159,9 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 		fmt.Fprint(bw, "│"+content+"│\n")
 	}
 
-	addSepDashed := func() {
-		fmt.Fprint(bw, "├"+strings.Repeat("─", innerW)+"┤\n")
-	}
-
 	if info.Type == "series" {
-		statusColor := statusColor(info.Status, p)
-		addLine("Status:", fmt.Sprintf("%s%s%s", clr(statusColor), info.Status, clr(p.Reset)))
+		c := statusColor(info.Status, p)
+		addLine("Status:", fmt.Sprintf("%s%s%s", clr(c), info.Status, clr(p.Reset)))
 
 		libStatus := "not monitored"
 		if info.EpisodesTotal > 0 {
@@ -195,18 +197,18 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 			addLine("  Next air:", info.NextLabel)
 			addLine("           ", rel)
 		} else if info.Status == "ended" {
-			addLine("  Next air:", clr(p.Subdued)+"— (series has ended)"+clr(p.Reset))
+			addLine("  Next air:", clr(p.Subdued)+"—"+clr(p.Reset))
 		} else {
-			addLine("  Next air:", clr(p.Subdued)+"— (TBA)"+clr(p.Reset))
+			addLine("  Next air:", clr(p.Subdued)+"—"+clr(p.Reset))
 		}
 
 		if cfg.FullSeason && len(info.SeasonEpisodes) > 0 {
-			addSepDashed()
-			renderFullSeason(bw, info, cfg, now, p, clr, innerW)
+			fmt.Fprint(bw, boxSep)
+			renderFullSeason(bw, info, now, p, innerW)
 		}
 	} else {
-		statusColor := statusColor(info.Status, p)
-		addLine("Status:", fmt.Sprintf("%s%s%s", clr(statusColor), info.Status, clr(p.Reset)))
+		c := statusColor(info.Status, p)
+		addLine("Status:", fmt.Sprintf("%s%s%s", clr(c), info.Status, clr(p.Reset)))
 
 		libStatus := "not monitored"
 		if info.Monitored {
@@ -223,51 +225,36 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 		addSep()
 
 		if info.LastAir != nil {
-			rel := formatRelativeDate(now, *info.LastAir)
-			addLine("  Release:", rel)
+			addLine("  Release:", formatRelativeDate(now, *info.LastAir))
 		} else if info.NextAir != nil {
-			rel := formatRelativeDate(now, *info.NextAir)
-			addLine("  Release:", rel)
+			addLine("  Release:", formatRelativeDate(now, *info.NextAir))
 		} else {
-			addLine("  Release:", clr(p.Subdued)+"— (TBA)"+clr(p.Reset))
+			addLine("  Release:", clr(p.Subdued)+"—"+clr(p.Reset))
 		}
 	}
 
-	bottomContent := strings.Repeat("─", innerW)
-	fmt.Fprint(bw, "└"+bottomContent+"┘\n")
-
+	fmt.Fprint(bw, "└"+strings.Repeat("─", innerW)+"┘\n")
 	bw.Flush()
-	os.Stdout.Write(bodyBuf.Bytes())
+	os.Stdout.Write(buf.Bytes())
 }
 
-func renderFullSeason(bw *bufio.Writer, info AirtimeInfo, cfg ToolConfig, now time.Time, p *colors.Palette, clr func(string) string, innerW int) {
-	header := fmt.Sprintf(" %s ", fmt.Sprintf("Season %d episodes", info.Season))
+func renderFullSeason(bw *bufio.Writer, info AirtimeInfo, now time.Time, p *colors.Palette, innerW int) {
+	header := fmt.Sprintf("  Season %d", info.Season)
 	header = colors.PadRight(header, innerW)
 	fmt.Fprint(bw, "│"+header+"│\n")
 
 	for _, ep := range info.SeasonEpisodes {
-		epNum := ep.EpisodeNumber
 		icon := " "
 		if ep.HasFile {
 			icon = "D"
 		}
-		if ep.Aired {
-			rel := formatRelativeDate(now, ep.AirDateUtc)
-			line := fmt.Sprintf("  E%02d [%s] %s — %s", epNum, icon, ep.Title, rel)
-			if colors.VisibleLen(line) > innerW {
-				line = truncateVis(line, innerW)
-			}
-			line = colors.PadRight(line, innerW)
-			fmt.Fprint(bw, "│"+line+"│\n")
-		} else {
-			rel := formatRelativeDate(now, ep.AirDateUtc)
-			line := fmt.Sprintf("  E%02d [%s] %s — %s", epNum, icon, ep.Title, rel)
-			if colors.VisibleLen(line) > innerW {
-				line = truncateVis(line, innerW)
-			}
-			line = colors.PadRight(line, innerW)
-			fmt.Fprint(bw, "│"+line+"│\n")
+		rel := formatRelativeDate(now, ep.AirDateUtc)
+		line := fmt.Sprintf("  E%02d [%s] %s \u2014 %s", ep.EpisodeNumber, icon, ep.Title, rel)
+		if colors.VisibleLen(line) > innerW {
+			line = truncateVis(line, innerW)
 		}
+		line = colors.PadRight(line, innerW)
+		fmt.Fprint(bw, "│"+line+"│\n")
 	}
 }
 
