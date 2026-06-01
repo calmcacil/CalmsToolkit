@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/calmcacil/CalmsToolkit/internal/calendar"
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 )
 
@@ -37,6 +38,11 @@ func main() {
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
 	cfg.Theme = *theme
+	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
+		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
+			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
+		cfg.Theme = "default"
+	}
 	cfg.JSONOutput = *jsonOutput
 	cfg.WatchMode = *watchMode
 	cfg.WatchSeconds = *watchSeconds

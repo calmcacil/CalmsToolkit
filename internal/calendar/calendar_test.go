@@ -10,7 +10,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
-	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
+	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
 func TestFetchSonarrCalendar(t *testing.T) {
@@ -40,7 +40,7 @@ func TestFetchSonarrCalendar(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	start := time.Now()
 	end := start.Add(7 * 24 * time.Hour)
@@ -91,7 +91,7 @@ func TestFetchRadarrCalendar(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	start := time.Now()
 	end := start.Add(7 * 24 * time.Hour)
@@ -152,7 +152,7 @@ func TestFetchQueue(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	ctx := context.Background()
 

@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+// TokenFromEnv returns the environment variable value if set, otherwise fallback.
+func TokenFromEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 // ToolkitConfig is the top-level configuration structure for CalmsToolkit.
 type ToolkitConfig struct {
 	Version       int            `json:"version"`
@@ -146,7 +154,7 @@ func LoadToolkitConfig() (*ToolkitConfig, error) {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
 
-	if cfg.Version != 1 {
+	if cfg.Version < 1 {
 		return nil, fmt.Errorf("unsupported config version: %d", cfg.Version)
 	}
 
@@ -162,7 +170,7 @@ func LoadToolkitConfig() (*ToolkitConfig, error) {
 
 // Validate checks the configuration for required fields and valid values.
 func (c *ToolkitConfig) Validate() error {
-	if c.Version != 1 {
+	if c.Version < 1 {
 		return fmt.Errorf("unsupported version: %d", c.Version)
 	}
 

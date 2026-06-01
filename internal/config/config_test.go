@@ -200,3 +200,19 @@ func TestConfigPath(t *testing.T) {
 		t.Errorf("ConfigPath() = %q, want %q", path, expected)
 	}
 }
+
+func TestTokenFromEnv(t *testing.T) {
+	const envKey = "TEST_TOKEN_FROM_ENV"
+	defer os.Unsetenv(envKey)
+
+	got := TokenFromEnv(envKey, "fallback")
+	if got != "fallback" {
+		t.Errorf("TokenFromEnv with unset var = %q, want %q", got, "fallback")
+	}
+
+	os.Setenv(envKey, "env-value")
+	got = TokenFromEnv(envKey, "fallback")
+	if got != "env-value" {
+		t.Errorf("TokenFromEnv with set var = %q, want %q", got, "env-value")
+	}
+}

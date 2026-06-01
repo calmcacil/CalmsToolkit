@@ -54,8 +54,6 @@ type ToolConfig struct {
 	Verbose    bool
 	JSONOutput bool
 	Quiet      bool
-	ctx        context.Context
-	client     *http.Client
 }
 
 // SearchResponse is the Overseerr search API response.
@@ -251,9 +249,6 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 
 // Run executes the media requests interactive tool.
 func Run(cfg ToolConfig) {
-	cfg.ctx = context.Background()
-	cfg.client = &http.Client{Timeout: cfg.Timeout}
-
 	if cfg.APIKey == "" {
 		fmt.Fprintf(os.Stderr, "ERROR: API key is not set\n")
 		fmt.Fprintf(os.Stderr, "Set api_key in ~/.config/calmstoolkit/config.json or use -token flag\n")
@@ -266,29 +261,23 @@ func Run(cfg ToolConfig) {
 		os.Exit(1)
 	}
 
-	if err := testConnection(cfg); err != nil {
+	ctx := context.Background()
+	if err := testConnection(ctx, cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: Failed to connect to server: %v\n", err)
 		os.Exit(1)
 	}
 
-	runInteractiveMenu(cfg)
+	runInteractiveMenu(ctx, cfg)
 }
 
-func testConnection(cfg ToolConfig) error {
-	ctx := cfg.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+func testConnection(ctx context.Context, cfg ToolConfig) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", cfg.ServerURL+"/api/v1/auth/me", nil)
 	if err != nil {
 		return err
 	}
 
 	req.Header.Set("X-Api-Key", cfg.APIKey)
-	client := cfg.client
-	if client == nil {
-		client = &http.Client{Timeout: cfg.Timeout}
-	}
+	client := &http.Client{Timeout: cfg.Timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -306,7 +295,7 @@ func testConnection(cfg ToolConfig) error {
 	return nil
 }
 
-func runInteractiveMenu(cfg ToolConfig) {
+func runInteractiveMenu(ctx context.Context, cfg ToolConfig) {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
@@ -317,9 +306,9 @@ func runInteractiveMenu(cfg ToolConfig) {
 
 		switch input {
 		case "n":
-			handleNewRequest(cfg, reader)
+			handleNewRequest(ctx, cfg, reader)
 		case "w":
-			handleViewRequests(cfg, reader)
+			handleViewRequests(ctx, cfg, reader)
 		case "q":
 			fmt.Println("\nGoodbye!")
 			return
@@ -332,12 +321,7 @@ func runInteractiveMenu(cfg ToolConfig) {
 
 func printMainMenu(cfg ToolConfig) {
 	p := colors.GetPalette(cfg.Theme)
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	fmt.Printf("%s%s╔══════════════════════════════════════════╗%s\n", clr(p.Bold), clr(p.Accent), clr(p.Reset))
 	fmt.Printf("%s%s║    Media Requests - Interactive Menu    ║%s\n", clr(p.Bold), clr(p.Accent), clr(p.Reset))
@@ -349,15 +333,10 @@ func printMainMenu(cfg ToolConfig) {
 	fmt.Printf("Select an option: ")
 }
 
-func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
+func handleNewRequest(ctx context.Context, cfg ToolConfig, reader *bufio.Reader) {
 	p := colors.GetPalette(cfg.Theme)
 	clearScreen()
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	fmt.Printf("%s%s=== New Media Request ===%s\n\n", clr(p.Bold), clr(p.Accent), clr(p.Reset))
 	fmt.Printf("Enter search query (or 'back' to return): ")
@@ -370,7 +349,7 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%sSearching...%s\n", clr(p.Warning), clr(p.Reset))
-	results, err := searchMedia(cfg, query)
+	results, err := searchMedia(ctx, cfg, query)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError searching: %v%s\n", clr(p.Error), err, clr(p.Reset))
 		fmt.Printf("\nPress any key to continue...")
@@ -433,13 +412,13 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 
 	var seasons interface{}
 	if selectedMedia.MediaType == "tv" {
-		seasons, err = selectSeasons(cfg, selectedMedia, reader)
+		seasons, err = selectSeasons(ctx, cfg, selectedMedia, reader)
 		if err != nil || seasons == nil {
 			return
 		}
 	}
 
-	overrides, err := selectRootFolderOverride(cfg, selectedMedia, reader)
+	overrides, err := selectRootFolderOverride(ctx, cfg, selectedMedia, reader)
 	if err != nil {
 		return
 	}
@@ -489,7 +468,7 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%sSubmitting request...%s\n", clr(p.Warning), clr(p.Reset))
-	request, err := createRequest(cfg, selectedMedia, seasons, overrides)
+	request, err := createRequest(ctx, cfg, selectedMedia, seasons, overrides)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError creating request: %v%s\n", clr(p.Error), err, clr(p.Reset))
 		fmt.Printf("\nPress any key to continue...")
@@ -507,20 +486,15 @@ func handleNewRequest(cfg ToolConfig, reader *bufio.Reader) {
 	readKeystroke(cfg)
 }
 
-func handleViewRequests(cfg ToolConfig, reader *bufio.Reader) {
+func handleViewRequests(ctx context.Context, cfg ToolConfig, reader *bufio.Reader) {
 	p := colors.GetPalette(cfg.Theme)
 	clearScreen()
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	fmt.Printf("%s%s=== Pending Requests ===%s\n\n", clr(p.Bold), clr(p.Accent), clr(p.Reset))
 	fmt.Fprintf(os.Stderr, "%sLoading...%s\n", clr(p.Warning), clr(p.Reset))
 
-	requests, err := getPendingRequests(cfg)
+	requests, err := getPendingRequests(ctx, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError fetching requests: %v%s\n", clr(p.Error), err, clr(p.Reset))
 		fmt.Printf("\nPress any key to continue...")
@@ -559,18 +533,13 @@ func handleViewRequests(cfg ToolConfig, reader *bufio.Reader) {
 	}
 
 	selectedRequest := requests[selection-1]
-	handleRequestDetail(cfg, selectedRequest, reader)
+	handleRequestDetail(ctx, cfg, selectedRequest, reader)
 }
 
-func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Reader) {
+func handleRequestDetail(ctx context.Context, cfg ToolConfig, request MediaRequest, reader *bufio.Reader) {
 	p := colors.GetPalette(cfg.Theme)
 	clearScreen()
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	fmt.Printf("%s%s=== Request Details ===%s\n\n", clr(p.Bold), clr(p.Accent), clr(p.Reset))
 
@@ -587,13 +556,13 @@ func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Rea
 
 	switch action {
 	case "a":
-		overrides, err := selectRootFolderForApproval(cfg, request, reader)
+		overrides, err := selectRootFolderForApproval(ctx, cfg, request, reader)
 		if err != nil {
 			return
 		}
 
 		fmt.Fprintf(os.Stderr, "\n%sApproving request...%s\n", clr(p.Warning), clr(p.Reset))
-		if err := approveRequestWithOverrides(cfg, request.ID, overrides); err != nil {
+		if err := approveRequestWithOverrides(ctx, cfg, request.ID, overrides); err != nil {
 			fmt.Fprintf(os.Stderr, "\n%sError approving: %v%s\n", clr(p.Error), err, clr(p.Reset))
 		} else {
 			fmt.Fprintf(os.Stderr, "\n%s✓ Request approved!%s\n", clr(p.Success), clr(p.Reset))
@@ -610,7 +579,7 @@ func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Rea
 
 		if confirm == "y" {
 			fmt.Fprintf(os.Stderr, "\n%sDeclining request...%s\n", clr(p.Warning), clr(p.Reset))
-			if err := declineRequest(cfg, request.ID); err != nil {
+			if err := declineRequest(ctx, cfg, request.ID); err != nil {
 				fmt.Fprintf(os.Stderr, "\n%sError declining: %v%s\n", clr(p.Error), err, clr(p.Reset))
 			} else {
 				fmt.Fprintf(os.Stderr, "\n%s✓ Request declined.%s\n", clr(p.Success), clr(p.Reset))
@@ -633,12 +602,7 @@ func handleRequestDetail(cfg ToolConfig, request MediaRequest, reader *bufio.Rea
 
 func displaySearchResult(cfg ToolConfig, index int, result SearchResult) {
 	p := colors.GetPalette(cfg.Theme)
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	title := result.Title
 	if title == "" {
@@ -647,9 +611,9 @@ func displaySearchResult(cfg ToolConfig, index int, result SearchResult) {
 
 	year := getYear(result)
 
-	typeIcon := "🎬"
+	typeIcon := "[MOVIE]"
 	if result.MediaType == "tv" {
-		typeIcon = "📺"
+		typeIcon = "[TV]"
 	}
 
 	fmt.Printf("%s%d.%s %s %s%s%s",
@@ -686,12 +650,7 @@ func displaySearchResult(cfg ToolConfig, index int, result SearchResult) {
 
 func displayRequestSummary(cfg ToolConfig, index int, request MediaRequest) {
 	p := colors.GetPalette(cfg.Theme)
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	mediaType := "Movie"
 	if request.Type == "tv" {
@@ -719,12 +678,7 @@ func displayRequestSummary(cfg ToolConfig, index int, request MediaRequest) {
 
 func displayRequestDetail(cfg ToolConfig, request MediaRequest) {
 	p := colors.GetPalette(cfg.Theme)
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	fmt.Printf("%sRequest ID:%s %d\n", clr(p.Bold), clr(p.Reset), request.ID)
 	fmt.Printf("%sTMDB ID:%s %d\n", clr(p.Bold), clr(p.Reset), request.Media.TmdbID)
@@ -757,16 +711,11 @@ func displayRequestDetail(cfg ToolConfig, request MediaRequest) {
 	}
 }
 
-func selectSeasons(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (interface{}, error) {
+func selectSeasons(ctx context.Context, cfg ToolConfig, media SearchResult, reader *bufio.Reader) (interface{}, error) {
 	p := colors.GetPalette(cfg.Theme)
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
-	details, err := getTVDetails(cfg, media.ID)
+	details, err := getTVDetails(ctx, cfg, media.ID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError fetching TV show details: %v%s\n", clr(p.Error), err, clr(p.Reset))
 		fmt.Printf("\nPress any key to continue...")
@@ -835,7 +784,7 @@ func selectSeasons(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (in
 	}
 }
 
-func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.Reader) (*RequestOverrides, error) {
+func selectRootFolderOverride(ctx context.Context, cfg ToolConfig, media SearchResult, reader *bufio.Reader) (*RequestOverrides, error) {
 	p := colors.GetPalette(cfg.Theme)
 	mediaType := strings.ToLower(media.MediaType)
 
@@ -852,14 +801,9 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 		return nil, nil
 	}
 
-	servers, err := fetchServiceInstances(cfg, service)
+	servers, err := fetchServiceInstances(ctx, cfg, service)
 	if err != nil {
-		clr := func(code string) string {
-			if cfg.NoColor {
-				return ""
-			}
-			return code
-		}
+		clr := colors.ClrFunc(cfg.NoColor)
 		fmt.Fprintf(os.Stderr, "\n%sError fetching %s servers: %v%s\n", clr(p.Error), serviceLabel, err, clr(p.Reset))
 		fmt.Printf("\nPress any key to continue...")
 		readKeystroke(cfg)
@@ -870,12 +814,7 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 		return nil, nil
 	}
 
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	fmt.Printf("\n%sSelect %s destination%s\n", clr(p.Bold), serviceLabel, clr(p.Reset))
 
@@ -936,7 +875,7 @@ func selectRootFolderOverride(cfg ToolConfig, media SearchResult, reader *bufio.
 		fmt.Fprintf(os.Stderr, "Using %s server: %s%s%s\n", serviceLabel, clr(p.Bold), selected.Name, clr(p.Reset))
 	}
 
-	details, err := fetchServiceDetails(cfg, service, selected.ID)
+	details, err := fetchServiceDetails(ctx, cfg, service, selected.ID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError fetching %s details: %v%s\n", clr(p.Error), serviceLabel, err, clr(p.Reset))
 		fmt.Printf("\nPress any key to continue...")
@@ -1010,7 +949,7 @@ func formatDate(dateStr string) string {
 	if err != nil {
 		return dateStr
 	}
-	return t.Local().Format("2006-01-02 15:04")
+	return t.Format("2006-01-02 15:04")
 }
 
 func readKeystroke(cfg ToolConfig) (string, error) {
@@ -1063,10 +1002,10 @@ func readKeyOrDefault(cfg ToolConfig, defaultKey string) string {
 }
 
 func clearScreen() {
-	fmt.Print(colors.HomeCursor)
+	fmt.Print(colors.ClearScreen + colors.HomeCursor)
 }
 
-func fetchServiceInstances(cfg ToolConfig, service string) ([]ServiceInstance, error) {
+func fetchServiceInstances(ctx context.Context, cfg ToolConfig, service string) ([]ServiceInstance, error) {
 	var endpoint string
 	switch service {
 	case "radarr":
@@ -1077,7 +1016,7 @@ func fetchServiceInstances(cfg ToolConfig, service string) ([]ServiceInstance, e
 		return nil, nil
 	}
 
-	resp, err := makeRequest(cfg, "GET", endpoint, nil)
+	resp, err := makeRequest(ctx, cfg, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1095,13 +1034,13 @@ func fetchServiceInstances(cfg ToolConfig, service string) ([]ServiceInstance, e
 	return servers, nil
 }
 
-func fetchServiceDetails(cfg ToolConfig, service string, id int) (*ServiceDetails, error) {
+func fetchServiceDetails(ctx context.Context, cfg ToolConfig, service string, id int) (*ServiceDetails, error) {
 	if service != "radarr" && service != "sonarr" {
 		return nil, fmt.Errorf("unsupported service type: %s", service)
 	}
 
 	endpoint := fmt.Sprintf("/service/%s/%d", service, id)
-	resp, err := makeRequest(cfg, "GET", endpoint, nil)
+	resp, err := makeRequest(ctx, cfg, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1125,7 +1064,7 @@ func readBodyLimited(r io.Reader) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r, maxBodySize))
 }
 
-func makeRequest(cfg ToolConfig, method, endpoint string, body interface{}) (*http.Response, error) {
+func makeRequest(ctx context.Context, cfg ToolConfig, method, endpoint string, body interface{}) (*http.Response, error) {
 	var reqBody io.Reader
 	if body != nil {
 		jsonData, err := json.Marshal(body)
@@ -1137,10 +1076,6 @@ func makeRequest(cfg ToolConfig, method, endpoint string, body interface{}) (*ht
 
 	fullURL := cfg.ServerURL + "/api/v1" + endpoint
 
-	ctx := cfg.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	req, err := http.NewRequestWithContext(ctx, method, fullURL, reqBody)
 	if err != nil {
 		return nil, err
@@ -1150,19 +1085,16 @@ func makeRequest(cfg ToolConfig, method, endpoint string, body interface{}) (*ht
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	client := cfg.client
-	if client == nil {
-		client = &http.Client{Timeout: cfg.Timeout}
-	}
+	client := &http.Client{Timeout: cfg.Timeout}
 	return client.Do(req)
 }
 
-func searchMedia(cfg ToolConfig, query string) ([]SearchResult, error) {
+func searchMedia(ctx context.Context, cfg ToolConfig, query string) ([]SearchResult, error) {
 	params := url.Values{}
 	params.Set("query", query)
 	endpoint := "/search?" + params.Encode()
 
-	resp, err := makeRequest(cfg, "GET", endpoint, nil)
+	resp, err := makeRequest(ctx, cfg, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1181,9 +1113,9 @@ func searchMedia(cfg ToolConfig, query string) ([]SearchResult, error) {
 	return searchResp.Results, nil
 }
 
-func getTVDetails(cfg ToolConfig, tmdbID int) (*TVDetails, error) {
+func getTVDetails(ctx context.Context, cfg ToolConfig, tmdbID int) (*TVDetails, error) {
 	endpoint := fmt.Sprintf("/tv/%d", tmdbID)
-	resp, err := makeRequest(cfg, "GET", endpoint, nil)
+	resp, err := makeRequest(ctx, cfg, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1201,7 +1133,7 @@ func getTVDetails(cfg ToolConfig, tmdbID int) (*TVDetails, error) {
 	return &details, nil
 }
 
-func createRequest(cfg ToolConfig, media SearchResult, seasons interface{}, overrides *RequestOverrides) (*MediaRequest, error) {
+func createRequest(ctx context.Context, cfg ToolConfig, media SearchResult, seasons interface{}, overrides *RequestOverrides) (*MediaRequest, error) {
 	reqData := CreateRequest{
 		MediaType: media.MediaType,
 		MediaID:   media.ID,
@@ -1220,7 +1152,7 @@ func createRequest(cfg ToolConfig, media SearchResult, seasons interface{}, over
 		}
 	}
 
-	resp, err := makeRequest(cfg, "POST", "/request", reqData)
+	resp, err := makeRequest(ctx, cfg, "POST", "/request", reqData)
 	if err != nil {
 		return nil, err
 	}
@@ -1239,8 +1171,8 @@ func createRequest(cfg ToolConfig, media SearchResult, seasons interface{}, over
 	return &request, nil
 }
 
-func checkUserPermissions(cfg ToolConfig) (*AuthMe, error) {
-	resp, err := makeRequest(cfg, "GET", "/auth/me", nil)
+func checkUserPermissions(ctx context.Context, cfg ToolConfig) (*AuthMe, error) {
+	resp, err := makeRequest(ctx, cfg, "GET", "/auth/me", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1259,8 +1191,8 @@ func checkUserPermissions(cfg ToolConfig) (*AuthMe, error) {
 	return &authMe, nil
 }
 
-func getRequestCount(cfg ToolConfig) (*RequestCount, error) {
-	resp, err := makeRequest(cfg, "GET", "/request/count", nil)
+func getRequestCount(ctx context.Context, cfg ToolConfig) (*RequestCount, error) {
+	resp, err := makeRequest(ctx, cfg, "GET", "/request/count", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1279,14 +1211,14 @@ func getRequestCount(cfg ToolConfig) (*RequestCount, error) {
 	return &count, nil
 }
 
-func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
+func getPendingRequests(ctx context.Context, cfg ToolConfig) ([]MediaRequest, error) {
 	p := colors.GetPalette(cfg.Theme)
 	var expectedPendingCount int
 
 	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "\n=== Diagnostic: Checking pending requests ===\n")
 
-		if authMe, err := checkUserPermissions(cfg); err == nil {
+		if authMe, err := checkUserPermissions(ctx, cfg); err == nil {
 			fmt.Fprintf(os.Stderr, "User ID: %d\n", authMe.ID)
 			fmt.Fprintf(os.Stderr, "User Email: %s\n", authMe.Email)
 			fmt.Fprintf(os.Stderr, "User Permissions: %d\n", authMe.Permissions)
@@ -1305,7 +1237,7 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 		}
 	}
 
-	if count, err := getRequestCount(cfg); err == nil {
+	if count, err := getRequestCount(ctx, cfg); err == nil {
 		expectedPendingCount = count.Pending
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "Request counts - Pending: %d, Approved: %d, Total: %d\n",
@@ -1336,7 +1268,7 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 			fmt.Fprintf(os.Stderr, "Fetching: %s\n", endpoint)
 		}
 
-		resp, err := makeRequest(cfg, "GET", endpoint, nil)
+		resp, err := makeRequest(ctx, cfg, "GET", endpoint, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1372,12 +1304,7 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 	}
 
 	if expectedPendingCount > 0 && len(pending) == 0 {
-		clr := func(code string) string {
-			if cfg.NoColor {
-				return ""
-			}
-			return code
-		}
+		clr := colors.ClrFunc(cfg.NoColor)
 
 		if !cfg.Quiet {
 			fmt.Fprintf(os.Stderr, "\n%s⚠ WARNING: Overseerr API bug detected!%s\n", clr(p.Warning), clr(p.Reset))
@@ -1399,7 +1326,7 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 				fmt.Fprintf(os.Stderr, "Fetching: %s\n", endpoint)
 			}
 
-			resp, err := makeRequest(cfg, "GET", endpoint, nil)
+			resp, err := makeRequest(ctx, cfg, "GET", endpoint, nil)
 			if err != nil {
 				return nil, fmt.Errorf("fallback fetch failed: %w", err)
 			}
@@ -1457,9 +1384,9 @@ func getPendingRequests(cfg ToolConfig) ([]MediaRequest, error) {
 	return pending, nil
 }
 
-func approveRequest(cfg ToolConfig, requestID int) error {
+func approveRequest(ctx context.Context, cfg ToolConfig, requestID int) error {
 	endpoint := fmt.Sprintf("/request/%d/approve", requestID)
-	resp, err := makeRequest(cfg, "POST", endpoint, nil)
+	resp, err := makeRequest(ctx, cfg, "POST", endpoint, nil)
 	if err != nil {
 		return err
 	}
@@ -1473,7 +1400,7 @@ func approveRequest(cfg ToolConfig, requestID int) error {
 	return nil
 }
 
-func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *RequestOverrides) error {
+func approveRequestWithOverrides(ctx context.Context, cfg ToolConfig, requestID int, overrides *RequestOverrides) error {
 	if overrides != nil && (overrides.RootFolder != "" || overrides.ServerID > 0) {
 		updateData := make(map[string]interface{})
 		if overrides.RootFolder != "" {
@@ -1484,7 +1411,7 @@ func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *Reque
 		}
 
 		endpoint := fmt.Sprintf("/request/%d", requestID)
-		resp, err := makeRequest(cfg, "PUT", endpoint, updateData)
+		resp, err := makeRequest(ctx, cfg, "PUT", endpoint, updateData)
 		if err != nil {
 			return fmt.Errorf("failed to set request overrides before approval: %w", err)
 		}
@@ -1496,21 +1423,16 @@ func approveRequestWithOverrides(cfg ToolConfig, requestID int, overrides *Reque
 		}
 	}
 
-	if err := approveRequest(cfg, requestID); err != nil {
+	if err := approveRequest(ctx, cfg, requestID); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *bufio.Reader) (*RequestOverrides, error) {
+func selectRootFolderForApproval(ctx context.Context, cfg ToolConfig, request MediaRequest, reader *bufio.Reader) (*RequestOverrides, error) {
 	p := colors.GetPalette(cfg.Theme)
-	clr := func(code string) string {
-		if cfg.NoColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(cfg.NoColor)
 
 	var service string
 	var serviceLabel string
@@ -1525,7 +1447,7 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 		return nil, nil
 	}
 
-	servers, err := fetchServiceInstances(cfg, service)
+	servers, err := fetchServiceInstances(ctx, cfg, service)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError fetching %s servers: %v%s\n", clr(p.Error), serviceLabel, err, clr(p.Reset))
 		fmt.Fprintf(os.Stderr, "Proceeding with approval without overrides...\n")
@@ -1627,7 +1549,7 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 		fmt.Fprintf(os.Stderr, "\nUsing %s server: %s%s%s\n", serviceLabel, clr(p.Bold), selected.Name, clr(p.Reset))
 	}
 
-	details, err := fetchServiceDetails(cfg, service, selected.ID)
+	details, err := fetchServiceDetails(ctx, cfg, service, selected.ID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n%sError fetching %s details: %v%s\n", clr(p.Error), serviceLabel, err, clr(p.Reset))
 		fmt.Fprintf(os.Stderr, "Proceeding with approval without overrides...\n")
@@ -1679,9 +1601,9 @@ func selectRootFolderForApproval(cfg ToolConfig, request MediaRequest, reader *b
 	}
 }
 
-func declineRequest(cfg ToolConfig, requestID int) error {
+func declineRequest(ctx context.Context, cfg ToolConfig, requestID int) error {
 	endpoint := fmt.Sprintf("/request/%d/decline", requestID)
-	resp, err := makeRequest(cfg, "POST", endpoint, nil)
+	resp, err := makeRequest(ctx, cfg, "POST", endpoint, nil)
 	if err != nil {
 		return err
 	}

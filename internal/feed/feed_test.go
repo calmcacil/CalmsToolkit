@@ -11,7 +11,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
-	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
+	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
 func TestMapSonarrEventType(t *testing.T) {
@@ -357,7 +357,7 @@ func TestFetchSonarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -383,7 +383,7 @@ func TestFetchRadarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -413,7 +413,7 @@ func TestFetchAllHistory(t *testing.T) {
 	}))
 	defer radarrServer.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	cfg := ToolConfig{
 		SonarrInstances: []config.ArrInstance{
 			{Name: "Sonarr", URL: sonarrServer.URL, APIKey: "token"},
@@ -452,7 +452,7 @@ func TestCustomFormatsInSonarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -488,7 +488,7 @@ func TestCustomFormatsInRadarrHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 	since := time.Now().Add(-1 * time.Hour)
 
@@ -519,7 +519,7 @@ func TestFetchAllHistoryErrorHandling(t *testing.T) {
 	}))
 	defer goodServer.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	cfg := ToolConfig{
 		SonarrInstances: []config.ArrInstance{
 			{Name: "Bad", URL: badServer.URL, APIKey: "token"},
@@ -546,7 +546,7 @@ func TestEventSortOrder(t *testing.T) {
 		{ID: 3, When: now.Add(-10 * time.Minute), Action: "Grabbed"},
 	}
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	cfg := ToolConfig{
 		SonarrInstances: []config.ArrInstance{},
 		RadarrInstances: []config.ArrInstance{},
@@ -692,7 +692,7 @@ func TestEnrichSonarrSubtitles(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 
 	events := []HistoryEvent{
@@ -725,7 +725,7 @@ func TestEnrichRadarrSubtitles(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 
 	events := []HistoryEvent{
@@ -745,7 +745,7 @@ func TestEnrichSonarrSubtitlesNoFileID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 
 	events := []HistoryEvent{
@@ -762,7 +762,7 @@ func TestEnrichSonarrSubtitlesAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 
 	events := []HistoryEvent{
@@ -787,7 +787,7 @@ func TestEnrichSonarrSubtitlesNoMediaInfo(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := httpclient.NewClient(5 * time.Second)
+	client := httputil.NewClient(5 * time.Second)
 	inst := config.ArrInstance{Name: "Test", URL: server.URL, APIKey: "test-token"}
 
 	events := []HistoryEvent{

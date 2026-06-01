@@ -8,6 +8,15 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+// ClrFunc returns a closure that returns ANSI codes when color is enabled,
+// empty string otherwise. Replaces the duplicated pattern in display functions.
+func ClrFunc(noColor bool) func(string) string {
+	if noColor {
+		return func(string) string { return "" }
+	}
+	return func(s string) string { return s }
+}
+
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // VisibleLen returns the visible column width of a string, accounting for
@@ -115,6 +124,15 @@ func ValidThemes() []string {
 		string(ThemeCatppuccinMocha),
 		string(ThemeCatppuccinLatte),
 	}
+}
+
+// ValidateTheme returns true if name is a recognised theme.
+func ValidateTheme(name string) bool {
+	switch Theme(name) {
+	case ThemeDefault, ThemeCatppuccinMocha, ThemeCatppuccinLatte:
+		return true
+	}
+	return false
 }
 
 // GetPalette resolves a theme name to a Palette.
