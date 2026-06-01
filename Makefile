@@ -10,6 +10,7 @@ BINARY_STREAMSTOOL=media-streams
 BINARY_CALENDAR=media-calendar
 BINARY_REQUESTS=media-requests
 BINARY_ARRFEED=arr-feed
+BINARY_AIRTIME=media-airtime
 BINARY_SETUP=calmstoolkit-setup
 
 # Go parameters
@@ -48,6 +49,7 @@ build:
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_CALENDAR) ./cmd/media-calendar/
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_REQUESTS) ./cmd/media-requests/
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_ARRFEED) ./cmd/arr-feed/
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_AIRTIME) ./cmd/media-airtime/
 	@echo "Build complete: $(BUILD_DIR)/*"
 
 build-all:
@@ -56,7 +58,7 @@ build-all:
 
 	@for GOOS in linux darwin windows freebsd; do \
 		for GOARCH in amd64 arm64; do \
-			for SRC in media-streams media-calendar media-requests arr-feed; do \
+			for SRC in media-streams media-calendar media-requests arr-feed media-airtime; do \
 				EXT=""; \
 				if [ "$$GOOS" = "windows" ]; then EXT=".exe"; fi; \
 				BIN=$${SRC}-$$GOOS-$$GOARCH$$EXT; \
@@ -75,6 +77,7 @@ install: build
 	@install -m 755 $(BUILD_DIR)/$(BINARY_CALENDAR) $(INSTALL_DIR)/$(BINARY_CALENDAR)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_REQUESTS) $(INSTALL_DIR)/$(BINARY_REQUESTS)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_ARRFEED) $(INSTALL_DIR)/$(BINARY_ARRFEED)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_AIRTIME) $(INSTALL_DIR)/$(BINARY_AIRTIME)
 	@echo "Make sure $(INSTALL_DIR) is in your PATH."
 	@echo "Installation complete!"
 

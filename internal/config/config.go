@@ -26,6 +26,7 @@ type ToolkitConfig struct {
 	MediaCalendar CalendarConfig `json:"media_calendar"`
 	MediaStreams  StreamsConfig  `json:"media_streams"`
 	MediaRequests RequestsConfig `json:"media_requests"`
+	MediaAirtime  AirtimeConfig  `json:"media_airtime"`
 	ArrFeed       FeedConfig     `json:"arr_feed"`
 }
 
@@ -67,6 +68,14 @@ type RequestsConfig struct {
 	OverseerrURL string `json:"overseerr_url"`
 	APIKey       string `json:"api_key"`
 	Verbose      bool   `json:"verbose"`
+}
+
+// AirtimeConfig holds media airtime search tool settings.
+type AirtimeConfig struct {
+	Limit      int  `json:"limit"`
+	PastDays   int  `json:"past_days"`
+	FutureDays int  `json:"future_days"`
+	Debug      bool `json:"debug"`
 }
 
 // FeedConfig holds Arr event feed tool settings.
@@ -119,6 +128,12 @@ func DefaultToolkitConfig() *ToolkitConfig {
 			OverseerrURL: "http://localhost:5055",
 			APIKey:       "",
 			Verbose:      false,
+		},
+		MediaAirtime: AirtimeConfig{
+			Limit:      10,
+			PastDays:   7,
+			FutureDays: 30,
+			Debug:      false,
 		},
 		ArrFeed: FeedConfig{
 			PollInterval:  "5s",
@@ -227,6 +242,16 @@ func (c *ToolkitConfig) Validate() error {
 	}
 	if c.MediaStreams.WatchInterval < 1 {
 		return fmt.Errorf("media_streams.watch_interval: must be >= 1")
+	}
+
+	if c.MediaAirtime.Limit < 1 || c.MediaAirtime.Limit > 50 {
+		return fmt.Errorf("media_airtime.limit: must be between 1 and 50")
+	}
+	if c.MediaAirtime.PastDays < 0 {
+		return fmt.Errorf("media_airtime.past_days: must be >= 0")
+	}
+	if c.MediaAirtime.FutureDays < 0 {
+		return fmt.Errorf("media_airtime.future_days: must be >= 0")
 	}
 
 	serverType := c.MediaStreams.ServerType
