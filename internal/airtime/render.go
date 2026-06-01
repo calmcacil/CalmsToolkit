@@ -30,69 +30,66 @@ func interactiveSelect(ctx context.Context, candidates []scoredMatch, query stri
 		termWidth = 40
 	}
 
+	innerW := termWidth - 2
+	if innerW > 80 {
+		innerW = 80
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		var buf bytes.Buffer
 		bw := bufio.NewWriter(&buf)
 
-		title := fmt.Sprintf("candidates for %q", query)
-		boxW := termWidth - 2
-		if boxW > 80 {
-			boxW = 80
-		}
+		fmt.Fprint(bw, "┌"+strings.Repeat("─", innerW)+"┐\n")
 
-		fmt.Fprint(bw, "┌── ")
-		fmt.Fprint(bw, clr(p.Accent))
-		fmt.Fprint(bw, title)
-		fmt.Fprint(bw, clr(p.Reset))
-		rem := boxW - len(title) - 4
-		if rem < 0 {
-			rem = 0
-		}
-		fmt.Fprint(bw, strings.Repeat(" ", rem))
-		fmt.Fprint(bw, "┐\n")
+		title := fmt.Sprintf("  candidates for %q", query)
+		title = colors.PadRight(title, innerW)
+		fmt.Fprint(bw, "│"+title+"│\n")
+
+		fmt.Fprint(bw, "├"+strings.Repeat("─", innerW)+"┤\n")
 
 		for i, sm := range candidates {
 			icon := iconForType(sm.Candidate.Type)
-			label := fmt.Sprintf("  %d.  %s %s (%d)", i+1, icon, sm.Candidate.Title, sm.Candidate.Year)
-			meta := fmt.Sprintf("[%s]", sm.Candidate.Source)
+			label := fmt.Sprintf("%d. %s %s (%d)", i+1, icon, sm.Candidate.Title, sm.Candidate.Year)
+			meta := "[" + sm.Candidate.Source + "]"
 			if sm.Candidate.Monitored && sm.Candidate.HasFile {
 				meta += " [Has]"
 			} else if sm.Candidate.Monitored {
 				meta += " [Mon]"
 			}
-			fmt.Fprint(bw, "│")
-			fmt.Fprint(bw, label)
-			remaining := boxW - len(label) - len(meta) - 1
-			if remaining < 1 {
-				remaining = 1
+
+			available := innerW - 3 - colors.VisibleLen(label) - colors.VisibleLen(meta)
+			if available < 1 {
+				maxLabel := innerW - 3 - 8
+				if maxLabel < 4 {
+					maxLabel = 4
+				}
+				label = truncateVis(label, maxLabel)
+				meta = truncateVis(meta, 8)
+				available = innerW - 3 - colors.VisibleLen(label) - colors.VisibleLen(meta)
+				if available < 1 {
+					available = 1
+				}
 			}
-			fmt.Fprint(bw, strings.Repeat(" ", remaining))
-			fmt.Fprint(bw, clr(p.Subdued))
-			fmt.Fprint(bw, meta)
-			fmt.Fprint(bw, clr(p.Reset))
-			fmt.Fprint(bw, "│\n")
+			content := fmt.Sprintf("  %s%s%s",
+				label,
+				strings.Repeat(" ", available),
+				clr(p.Subdued)+meta+clr(p.Reset))
+			content = colors.PadRight(content, innerW)
+			fmt.Fprint(bw, "│"+content+"│\n")
 		}
 
-		fmt.Fprint(bw, "├")
-		fmt.Fprint(bw, strings.Repeat("─", boxW))
-		fmt.Fprint(bw, "┤\n")
+		fmt.Fprint(bw, "├"+strings.Repeat("─", innerW)+"┤\n")
 
 		help := "Select [1..N] (s=search again, q=quit): "
-		fmt.Fprint(bw, "│ ")
-		fmt.Fprint(bw, help)
-		pad := boxW - len(help) - 1
-		if pad > 0 {
-			fmt.Fprint(bw, strings.Repeat(" ", pad))
-		}
-		fmt.Fprint(bw, "│\n")
+		content := " " + help
+		content = colors.PadRight(content, innerW)
+		fmt.Fprint(bw, "│"+content+"│\n")
 
-		fmt.Fprint(bw, "└")
-		fmt.Fprint(bw, strings.Repeat("─", boxW))
-		fmt.Fprint(bw, "┘\n")
+		fmt.Fprint(bw, "└"+strings.Repeat("─", innerW)+"┘\n")
 
 		bw.Flush()
-		fmt.Fprint(os.Stdout, "\033[s") // save cursor
+		fmt.Fprint(os.Stdout, "\033[s")
 		os.Stdout.Write(buf.Bytes())
 
 		line, err := reader.ReadString('\n')
@@ -101,7 +98,7 @@ func interactiveSelect(ctx context.Context, candidates []scoredMatch, query stri
 		}
 		line = strings.TrimSpace(strings.ToLower(line))
 
-		fmt.Fprint(os.Stdout, "\033[u\033[J") // restore + clear
+		fmt.Fprint(os.Stdout, "\033[u\033[J")
 
 		if line == "q" {
 			fmt.Fprintln(os.Stderr, "Quit.")
@@ -239,7 +236,7 @@ func renderCard(info AirtimeInfo, cfg ToolConfig) {
 }
 
 func renderFullSeason(bw *bufio.Writer, info AirtimeInfo, now time.Time, p *colors.Palette, innerW int) {
-	header := fmt.Sprintf("  Season %d", info.Season)
+	header := fmt.Sprintf("  Season %d episodes", info.Season)
 	header = colors.PadRight(header, innerW)
 	fmt.Fprint(bw, "│"+header+"│\n")
 
@@ -249,7 +246,7 @@ func renderFullSeason(bw *bufio.Writer, info AirtimeInfo, now time.Time, p *colo
 			icon = "D"
 		}
 		rel := formatRelativeDate(now, ep.AirDateUtc)
-		line := fmt.Sprintf("  E%02d [%s] %s \u2014 %s", ep.EpisodeNumber, icon, ep.Title, rel)
+		line := fmt.Sprintf("  E%02d [%s]  %s \u2014 %s", ep.EpisodeNumber, icon, ep.Title, rel)
 		if colors.VisibleLen(line) > innerW {
 			line = truncateVis(line, innerW)
 		}
