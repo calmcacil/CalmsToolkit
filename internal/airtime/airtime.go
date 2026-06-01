@@ -423,6 +423,9 @@ func fetchSonarrEpisodes(ctx context.Context, client *httputil.Client, inst conf
 	if err := client.DoJSON(ctx, "GET", url, headers, nil, &episodes); err != nil {
 		return nil, err
 	}
+	for i := range episodes {
+		episodes[i].AirDateUtc = episodes[i].AirDateUtc.Local()
+	}
 	return episodes, nil
 }
 
@@ -536,9 +539,10 @@ func resolveAirtime(ctx context.Context, client *httputil.Client, selected score
 			releaseTime, _ = parseDateFlexible(c.InCinemas)
 		}
 		if !releaseTime.IsZero() {
+			releaseTime = releaseTime.Local()
 			if releaseTime.After(now) {
 				info.NextAir = &releaseTime
-				info.NextLabel = "Theatrical / Digital release"
+				info.NextLabel = "Release date"
 			} else {
 				info.LastAir = &releaseTime
 				info.LastLabel = "Release date"
