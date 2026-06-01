@@ -149,19 +149,19 @@ git push origin feature/tool-implementation
 
 ## 📚 Documentation Created
 
-1. **WORKTREE_COORDINATION.md** - Complete coordination guide
+1. **.opencode/WORKTREE_COORDINATION.md** - Complete coordination guide
    - Detailed phase-by-phase breakdown
    - File ownership matrix
    - Merge workflow
    - Conflict prevention strategies
 
-2. **AGENT_QUICKSTART.md** - Quick reference for agents
+2. **.opencode/AGENT_QUICKSTART.md** - Quick reference for agents
    - 5-minute setup
    - Common workflows
    - Pre-push checklist
    - Troubleshooting
 
-3. **WORKTREE_SETUP_SUMMARY.md** - This file
+3. **.opencode/WORKTREE_SETUP_SUMMARY.md** - This file
    - Overview of setup
    - Quick reference
 
@@ -201,10 +201,10 @@ $ git worktree list
 
 ## 🤝 Communication
 
-- **Coordination Issues:** Reference `WORKTREE_COORDINATION.md`
-- **Quick Questions:** Check `AGENT_QUICKSTART.md`
+- **Coordination Issues:** Reference `.opencode/WORKTREE_COORDINATION.md`
+- **Quick Questions:** Check `.opencode/AGENT_QUICKSTART.md`
 - **Implementation Details:** Refer to `docs/tui_uplift/TUI_UPLIFT_PLAN.md`
-- **Code Questions:** Check `CLAUDE.md` or existing CLI tools
+- **Code Questions:** Check `.opencode/CLAUDE.md` or existing CLI tools
 
 ## 🔐 Important Notes
 

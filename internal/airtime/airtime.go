@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
@@ -140,6 +141,7 @@ type SelectionEvent struct {
 
 // ToolConfig holds configuration for the media-airtime tool.
 type ToolConfig struct {
+	core.CommonConfig
 	SonarrInstances []config.ArrInstance
 	RadarrInstances []config.ArrInstance
 	SearchType      string // "auto", "series", "movie"
@@ -148,51 +150,32 @@ type ToolConfig struct {
 	Season          int
 	PastDays        int
 	FutureDays      int
-	Timeout         time.Duration
-	NoColor         bool
-	Theme           string
-	JSONOutput      bool
-	Debug           bool
 	NoBanner        bool
 	FullSeason      bool
 }
 
 // BuildToolConfig constructs ToolConfig from the global config.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
-	cfg := ToolConfig{}
+	cfg := ToolConfig{
+		CommonConfig: core.FromToolkit(tk),
+		Limit:        10,
+		PastDays:     7,
+		FutureDays:   30,
+		SearchType:   "auto",
+	}
 	if tk == nil {
-		cfg.Timeout = 10 * time.Second
-		cfg.Limit = 10
-		cfg.PastDays = 7
-		cfg.FutureDays = 30
-		cfg.SearchType = "auto"
 		return cfg
 	}
-	dur, err := time.ParseDuration(tk.General.Timeout)
-	if err != nil || dur <= 0 {
-		dur = 10 * time.Second
-	}
-	cfg.Timeout = dur
-	cfg.NoColor = tk.General.NoColor
-	cfg.Theme = tk.General.Theme
 	cfg.SonarrInstances = slices.Clone(tk.Sonarr)
 	cfg.RadarrInstances = slices.Clone(tk.Radarr)
-	cfg.SearchType = "auto"
-
 	if tk.MediaAirtime.Limit > 0 {
 		cfg.Limit = tk.MediaAirtime.Limit
-	} else {
-		cfg.Limit = 10
 	}
 	if tk.MediaAirtime.PastDays > 0 {
 		cfg.PastDays = tk.MediaAirtime.PastDays
-	} else {
-		cfg.PastDays = 7
 	}
 	if tk.MediaAirtime.FutureDays > 0 {
 		cfg.FutureDays = tk.MediaAirtime.FutureDays
-	} else {
-		cfg.FutureDays = 30
 	}
 	cfg.Debug = tk.MediaAirtime.Debug
 	return cfg

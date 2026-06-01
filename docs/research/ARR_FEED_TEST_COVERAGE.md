@@ -347,7 +347,7 @@ The 66.8% overall coverage is **appropriate and high-quality** because:
 
 ## Alignment with Specification
 
-All tests validate behavior specified in `docs/ARR_FEED_SPEC.md`:
+All tests validate behavior specified in `docs/research/ARR_FEED_SPEC.md`:
 
 ✅ **Section 2.1**: Event type mappings verified  
 ✅ **Section 2.2**: Time formatting tested (relative times)  

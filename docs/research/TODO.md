@@ -2,7 +2,7 @@
 
 - ✅ Unit tests for all tools
 - ✅ README.md for project overview
-- ✅ Documentation for each tool (docs/README_MEDIA_REQUESTS.md, docs/README_ARR_FEED.md)
+- ✅ Documentation for each tool (docs/user/README_MEDIA_REQUESTS.md, docs/user/README_ARR_FEED.md)
 
 ## Known Issues
 

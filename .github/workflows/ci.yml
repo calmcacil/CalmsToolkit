@@ -48,8 +48,11 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
-      - name: Run tests
-        run: go test -v -race -count=1 ./...
+      - name: Run tests with coverage
+        run: go test -v -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Display coverage summary
+        run: go tool cover -func=coverage.out | tail -10
 
       - name: Verify build of all cmd tools
         run: go build -v ./cmd/...

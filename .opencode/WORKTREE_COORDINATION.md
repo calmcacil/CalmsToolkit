@@ -521,7 +521,7 @@ git stash pop
 
 - **Coordination:** Check this file for scope and merge status
 - **Conflicts:** Create an issue linking worktrees involved
-- **Questions:** Check CLAUDE.md for implementation guidance
+- **Questions:** Check .opencode/CLAUDE.md for implementation guidance
 - **Integration Issues:** Alert the integration worktree maintainer
 
 ---

@@ -7,56 +7,41 @@ import (
 	"strings"
 
 	"github.com/calmcacil/CalmsToolkit/internal/calendar"
-	"github.com/calmcacil/CalmsToolkit/internal/colors"
-	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/cmdutil"
 )
 
 func main() {
-	tk, err := config.LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
+	tk := cmdutil.LoadAndValidate()
 	cfg := calendar.BuildToolConfig(tk)
 
 	days := flag.Int("days", cfg.Days, "Number of days to display")
 	daysPast := flag.Int("days-past", cfg.DaysPast, "Number of past days to include")
-	timeout := flag.Duration("timeout", cfg.Timeout, "HTTP connection timeout")
-	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
-	jsonOutput := flag.Bool("json", false, "Output in JSON format")
-	watchMode := flag.Bool("watch", false, "Continuously monitor calendar")
-	watchSeconds := flag.Int("interval", cfg.WatchSeconds, "Watch mode refresh interval in seconds")
-	debug := flag.Bool("debug", cfg.Debug, "Enable debug logging")
 	noBanner := flag.Bool("no-banner", false, "Suppress the banner header")
-	quiet := flag.Bool("quiet", false, "Suppress queue warnings")
 	filter := flag.String("filter", "", "Filter: missing,available,premieres,monitored (comma-separated)")
 	monitoredOnly := flag.Bool("monitored-only", false, "Only show monitored items")
+
+	cu := cmdutil.RegisterCommonFlags(flag.CommandLine, tk, cmdutil.Options{
+		IncludeWatch: true,
+		IncludeDebug: true,
+		IncludeQuiet: true,
+	})
 	flag.Parse()
+	cu.Apply()
 
 	cfg.Days = *days
 	cfg.DaysPast = *daysPast
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *jsonOutput
-	cfg.Theme = *theme
-	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
-		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
-			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
-		cfg.Theme = "default"
-	}
-	cfg.JSONOutput = *jsonOutput
-	cfg.WatchMode = *watchMode
-	cfg.WatchSeconds = *watchSeconds
-	cfg.Debug = *debug
+	cfg.Timeout = cu.Timeout
+	cfg.NoColor = cu.NoColor
+	cfg.Theme = cu.Theme
+	cfg.JSONOutput = cu.JSONFlag()
+	cfg.WatchMode = cu.Watch
+	cfg.WatchSeconds = cu.WatchSeconds
+	cfg.Debug = cu.Debug
 	cfg.NoBanner = *noBanner
-	cfg.Quiet = *quiet
+	cfg.Quiet = cu.Quiet
 	cfg.Filter = *filter
 	cfg.MonitoredOnly = *monitoredOnly
 
-	if tk != nil {
-		if err := tk.Validate(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
-		}
-	}
 	if cfg.Days < 0 {
 		fmt.Fprintf(os.Stderr, "ERROR: -days must be >= 0\n")
 		os.Exit(1)

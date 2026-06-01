@@ -15,6 +15,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
@@ -88,19 +89,14 @@ type CalendarItem struct {
 
 // ToolConfig holds configuration for the media calendar tool.
 type ToolConfig struct {
+	core.CommonConfig
 	SonarrInstances []config.ArrInstance
 	RadarrInstances []config.ArrInstance
-	Timeout         time.Duration
 	Days            int
 	DaysPast        int
-	NoColor         bool
-	Theme           string
-	JSONOutput      bool
 	WatchMode       bool
 	WatchSeconds    int
-	Debug           bool
 	NoBanner        bool
-	Quiet           bool
 	Filter          string
 	MonitoredOnly   bool
 }
@@ -146,21 +142,15 @@ type fetchQueueResult struct {
 
 // BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
-	cfg := ToolConfig{}
+	cfg := ToolConfig{
+		CommonConfig: core.FromToolkit(tk),
+	}
 	if tk == nil {
 		cfg.Timeout = 10 * time.Second
 		cfg.Days = 1
 		cfg.WatchSeconds = 300
 		return cfg
 	}
-
-	dur, err := time.ParseDuration(tk.General.Timeout)
-	if err != nil || dur <= 0 {
-		dur = 10 * time.Second
-	}
-	cfg.Timeout = dur
-	cfg.NoColor = tk.General.NoColor
-	cfg.Theme = tk.General.Theme
 
 	cfg.SonarrInstances = slices.Clone(tk.Sonarr)
 	cfg.RadarrInstances = slices.Clone(tk.Radarr)

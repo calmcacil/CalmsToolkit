@@ -7,47 +7,34 @@ import (
 	"strings"
 	"time"
 
-	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/cmdutil"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/requests"
 )
 
 func main() {
-	tk, err := config.LoadToolkitConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-	}
+	tk := cmdutil.LoadAndValidate()
 	cfg := requests.BuildToolConfig(tk)
 
 	url := flag.String("url", cfg.ServerURL, "Overseerr/Jellyseerr server URL")
 	token := flag.String("token", config.TokenFromEnv("OVERSEERR_API_KEY", cfg.APIKey), "API key/token")
-	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
-	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
-	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
 	verbose := flag.Bool("verbose", cfg.Verbose, "Enable verbose diagnostic output")
-	jsonOutput := flag.Bool("json", false, "Output in JSON format")
-	quiet := flag.Bool("quiet", false, "Suppress warnings")
+
+	cu := cmdutil.RegisterCommonFlags(flag.CommandLine, tk, cmdutil.Options{
+		IncludeQuiet: true,
+	})
 	flag.Parse()
+	cu.Apply()
 
 	cfg.ServerURL = strings.TrimSuffix(*url, "/")
 	cfg.APIKey = *token
-	cfg.Timeout = *timeout
-	cfg.NoColor = *noColor || *jsonOutput
-	cfg.Theme = *theme
-	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
-		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
-			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
-		cfg.Theme = "default"
-	}
+	cfg.Timeout = cu.Timeout
+	cfg.NoColor = cu.NoColor
+	cfg.Theme = cu.Theme
+	cfg.JSONOutput = cu.JSONFlag()
 	cfg.Verbose = *verbose
-	cfg.JSONOutput = *jsonOutput
-	cfg.Quiet = *quiet
+	cfg.Quiet = cu.Quiet
 
-	if tk != nil {
-		if err := tk.Validate(); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: config validation: %v\n", err)
-		}
-	}
 	if cfg.ServerURL == "" {
 		fmt.Fprintf(os.Stderr, "ERROR: server URL is required (use -url flag or set overseerr_url in config)\n")
 		os.Exit(1)

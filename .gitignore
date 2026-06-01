@@ -51,10 +51,15 @@ temp/
 plex-streams
 plex-streams-*
 !plex-streams.go
+media-*
+!media-*.go
+arr-*
+!arr-feed/
 
 # Test files
 coverage.txt
 coverage.html
+coverage.out
 
 # Screenshots and images
 *.png

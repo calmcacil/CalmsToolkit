@@ -10,6 +10,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
@@ -342,12 +343,14 @@ func TestAggregateCalendarPartialFailureDoesNotCancelSuccessfulSources(t *testin
 	defer goodServer.Close()
 
 	cfg := ToolConfig{
+		CommonConfig: core.CommonConfig{
+			Timeout: 2 * time.Second,
+		},
 		SonarrInstances: []config.ArrInstance{
 			{Name: "Failing", URL: badServer.URL, APIKey: "bad-token"},
 			{Name: "Successful", URL: goodServer.URL, APIKey: "good-token"},
 		},
-		Days:    1,
-		Timeout: 2 * time.Second,
+		Days: 1,
 	}
 
 	items, _, err := aggregateCalendar(context.Background(), cfg)

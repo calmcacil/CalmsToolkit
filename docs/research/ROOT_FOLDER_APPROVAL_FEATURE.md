@@ -204,9 +204,9 @@ Potential improvements for future versions:
 
 - **Implementation**: `media-requests.go` (lines 638-655, 1454-1664)
 - **Tests**: `media-requests_test.go` (lines 1458-1652)
-- **API Research**: `docs/OVERSEERR_API_RESEARCH.md`
-- **Examples**: `docs/EXAMPLES_MEDIA_REQUESTS.md`
+- **API Research**: `docs/research/OVERSEERR_API_RESEARCH.md`
 
+- **Examples**: `docs/user/EXAMPLES_MEDIA_REQUESTS.md`
 ## Deployment Notes
 
 ### Build Instructions
