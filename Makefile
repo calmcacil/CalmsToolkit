@@ -1,4 +1,4 @@
-.PHONY: all build build-all clean install test help setup setup-install tidy
+.PHONY: all build build-all clean install test help setup setup-install fmt tidy
 
 # Installation parameters
 prefix?=/usr/local
@@ -34,7 +34,12 @@ help:
 	@echo "  make setup-install - Install setup binary to $(BUILD_DIR)"
 	@echo "  make clean         - Remove build artifacts"
 	@echo "  make test          - Run tests"
+	@echo "  make fmt           - Format Go source files"
 	@echo "  make tidy          - Tidy go.mod"
+
+fmt:
+	@gofmt -w .
+	@echo "Formatted all Go source files"
 
 build:
 	@echo "Building binaries..."

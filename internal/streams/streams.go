@@ -20,7 +20,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
-	httpclient "github.com/calmcacil/CalmsToolkit/internal/http"
+	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
 
 const (
@@ -30,6 +30,11 @@ const (
 	ServerJellyfin = "jellyfin"
 	// ServerBoth indicates both Plex and Jellyfin server types.
 	ServerBoth = "both"
+
+	streamUserWidth   = 12
+	streamShowWidth   = 9
+	streamTitleWidth  = 11
+	streamClientWidth = 12
 )
 
 // PlexMediaContainer is the top-level XML response from Plex /status/sessions.
@@ -278,7 +283,7 @@ func Run(cfg ToolConfig) {
 			}
 			select {
 			case <-ctx.Done():
-				fmt.Println("\nShutting down.")
+				fmt.Fprintln(os.Stderr, "\nShutting down.")
 				return
 			case <-time.After(time.Duration(cfg.WatchSeconds) * time.Second):
 			}
@@ -288,7 +293,7 @@ func Run(cfg ToolConfig) {
 	ctx := context.Background()
 	if err := displayAllSessions(ctx, cfg, p); err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		os.Exit(1)
+		return
 	}
 }
 
@@ -297,7 +302,7 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history 
 	var plexCount, jellyfinCount int
 	var plexErr, jellyfinErr error
 
-	client := httpclient.NewClient(cfg.Timeout)
+	client := httputil.NewClient(cfg.Timeout)
 
 	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
 		streams, err := fetchPlexStreams(ctx, client, cfg)
@@ -343,7 +348,7 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) 
 	var plexCount, jellyfinCount int
 	var plexErr, jellyfinErr error
 
-	client := httpclient.NewClient(cfg.Timeout)
+	client := httputil.NewClient(cfg.Timeout)
 
 	if cfg.ServerType == ServerPlex || cfg.ServerType == ServerBoth {
 		streams, err := fetchPlexStreams(ctx, client, cfg)
@@ -377,12 +382,16 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) 
 }
 
 func allFailed(serverType string, plexErr, jellyfinErr error) bool {
-	needsPlex := serverType == ServerPlex || serverType == ServerBoth
-	needsJellyfin := serverType == ServerJellyfin || serverType == ServerBoth
-	if serverType == ServerBoth {
-		return (needsPlex && plexErr != nil) && (needsJellyfin && jellyfinErr != nil)
+	switch serverType {
+	case ServerBoth:
+		return plexErr != nil && jellyfinErr != nil
+	case ServerPlex:
+		return plexErr != nil
+	case ServerJellyfin:
+		return jellyfinErr != nil
+	default:
+		return true
 	}
-	return (needsPlex && plexErr != nil) || (needsJellyfin && jellyfinErr != nil)
 }
 
 func maybeError(err error) string {
@@ -392,7 +401,7 @@ func maybeError(err error) string {
 	return "not configured"
 }
 
-func fetchPlexStreams(ctx context.Context, client *httpclient.Client, cfg ToolConfig) ([]StreamInfo, error) {
+func fetchPlexStreams(ctx context.Context, client *httputil.Client, cfg ToolConfig) ([]StreamInfo, error) {
 	url := fmt.Sprintf("%s/status/sessions", cfg.PlexURL)
 	headers := map[string]string{
 		"X-Plex-Token": cfg.PlexToken,
@@ -414,7 +423,7 @@ func fetchPlexStreams(ctx context.Context, client *httpclient.Client, cfg ToolCo
 	return streams, nil
 }
 
-func fetchJellyfinStreams(ctx context.Context, client *httpclient.Client, cfg ToolConfig) ([]StreamInfo, error) {
+func fetchJellyfinStreams(ctx context.Context, client *httputil.Client, cfg ToolConfig) ([]StreamInfo, error) {
 	url := fmt.Sprintf("%s/Sessions", cfg.JellyfinURL)
 	headers := map[string]string{
 		"Accept":    "application/json",
@@ -777,12 +786,7 @@ func boxStreamBottom(bw *bufio.Writer, termW int) {
 }
 
 func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, noColor bool, p *colors.Palette) error {
-	clr := func(code string) string {
-		if noColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(noColor)
 
 	rawW := getTermWidth()
 	boxW, termW := getBoxWidth(rawW)
@@ -848,12 +852,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 }
 
 func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool, p *colors.Palette) error {
-	clr := func(code string) string {
-		if noColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(noColor)
 
 	rawW := getTermWidth()
 	boxW, termW := getBoxWidth(rawW)
@@ -950,12 +949,7 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 }
 
 func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor bool, p *colors.Palette) {
-	clr := func(code string) string {
-		if noColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(noColor)
 
 	serverColor := p.ServerJellyfin
 	if stream.Server == "plex" {
@@ -1024,7 +1018,7 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 	}
 	line = fmt.Sprintf(" %sStatus%s: %s%s%s", clr(p.Bold), clr(p.Reset), clr(statusColor), statusText, clr(p.Reset))
 	if stream.Transcoding {
-		line += " ⚠"
+		line += " !"
 	}
 	fmt.Fprint(bw, "│")
 	fmt.Fprint(bw, colors.PadRight(line, boxW))
@@ -1079,12 +1073,7 @@ func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor b
 // streamContentLines returns the padded interior content of a stream box
 // (without border characters), one element per line.
 func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Palette) []string {
-	clr := func(code string) string {
-		if noColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(noColor)
 
 	trunc := func(s string, maxW int) string {
 		return runewidth.Truncate(s, maxW, "…")
@@ -1097,7 +1086,7 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 		serverColor = p.ServerPlex
 	}
 
-	userW := boxW - 12 // " PLEX User: "
+	userW := boxW - streamUserWidth
 	user := trunc(stream.User, userW)
 	line := fmt.Sprintf(" %s%s%s %sUser%s: %s%s%s",
 		clr(serverColor), strings.ToUpper(stream.Server), clr(p.Reset),
@@ -1106,7 +1095,7 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 	lines = append(lines, colors.PadRight(line, boxW))
 
 	if stream.Type == "episode" && stream.Show != "" {
-		showW := boxW - 9 // " Show: "
+		showW := boxW - streamShowWidth
 		show := trunc(stream.Show, showW)
 		line := fmt.Sprintf(" %sShow%s: %s", clr(p.Bold), clr(p.Reset), show)
 		lines = append(lines, colors.PadRight(line, boxW))
@@ -1122,7 +1111,7 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 			lines = append(lines, colors.PadRight(line, boxW))
 		}
 	} else {
-		titleW := boxW - 11 // " Title:  (YYYY)"
+		titleW := boxW - streamTitleWidth
 		title := trunc(stream.Title, titleW)
 		line := fmt.Sprintf(" %sTitle%s: %s", clr(p.Bold), clr(p.Reset), title)
 		if stream.Year != "" {
@@ -1134,8 +1123,7 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 	if stream.Client != "" {
 		var clientLine string
 		if stream.Device != "" && stream.Device != stream.Client {
-			// " Client: X (Y)" — overhead: " Client:  ()" = 12
-			availW := boxW - 12
+			availW := boxW - streamClientWidth
 			devW := runewidth.StringWidth(stream.Device)
 			cliW := availW - devW
 			if cliW < 4 {
@@ -1165,7 +1153,7 @@ func streamContentLines(stream StreamInfo, boxW int, noColor bool, p *colors.Pal
 	}
 	line = fmt.Sprintf(" %sStatus%s: %s%s%s", clr(p.Bold), clr(p.Reset), clr(statusColor), statusText, clr(p.Reset))
 	if stream.Transcoding {
-		line += " ⚠"
+		line += " !"
 	}
 	lines = append(lines, colors.PadRight(line, boxW))
 
@@ -1280,12 +1268,7 @@ func renderStreamGrid(bw *bufio.Writer, streams []StreamInfo, termW int, noColor
 }
 
 func displayEndedStreamToBox(bw *bufio.Writer, record SessionRecord, boxW int, noColor bool, p *colors.Palette) {
-	clr := func(code string) string {
-		if noColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(noColor)
 	stream := record.Stream
 
 	endedStr := fmt.Sprintf("%s[ENDED %s]%s", clr(p.Subdued), formatTimeSince(*record.EndTime), clr(p.Reset))
@@ -1346,12 +1329,7 @@ func formatDuration(d time.Duration) string {
 }
 
 func displayStreamSummaryToBox(bw *bufio.Writer, streams []StreamInfo, boxW int, noColor bool, p *colors.Palette) {
-	clr := func(code string) string {
-		if noColor {
-			return ""
-		}
-		return code
-	}
+	clr := colors.ClrFunc(noColor)
 
 	transcodeCount := 0
 	totalBandwidth := 0.0

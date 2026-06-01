@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/requests"
 )
@@ -19,7 +20,7 @@ func main() {
 	cfg := requests.BuildToolConfig(tk)
 
 	url := flag.String("url", cfg.ServerURL, "Overseerr/Jellyseerr server URL")
-	token := flag.String("token", cfg.APIKey, "API key/token")
+	token := flag.String("token", config.TokenFromEnv("OVERSEERR_API_KEY", cfg.APIKey), "API key/token")
 	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
 	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
 	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
@@ -33,6 +34,11 @@ func main() {
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
 	cfg.Theme = *theme
+	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
+		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
+			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
+		cfg.Theme = "default"
+	}
 	cfg.Verbose = *verbose
 	cfg.JSONOutput = *jsonOutput
 	cfg.Quiet = *quiet

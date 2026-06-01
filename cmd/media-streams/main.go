@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/streams"
 )
@@ -19,9 +20,9 @@ func main() {
 
 	server := flag.String("server", cfg.ServerType, "Server type: plex, jellyfin, or both")
 	plexURL := flag.String("plex-url", cfg.PlexURL, "Plex server URL")
-	plexToken := flag.String("plex-token", cfg.PlexToken, "Plex authentication token")
+	plexToken := flag.String("plex-token", config.TokenFromEnv("PLEX_TOKEN", cfg.PlexToken), "Plex authentication token")
 	jellyfinURL := flag.String("jellyfin-url", cfg.JellyfinURL, "Jellyfin server URL")
-	jellyfinToken := flag.String("jellyfin-token", cfg.JellyfinToken, "Jellyfin API token")
+	jellyfinToken := flag.String("jellyfin-token", config.TokenFromEnv("JELLYFIN_TOKEN", cfg.JellyfinToken), "Jellyfin API token")
 	timeout := flag.Duration("timeout", cfg.Timeout, "Connection timeout")
 	theme := flag.String("theme", cfg.Theme, "Color theme (default, catppuccin-mocha, catppuccin-latte)")
 	noColor := flag.Bool("no-color", cfg.NoColor, "Disable colored output")
@@ -40,6 +41,11 @@ func main() {
 	cfg.Timeout = *timeout
 	cfg.NoColor = *noColor || *jsonOutput
 	cfg.Theme = *theme
+	if cfg.Theme != "" && !colors.ValidateTheme(cfg.Theme) {
+		fmt.Fprintf(os.Stderr, "Warning: unknown theme %q, falling back to default (valid: %s)\n",
+			cfg.Theme, strings.Join(colors.ValidThemes(), ", "))
+		cfg.Theme = "default"
+	}
 	cfg.JSONOutput = *jsonOutput
 	cfg.WatchMode = *watchMode
 	cfg.WatchSeconds = *watchSeconds

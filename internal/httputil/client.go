@@ -1,5 +1,5 @@
-// Package http provides shared HTTP client utilities for API fetchers.
-package http
+// Package httputil provides shared HTTP client utilities for API fetchers.
+package httputil
 
 import (
 	"context"
