@@ -564,7 +564,7 @@ func groupEpisodesBySeason(episodes []SonarrEpisode) episodeBySeason {
 }
 
 func findCurrentSeason(seasons episodeBySeason) int {
-	now := time.Now().Add(7 * 24 * time.Hour)
+	now := time.Now()
 	bestSeason := 1
 	bestDiff := time.Duration(1<<63 - 1)
 

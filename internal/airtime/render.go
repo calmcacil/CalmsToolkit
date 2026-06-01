@@ -309,7 +309,10 @@ func formatRelativeDate(now, t time.Time) string {
 			}
 			return fmt.Sprintf("in %d hours", h)
 		}
-		d := int(diff.Hours() / 24)
+		d := calendarDays(now, t)
+		if d <= 0 {
+			d = 1
+		}
 		if d == 1 {
 			return "tomorrow"
 		}
@@ -334,15 +337,26 @@ func formatRelativeDate(now, t time.Time) string {
 		}
 		return fmt.Sprintf("%d hours ago", h)
 	}
-	if diff < 7*24*time.Hour {
-		d := int(diff.Hours() / 24)
+	if diff < 30*24*time.Hour {
+		d := calendarDays(t, now)
+		if d <= 0 {
+			d = 1
+		}
 		if d == 1 {
 			return "yesterday"
 		}
 		return fmt.Sprintf("%d days ago", d)
 	}
 
-	return t.Local().Format("2006-01-02 15:04")
+	return t.Format("2006-01-02")
+}
+
+func calendarDays(a, b time.Time) int {
+	ay, am, ad := a.Date()
+	by, bm, bd := b.Date()
+	left := time.Date(ay, am, ad, 0, 0, 0, 0, a.Location())
+	right := time.Date(by, bm, bd, 0, 0, 0, 0, b.Location())
+	return int(right.Sub(left).Hours() / 24)
 }
 
 func terminalWidth() int {
