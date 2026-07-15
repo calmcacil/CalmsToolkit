@@ -39,6 +39,8 @@ calmstoolkit anime "Frieren" --output json
 
 See [migration](docs/user/MIGRATION_UNIFIED_CLI.md), [CLI behavior](docs/user/CLI_SPEC.md), and [architecture](docs/ARCHITECTURE.md).
 
+Prebuilt Linux `amd64` and `arm64` archives are published on GitHub Releases. Public releases follow Semantic Versioning and are generated from Conventional Commit pull-request titles.
+
 ## Development
 
 ```bash
@@ -46,3 +48,5 @@ make check   # format, tidy, vet, race tests, Linux builds
 ```
 
 New commands must follow [Adding a Tool](docs/ADDING_A_TOOL.md). Never commit the configuration file, tokens, or logs containing credentials.
+
+Pull requests run formatting, lint, race tests, Linux builds, dependency validation, vulnerability analysis, and CodeQL. See [CI and releases](docs/CI_RELEASES.md) for required checks and the automated release flow. CalmsToolkit is available under the [MIT License](LICENSE).

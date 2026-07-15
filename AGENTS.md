@@ -6,6 +6,8 @@ CalmsToolkit is a Go module with one Linux CLI at `cmd/calmstoolkit`. Never add 
 ## Build, Test, and Development Commands
 Use `make build`, `make build-all` (Linux amd64/arm64), `make test`, and `make tidy`. `make check` is the full gate. Run commands with `go run ./cmd/calmstoolkit <command>`. Configuration is managed through `calmstoolkit config setup|validate` and `doctor`.
 
+For CI-equivalent validation also run the pinned golangci-lint, actionlint, and govulncheck commands in `docs/CI_RELEASES.md`. Do not change workflows without updating the audit/migration docs and retaining explicit permissions plus immutable action SHAs.
+
 ## Coding Style & Naming Conventions
 Format every change with `gofmt` (or `go fmt ./...`) before committing; the project mirrors idiomatic Go spacing and grouping. Keep exported types, funcs, and consts in UpperCamelCase with doc comments, use lowerCamelCase for locals, and reserve ALL_CAPS for environment variable labels surfaced to users. Group related constants and config structs to keep CLI flag wiring readable.
 
@@ -15,7 +17,7 @@ Place table-driven tests in `_test.go` files beside the feature under test and c
 New commands must test terminal, plain, JSON/NDJSON, failure, and cancellation paths. Foundational packages `app`, `console`, `config`, `httputil`, and new domain clients target at least 80% coverage. JSON/NDJSON tests must assert schema validity and absence of ANSI sequences.
 
 ## Commit & Pull Request Guidelines
-Match the existing history by writing imperative, present-tense commit subjects (`Add media calendar filters`). Squash incidental fixups locally so each commit is reviewable. Pull requests should link the relevant issue, summarize behavioral changes, call out new flags or env vars, and include screenshots or sample CLI output when they clarify UX changes. Flag any security-sensitive configuration updates explicitly.
+Use Conventional Commit subjects and PR titles (`feat(calendar): add filters`). Squash incidental fixups locally so each commit is reviewable; the final PR title becomes the squash commit and drives Release Please. Pull requests should link the relevant issue, summarize behavioral changes, call out new flags or env vars, and include screenshots or sample CLI output when they clarify UX changes. Flag breaking or security-sensitive configuration updates explicitly.
 
 ## Configuration & Secrets
 The shared config file at `~/.config/calmstoolkit/config.json` stores API keys and tokens. It is created with `0600` permissions; never commit it. Local overrides should rely on shell exports or direnv, and scrub logs or fixtures before sharing them in reviews.

@@ -13,3 +13,5 @@ Linux Go module providing one `calmstoolkit` executable.
 - `internal/{streams,calendar,requests,airtime,feed,anisearch}`: feature behavior.
 
 Use `make check`. Do not add standalone binaries or package-local console frameworks. See `docs/ARCHITECTURE.md`, `docs/ADDING_A_TOOL.md`, and `docs/user/CLI_SPEC.md`.
+
+CI requires formatting, module consistency, vet, golangci-lint, race tests, Linux amd64/arm64 builds, govulncheck, dependency review, and CodeQL. Pull-request titles use Conventional Commits and drive Release Please after squash merge. Workflow actions must be full-SHA pinned with least-privilege permissions. See `docs/CI_AUDIT.md`, `docs/CI_RELEASES.md`, and `docs/CI_MIGRATION.md`.
