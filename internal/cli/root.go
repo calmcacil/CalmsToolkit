@@ -188,10 +188,10 @@ func newStreamsCommand(rt *app.Runtime) *cobra.Command {
 			return app.Error(app.ExitUsage, fmt.Errorf("invalid --server %q", cfg.ServerType))
 		}
 		if (cfg.ServerType == "plex" || cfg.ServerType == "both") && cfg.PlexToken == "" {
-			return app.Error(app.ExitUsage, errors.New("Plex token is required"))
+			return app.Error(app.ExitUsage, errors.New("plex token is required"))
 		}
 		if (cfg.ServerType == "jellyfin" || cfg.ServerType == "both") && cfg.JellyfinToken == "" {
-			return app.Error(app.ExitUsage, errors.New("Jellyfin token is required"))
+			return app.Error(app.ExitUsage, errors.New("jellyfin token is required"))
 		}
 		return streams.Run(rt.Context, cfg)
 	}}
@@ -578,14 +578,14 @@ func runDoctor(rt *app.Runtime) []doctorCheck {
 		resp, err := rt.HTTPClient(rt.Timeout).Do(req)
 		cancel()
 		ok := err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300
-		detail := "reachable"
+		var detail string
 		if err != nil {
 			detail = err.Error()
 		} else {
 			detail = resp.Status
 		}
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		checks = append(checks, doctorCheck{Name: e.name, OK: ok, Detail: detail})
 	}

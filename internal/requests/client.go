@@ -28,7 +28,7 @@ func fetchServiceInstances(ctx context.Context, cfg ToolConfig, service string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch %s servers: status %d", service, resp.StatusCode)
@@ -52,7 +52,7 @@ func fetchServiceDetails(ctx context.Context, cfg ToolConfig, service string, id
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to fetch %s details: status %d", service, resp.StatusCode)
@@ -106,7 +106,7 @@ func searchMedia(ctx context.Context, cfg ToolConfig, query string) ([]SearchRes
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := readBodyLimited(resp.Body)
@@ -127,7 +127,7 @@ func getTVDetails(ctx context.Context, cfg ToolConfig, tmdbID int) (*TVDetails, 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to get TV details: status %d", resp.StatusCode)
@@ -164,7 +164,7 @@ func createRequest(ctx context.Context, cfg ToolConfig, media SearchResult, seas
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := readBodyLimited(resp.Body)
@@ -184,7 +184,7 @@ func checkUserPermissions(ctx context.Context, cfg ToolConfig) (*AuthMe, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := readBodyLimited(resp.Body)
@@ -204,7 +204,7 @@ func getRequestCount(ctx context.Context, cfg ToolConfig) (*RequestCount, error)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := readBodyLimited(resp.Body)
@@ -283,16 +283,16 @@ func getPendingRequests(ctx context.Context, cfg ToolConfig) ([]MediaRequest, er
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := readBodyLimited(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("failed to get requests: status %d - %s", resp.StatusCode, string(bodyBytes))
 		}
 
 		var reqResp RequestsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&reqResp); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, err
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "Page %d: Got %d results (total: %d)\n",
@@ -341,16 +341,16 @@ func getPendingRequests(ctx context.Context, cfg ToolConfig) ([]MediaRequest, er
 
 			if resp.StatusCode != http.StatusOK {
 				bodyBytes, _ := readBodyLimited(resp.Body)
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, fmt.Errorf("fallback fetch failed: status %d - %s", resp.StatusCode, string(bodyBytes))
 			}
 
 			var reqResp RequestsResponse
 			if err := json.NewDecoder(resp.Body).Decode(&reqResp); err != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return nil, fmt.Errorf("fallback decode failed: %w", err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if cfg.Verbose {
 				fmt.Fprintf(os.Stderr, "Fallback page %d: Got %d results (total: %d)\n",
@@ -398,7 +398,7 @@ func approveRequest(ctx context.Context, cfg ToolConfig, requestID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := readBodyLimited(resp.Body)
@@ -423,7 +423,7 @@ func approveRequestWithOverrides(ctx context.Context, cfg ToolConfig, requestID 
 		if err != nil {
 			return fmt.Errorf("failed to set request overrides before approval: %w", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			bodyBytes, _ := readBodyLimited(resp.Body)
@@ -444,7 +444,7 @@ func declineRequest(ctx context.Context, cfg ToolConfig, requestID int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := readBodyLimited(resp.Body)

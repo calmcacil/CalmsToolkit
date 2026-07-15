@@ -269,7 +269,7 @@ func (c *AniListClient) doRequest(ctx context.Context, payload []byte, dst any) 
 			c.lastRateLimit = time.Now()
 			c.rateLimitMu.Unlock()
 			retryAfter := resp.Header.Get("Retry-After")
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if retryAfter != "" {
 				if sec, err := strconv.Atoi(retryAfter); err == nil && sec > 0 {
 					slog.Warn("rate limited, waiting retry-after", "seconds", sec, "attempt", attempt+1)
@@ -286,7 +286,7 @@ func (c *AniListClient) doRequest(ctx context.Context, payload []byte, dst any) 
 
 		if resp.StatusCode != http.StatusOK {
 			respBody, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if readErr != nil {
 				lastErr = fmt.Errorf("API error (HTTP %d): failed to read body: %w", resp.StatusCode, readErr)
 			} else {
@@ -300,11 +300,11 @@ func (c *AniListClient) doRequest(ctx context.Context, payload []byte, dst any) 
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = fmt.Errorf("decode response: %w", err)
 			break
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil
 	}
 

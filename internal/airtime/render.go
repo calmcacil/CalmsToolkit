@@ -383,16 +383,6 @@ func terminalWidth() int {
 	return w
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}
-
 func truncateVis(s string, maxLen int) string {
 	visLen := colors.VisibleLen(s)
 	if visLen <= maxLen {

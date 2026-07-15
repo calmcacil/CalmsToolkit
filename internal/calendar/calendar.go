@@ -124,24 +124,6 @@ type Summary struct {
 	Items       []CalendarItem `json:"items"`
 }
 
-type fetchEpisodeResult struct {
-	Instance string
-	Episodes []SonarrEpisode
-	Err      error
-}
-
-type fetchMovieResult struct {
-	Instance string
-	Movies   []RadarrMovie
-	Err      error
-}
-
-type fetchQueueResult struct {
-	Instance string
-	Queue    *QueueResponse
-	Err      error
-}
-
 // BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg := ToolConfig{
@@ -322,7 +304,7 @@ func aggregateCalendarDetailed(ctx context.Context, cfg ToolConfig) ([]CalendarI
 func fetchSonarrInstance(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
-		return fmt.Errorf("Sonarr %s: %w", inst.Name, err)
+		return fmt.Errorf("sonarr %s: %w", inst.Name, err)
 	}
 
 	mu.Lock()
@@ -383,7 +365,7 @@ func fetchSonarrInstance(ctx context.Context, client *httputil.Client, inst conf
 func fetchRadarrInstance(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
-		return fmt.Errorf("Radarr %s: %w", inst.Name, err)
+		return fmt.Errorf("radarr %s: %w", inst.Name, err)
 	}
 
 	mu.Lock()
@@ -395,14 +377,15 @@ func fetchRadarrInstance(ctx context.Context, client *httputil.Client, inst conf
 		seen[key] = true
 
 		var releaseTime time.Time
-		if movie.DigitalDate != "" {
-			releaseTime, err = parseDateFlexible(movie.DigitalDate)
-		}
-		if releaseTime.IsZero() && movie.ReleaseDate != "" {
-			releaseTime, err = parseDateFlexible(movie.ReleaseDate)
-		}
-		if releaseTime.IsZero() && movie.InCinemas != "" {
-			releaseTime, err = parseDateFlexible(movie.InCinemas)
+		for _, candidate := range []string{movie.DigitalDate, movie.ReleaseDate, movie.InCinemas} {
+			if candidate == "" {
+				continue
+			}
+			parsed, parseErr := parseDateFlexible(candidate)
+			if parseErr == nil {
+				releaseTime = parsed
+				break
+			}
 		}
 		if releaseTime.IsZero() {
 			if debug {

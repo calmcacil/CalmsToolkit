@@ -29,7 +29,7 @@ func fetchAllHistoryDetailed(ctx context.Context, client *httputil.Client, cfg T
 			defer wg.Done()
 			events, err := fetchSonarrHistory(ctx, client, inst, since, cfg.ShowSubtitles)
 			if err != nil {
-				errorsChan <- fmt.Errorf("Sonarr %s: %v", inst.Name, err)
+				errorsChan <- fmt.Errorf("sonarr %s: %v", inst.Name, err)
 				return
 			}
 			eventsChan <- events
@@ -42,7 +42,7 @@ func fetchAllHistoryDetailed(ctx context.Context, client *httputil.Client, cfg T
 			defer wg.Done()
 			events, err := fetchRadarrHistory(ctx, client, inst, since, cfg.ShowSubtitles)
 			if err != nil {
-				errorsChan <- fmt.Errorf("Radarr %s: %v", inst.Name, err)
+				errorsChan <- fmt.Errorf("radarr %s: %v", inst.Name, err)
 				return
 			}
 			eventsChan <- events

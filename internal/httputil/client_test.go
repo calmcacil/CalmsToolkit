@@ -59,15 +59,15 @@ func TestResponseErrorRedactsSecrets(t *testing.T) {
 
 func TestNewClient(t *testing.T) {
 	c := NewClient(5 * time.Second)
-	if c.Client.Timeout != 5*time.Second {
-		t.Errorf("Timeout = %v, want 5s", c.Client.Timeout)
+	if c.Timeout != 5*time.Second {
+		t.Errorf("Timeout = %v, want 5s", c.Timeout)
 	}
 }
 
 func TestNewTransportClient(t *testing.T) {
 	c := NewTransportClient(10 * time.Second)
-	if c.Client.Timeout != 10*time.Second {
-		t.Errorf("Timeout = %v, want 10s", c.Client.Timeout)
+	if c.Timeout != 10*time.Second {
+		t.Errorf("Timeout = %v, want 10s", c.Timeout)
 	}
 }
 

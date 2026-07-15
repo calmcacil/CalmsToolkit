@@ -431,17 +431,17 @@ func (c *ToolkitConfig) SaveAt(explicitPath string) error {
 		return fmt.Errorf("creating temporary config: %w", err)
 	}
 	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("setting temporary config permissions: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("writing config: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("syncing config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

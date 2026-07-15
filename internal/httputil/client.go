@@ -46,7 +46,11 @@ func NewClient(timeout time.Duration) *Client {
 
 // NewTransportClient creates a new Client with a tuned transport (connection pooling).
 func NewTransportClient(timeout time.Duration) *Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		baseTransport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	transport := baseTransport.Clone()
 	transport.MaxIdleConns = 20
 	transport.IdleConnTimeout = 30 * time.Second
 	return &Client{
@@ -111,7 +115,7 @@ func (c *Client) doRequest(ctx context.Context, method, requestURL string, heade
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	maxSize := c.MaxBodySize
 	if maxSize <= 0 {
 		maxSize = 10 * 1024 * 1024

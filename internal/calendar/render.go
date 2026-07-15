@@ -110,7 +110,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 	go dataAgent(ctx, cfg, dataCh)
 
 	var (
-		termWidth int = 80
+		termWidth = 80
 		items     []CalendarItem
 		issues    []QueueIssue
 	)

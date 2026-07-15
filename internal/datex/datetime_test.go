@@ -73,7 +73,7 @@ func TestMarshalJSON_RoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &round); err != nil {
 		t.Fatal(err)
 	}
-	if !round.Time.Equal(orig.Time) {
+	if !round.Equal(orig.Time) {
 		t.Errorf("round trip: got %v, want %v", round.Time, orig.Time)
 	}
 }

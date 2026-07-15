@@ -134,7 +134,7 @@ func headMapping(ctx context.Context, url string) (mappingMetadata, error) {
 	if err != nil {
 		return mappingMetadata{}, fmt.Errorf("HEAD failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return mappingMetadata{}, fmt.Errorf("HEAD returned HTTP %d", resp.StatusCode)
@@ -161,7 +161,7 @@ func fetchMapping(ctx context.Context, url string) ([]byte, mappingMetadata, err
 	if err != nil {
 		return nil, mappingMetadata{}, fmt.Errorf("GET failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, mappingMetadata{}, fmt.Errorf("GET returned HTTP %d", resp.StatusCode)
