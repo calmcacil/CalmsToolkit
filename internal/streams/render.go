@@ -3,7 +3,6 @@ package streams
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/console"
 )
 
 func formatTimeSince(t time.Time) string {
@@ -42,7 +42,7 @@ func formatTimeSince(t time.Time) string {
 	return fmt.Sprintf("%d hours ago", hours)
 }
 
-func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error {
+func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int, partial bool, warnings []string) error {
 	summary := Summary{
 		TotalStreams:    len(streams),
 		PlexStreams:     plexCount,
@@ -64,9 +64,7 @@ func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error
 	summary.TranscodingCount = transcodeCount
 	summary.TotalBandwidth = totalBandwidth
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(summary)
+	return console.WriteEnvelope(os.Stdout, "streams", summary, partial, warnings, time.Now())
 }
 
 func renderProgressBar(pct float64, width int) string {
@@ -157,7 +155,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 
 	// Header
 	serverLabel := buildServerLabel(plexCount, jellyfinCount)
-	header := "Active Sessions"
+	var header string
 	if len(streams) == 0 {
 		header = "Active Sessions: 0"
 	} else {
@@ -200,7 +198,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 	return nil
 }
 
-func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool, p *colors.Palette) error {
+func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor, plain bool, p *colors.Palette) error {
 	clr := colors.ClrFunc(noColor)
 
 	rawW := getTermWidth()
@@ -209,7 +207,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	if !plain {
+		fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	}
 
 	// Title
 	title := "Media Streams Monitor"
@@ -246,7 +246,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		fmt.Fprint(bw, clr(p.Reset))
 		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
-		fmt.Fprint(bw, colors.EraseDown)
+		if !plain {
+			fmt.Fprint(bw, colors.EraseDown)
+		}
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return nil
@@ -291,132 +293,12 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		boxStreamBottom(bw, termW)
 	}
 
-	fmt.Fprint(bw, colors.EraseDown)
+	if !plain {
+		fmt.Fprint(bw, colors.EraseDown)
+	}
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
 	return nil
-}
-
-func displayStreamToBox(bw *bufio.Writer, stream StreamInfo, boxW int, noColor bool, p *colors.Palette) {
-	clr := colors.ClrFunc(noColor)
-
-	serverColor := p.ServerJellyfin
-	if stream.Server == "plex" {
-		serverColor = p.ServerPlex
-	}
-
-	// Server + User line
-	line := fmt.Sprintf(" %s%s%s %sUser%s: %s%s%s",
-		clr(serverColor), strings.ToUpper(stream.Server), clr(p.Reset),
-		clr(p.Bold), clr(p.Reset),
-		clr(p.ServerPlex), stream.User, clr(p.Reset))
-	fmt.Fprint(bw, "│")
-	fmt.Fprint(bw, colors.PadRight(line, boxW))
-	fmt.Fprint(bw, "│\n")
-
-	// Show/Title line
-	if stream.Type == "episode" && stream.Show != "" {
-		line := fmt.Sprintf(" %sShow%s: %s", clr(p.Bold), clr(p.Reset), stream.Show)
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, colors.PadRight(line, boxW))
-		fmt.Fprint(bw, "│\n")
-		if stream.Season != "" || stream.Episode != "" {
-			epStr := ""
-			if stream.Season != "" {
-				epStr += fmt.Sprintf("S%02s", stream.Season)
-			}
-			if stream.Episode != "" {
-				epStr += fmt.Sprintf("E%02s", stream.Episode)
-			}
-			line := fmt.Sprintf("  %s - %s", epStr, stream.Title)
-			fmt.Fprint(bw, "│")
-			fmt.Fprint(bw, colors.PadRight(line, boxW))
-			fmt.Fprint(bw, "│\n")
-		}
-	} else {
-		line := fmt.Sprintf(" %sTitle%s: %s", clr(p.Bold), clr(p.Reset), stream.Title)
-		if stream.Year != "" {
-			line += fmt.Sprintf(" %s(%s)%s", clr(p.Accent), stream.Year, clr(p.Reset))
-		}
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, colors.PadRight(line, boxW))
-		fmt.Fprint(bw, "│\n")
-	}
-
-	// Client line
-	if stream.Client != "" {
-		var clientLine string
-		if stream.Device != "" {
-			clientLine = fmt.Sprintf(" %sClient%s: %s (%s)", clr(p.Bold), clr(p.Reset), stream.Client, stream.Device)
-		} else {
-			clientLine = fmt.Sprintf(" %sClient%s: %s", clr(p.Bold), clr(p.Reset), stream.Client)
-		}
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, colors.PadRight(clientLine, boxW))
-		fmt.Fprint(bw, "│\n")
-	}
-
-	// Status line
-	statusColor := p.Success
-	if stream.Transcoding {
-		statusColor = p.Error
-	}
-	statusText := stream.Status
-	if stream.IsPaused {
-		statusText += " (Paused)"
-	}
-	line = fmt.Sprintf(" %sStatus%s: %s%s%s", clr(p.Bold), clr(p.Reset), clr(statusColor), statusText, clr(p.Reset))
-	if stream.Transcoding {
-		line += " !"
-	}
-	fmt.Fprint(bw, "│")
-	fmt.Fprint(bw, colors.PadRight(line, boxW))
-	fmt.Fprint(bw, "│\n")
-
-	// Bandwidth line
-	if stream.Bandwidth > 0 {
-		line := fmt.Sprintf(" %sBandwidth%s: %s%.2f Mbps%s", clr(p.Bold), clr(p.Reset), clr(p.Bandwidth), stream.Bandwidth, clr(p.Reset))
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, colors.PadRight(line, boxW))
-		fmt.Fprint(bw, "│\n")
-	}
-
-	// Quality line
-	if stream.Resolution != "" || stream.VideoCodec != "" {
-		line := fmt.Sprintf(" %sQuality%s: ", clr(p.Bold), clr(p.Reset))
-		if stream.Resolution != "" {
-			line += fmt.Sprintf("%s ", stream.Resolution)
-		}
-		if stream.VideoCodec != "" {
-			line += fmt.Sprintf("(%s", stream.VideoCodec)
-			if stream.AudioCodec != "" {
-				line += fmt.Sprintf("/%s", stream.AudioCodec)
-			}
-			line += ")"
-		}
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, colors.PadRight(line, boxW))
-		fmt.Fprint(bw, "│\n")
-	}
-
-	// Progress bar
-	if stream.Progress > 0 {
-		barW := boxW - 18
-		if barW > 30 {
-			barW = 30
-		}
-		if barW < 10 {
-			barW = 10
-		}
-		bar := renderProgressBar(stream.Progress, barW)
-		line := fmt.Sprintf(" %sPlayback%s: %s %s%5.1f%%%s",
-			clr(p.Bold), clr(p.Reset),
-			bar,
-			clr(p.Accent), stream.Progress, clr(p.Reset))
-		fmt.Fprint(bw, "│")
-		fmt.Fprint(bw, colors.PadRight(line, boxW))
-		fmt.Fprint(bw, "│\n")
-	}
 }
 
 // streamContentLines returns the padded interior content of a stream box

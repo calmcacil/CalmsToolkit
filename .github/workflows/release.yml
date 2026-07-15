@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  GO_VERSION: "1.25.12"
+
+jobs:
+  release:
+    name: Release Please
+    if: github.ref == 'refs/heads/main' && github.repository == 'calmcacil/CalmsToolkit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Create release GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - name: Create or update the release pull request
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Check out the released tag
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ steps.release.outputs.tag_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build and attach release artifacts
+        if: steps.release.outputs.release_created == 'true'
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          distribution: goreleaser
+          version: v2.12.7
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

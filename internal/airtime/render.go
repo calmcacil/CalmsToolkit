@@ -120,7 +120,7 @@ func interactiveSelect(ctx context.Context, candidates []scoredMatch, query stri
 				return nil
 			}
 			if line == "s" {
-				fmt.Fprintf(os.Stderr, "Start a new search with: media-airtime <new query>\n")
+				fmt.Fprintf(os.Stderr, "Start a new search with: calmstoolkit airtime <new query>\n")
 				return nil
 			}
 
@@ -381,16 +381,6 @@ func terminalWidth() int {
 		return 80
 	}
 	return w
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
 }
 
 func truncateVis(s string, maxLen int) string {

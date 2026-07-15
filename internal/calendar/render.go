@@ -110,7 +110,7 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 	go dataAgent(ctx, cfg, dataCh)
 
 	var (
-		termWidth int = 80
+		termWidth = 80
 		items     []CalendarItem
 		issues    []QueueIssue
 	)
@@ -123,6 +123,9 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 			termWidth = re.width
 		case de := <-dataCh:
 			if de.err != nil {
+				if cfg.Strict {
+					return de.err
+				}
 				if !cfg.WatchMode {
 					return de.err
 				}
@@ -134,7 +137,9 @@ func runWithSubagents(ctx context.Context, cfg ToolConfig, p *colors.Palette) er
 		}
 	}
 
-	fmt.Print(colors.ClearScreen + colors.HomeCursor)
+	if !cfg.PlainOutput {
+		fmt.Print(colors.ClearScreen + colors.HomeCursor)
+	}
 	renderCalendar(cfg, items, issues, termWidth, p)
 
 	if !cfg.WatchMode {
@@ -187,7 +192,9 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	if !cfg.PlainOutput {
+		fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	}
 
 	if !cfg.Quiet && len(queueIssues) > 0 {
 		totalIssues := 0
@@ -206,7 +213,9 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 	if len(items) == 0 {
 		fmt.Fprintf(bw, "%sNo items match the current filters.%s\n",
 			clr(p.NoReleases), clr(p.Reset))
-		fmt.Fprint(bw, colors.EraseDown)
+		if !cfg.PlainOutput {
+			fmt.Fprint(bw, colors.EraseDown)
+		}
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return
@@ -277,7 +286,9 @@ func renderCalendar(cfg ToolConfig, items []CalendarItem, queueIssues []QueueIss
 
 	renderSummary(bw, items, now, clr, p)
 
-	fmt.Fprint(bw, colors.EraseDown)
+	if !cfg.PlainOutput {
+		fmt.Fprint(bw, colors.EraseDown)
+	}
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
 }

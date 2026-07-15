@@ -4,10 +4,10 @@
 #
 # Layout:
 #   ┌──────────────────────┬──────────────────────┐
-#   │   media-streams      │   media-calendar      │
+#   │   streams            │   calendar            │
 #   │   (single shot)      │   (single shot)       │
 #   ├──────────────────────┴───────────────────────┤
-#   │               arr-feed                        │
+#   │               feed                            │
 #   │              (single shot)                    │
 #   └───────────────────────────────────────────────┘
 
@@ -30,16 +30,16 @@ BIN="$(pwd)/bin"
 
 tmux new-session -d -s "$SESSION"
 
-# Top-left: media-streams (snapshot mode)
-tmux send-keys -t "$SESSION:0" "$BIN/media-streams 2>&1; echo '--- STREAMS DONE ---'" Enter
+# Top-left: streams (snapshot mode)
+tmux send-keys -t "$SESSION:0" "$BIN/calmstoolkit streams 2>&1; echo '--- STREAMS DONE ---'" Enter
 
-# Top-right: media-calendar (snapshot mode)
+# Top-right: calendar (snapshot mode)
 tmux split-window -h
-tmux send-keys -t "$SESSION:0" "$BIN/media-calendar 2>&1; echo '--- CALENDAR DONE ---'" Enter
+tmux send-keys -t "$SESSION:0" "$BIN/calmstoolkit calendar 2>&1; echo '--- CALENDAR DONE ---'" Enter
 
-# Bottom: arr-feed (snapshot mode, no watch)
+# Bottom: feed (snapshot mode, no watch)
 tmux split-window -v
-tmux send-keys -t "$SESSION:0" "$BIN/arr-feed 2>&1; echo '--- FEED DONE ---'" Enter
+tmux send-keys -t "$SESSION:0" "$BIN/calmstoolkit feed 2>&1; echo '--- FEED DONE ---'" Enter
 
 # Balance panes
 tmux select-layout -t "$SESSION:0" main-horizontal 2>/dev/null || true

@@ -34,7 +34,7 @@ func (d *DateTime) UnmarshalJSON(data []byte) error {
 }
 
 func (d DateTime) MarshalJSON() ([]byte, error) {
-	if d.Time.IsZero() {
+	if d.IsZero() {
 		return []byte("null"), nil
 	}
 	return []byte(`"` + d.Time.UTC().Format(time.RFC3339) + `"`), nil

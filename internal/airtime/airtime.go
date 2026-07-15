@@ -2,18 +2,16 @@ package airtime
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/console"
 	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
@@ -182,34 +180,25 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 }
 
 // Run executes the media-airtime tool.
-func Run(query string, cfg ToolConfig) {
+func Run(ctx context.Context, query string, cfg ToolConfig) error {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
-		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
-		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
-		os.Exit(1)
+		return fmt.Errorf("no Sonarr or Radarr instances configured")
 	}
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	client := httputil.NewTransportClient(cfg.Timeout)
 
 	candidates := searchLibrary(ctx, client, query, cfg)
 	if len(candidates) == 0 {
 		if cfg.JSONOutput {
-			encoder := json.NewEncoder(os.Stdout)
-			encoder.SetIndent("", "  ")
-			encoder.Encode(map[string]interface{}{
+			return console.WriteEnvelope(os.Stdout, "airtime", map[string]interface{}{
 				"query":      query,
 				"candidates": []map[string]interface{}{},
 				"selected":   nil,
 				"airtime":    nil,
 				"error":      "no matches found",
-			})
-			return
+			}, false, nil, time.Now())
 		}
-		fmt.Fprintf(os.Stderr, "No matches found for %q\n", query)
-		os.Exit(2)
+		return fmt.Errorf("no matches found for %q", query)
 	}
 
 	if cfg.Debug {
@@ -224,29 +213,27 @@ func Run(query string, cfg ToolConfig) {
 	selected := pickCandidate(ctx, candidates, query, cfg)
 	if selected == nil {
 		if ctx.Err() != nil {
-			os.Exit(130)
+			return ctx.Err()
 		}
-		os.Exit(3)
+		return fmt.Errorf("no candidate selected")
 	}
 
 	info := resolveAirtime(ctx, client, *selected, cfg)
 	if cfg.JSONOutput {
-		encoder := json.NewEncoder(os.Stdout)
-		encoder.SetIndent("", "  ")
 		candOut := make([]map[string]interface{}, len(candidates))
 		for i, sm := range candidates {
 			candOut[i] = candidateToMap(sm.Candidate, sm.Score)
 		}
-		encoder.Encode(map[string]interface{}{
+		return console.WriteEnvelope(os.Stdout, "airtime", map[string]interface{}{
 			"query":      query,
 			"candidates": candOut,
 			"selected":   candidateToMap(selected.Candidate, selected.Score),
 			"airtime":    infoToMap(info),
-		})
-		return
+		}, false, nil, time.Now())
 	}
 
 	renderCard(info, cfg)
+	return nil
 }
 
 func searchLibrary(ctx context.Context, client *httputil.Client, query string, cfg ToolConfig) []scoredMatch {

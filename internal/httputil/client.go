@@ -2,6 +2,7 @@
 package httputil
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -9,6 +10,8 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +21,17 @@ import (
 type Client struct {
 	*http.Client
 	MaxBodySize int64
+}
+
+// ResponseError describes a non-success HTTP response without exposing request
+// credentials. Body is bounded and redacted before it is stored.
+type ResponseError struct {
+	StatusCode        int
+	Method, URL, Body string
+}
+
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("%s %s: unexpected status %d: %s", e.Method, e.URL, e.StatusCode, e.Body)
 }
 
 // NewClient creates a new Client with the given timeout.
@@ -32,15 +46,19 @@ func NewClient(timeout time.Duration) *Client {
 
 // NewTransportClient creates a new Client with a tuned transport (connection pooling).
 func NewTransportClient(timeout time.Duration) *Client {
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		baseTransport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	transport := baseTransport.Clone()
+	transport.MaxIdleConns = 20
+	transport.IdleConnTimeout = 30 * time.Second
 	return &Client{
 		Client: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:       20,
-				IdleConnTimeout:    30 * time.Second,
-				DisableCompression: false,
-			},
+			Timeout:   timeout,
+			Transport: transport,
 		},
+		MaxBodySize: 10 * 1024 * 1024,
 	}
 }
 
@@ -81,30 +99,35 @@ func jitter(d time.Duration) time.Duration {
 
 // DoRequest performs an HTTP request and returns the raw body bytes and HTTP status code.
 func (c *Client) DoRequest(ctx context.Context, method, url string, headers map[string]string, body io.Reader) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	data, status, _, err := c.doRequest(ctx, method, url, headers, body)
+	return data, status, err
+}
+
+func (c *Client) doRequest(ctx context.Context, method, requestURL string, headers map[string]string, body io.Reader) ([]byte, int, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	maxSize := c.MaxBodySize
 	if maxSize <= 0 {
 		maxSize = 10 * 1024 * 1024
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, resp.StatusCode, resp.Header.Clone(), err
 	}
 	if int64(len(data)) > maxSize {
-		return nil, resp.StatusCode, fmt.Errorf("response body too large (exceeds %d bytes)", maxSize)
+		return nil, resp.StatusCode, resp.Header.Clone(), fmt.Errorf("response body too large (exceeds %d bytes)", maxSize)
 	}
-	return data, resp.StatusCode, nil
+	return data, resp.StatusCode, resp.Header.Clone(), nil
 }
 
 // DoJSON performs an HTTP request and decodes the JSON response into result.
@@ -114,7 +137,7 @@ func (c *Client) DoJSON(ctx context.Context, method, url string, headers map[str
 		return err
 	}
 	if status != http.StatusOK && status != http.StatusCreated {
-		return fmt.Errorf("unexpected status %d: %s", status, truncateBody(strings.TrimSpace(string(data))))
+		return responseError(method, url, status, data)
 	}
 	if result != nil {
 		if err := json.Unmarshal(data, result); err != nil {
@@ -131,7 +154,7 @@ func (c *Client) DoXML(ctx context.Context, method, url string, headers map[stri
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("unexpected status %d: %s", status, truncateBody(strings.TrimSpace(string(data))))
+		return responseError(method, url, status, data)
 	}
 	if result != nil {
 		if err := xml.Unmarshal(data, result); err != nil {
@@ -145,7 +168,7 @@ func (c *Client) DoXML(ctx context.Context, method, url string, headers map[stri
 func (c *Client) DoJSONWithRetry(ctx context.Context, method, url string, headers map[string]string, body io.Reader, result interface{}, rc RetryConfig) error {
 	return c.doWithRetry(ctx, method, url, headers, body, func(data []byte, status int) error {
 		if status != http.StatusOK && status != http.StatusCreated {
-			return fmt.Errorf("unexpected status %d: %s", status, truncateBody(string(data)))
+			return responseError(method, url, status, data)
 		}
 		if result == nil {
 			return nil
@@ -158,7 +181,7 @@ func (c *Client) DoJSONWithRetry(ctx context.Context, method, url string, header
 func (c *Client) DoXMLWithRetry(ctx context.Context, method, url string, headers map[string]string, body io.Reader, result interface{}, rc RetryConfig) error {
 	return c.doWithRetry(ctx, method, url, headers, body, func(data []byte, status int) error {
 		if status != http.StatusOK {
-			return fmt.Errorf("unexpected status %d: %s", status, truncateBody(string(data)))
+			return responseError(method, url, status, data)
 		}
 		if result == nil {
 			return nil
@@ -170,13 +193,35 @@ func (c *Client) DoXMLWithRetry(ctx context.Context, method, url string, headers
 type responseHandler func([]byte, int) error
 
 func (c *Client) doWithRetry(ctx context.Context, method, url string, headers map[string]string, body io.Reader, fn responseHandler, rc RetryConfig) error {
+	var bodyData []byte
+	var err error
+	if body != nil {
+		bodyData, err = io.ReadAll(body)
+		if err != nil {
+			return fmt.Errorf("reading request body: %w", err)
+		}
+	}
+	if !retryableMethod(method) {
+		rc.MaxAttempts = min(rc.MaxAttempts, 1)
+	}
+	if rc.MaxAttempts < 1 {
+		rc.MaxAttempts = 1
+	}
 	backoff := rc.InitialBackoff
 	for attempt := 1; attempt <= rc.MaxAttempts; attempt++ {
-		data, status, err := c.DoRequest(ctx, method, url, headers, body)
+		var requestBody io.Reader
+		if bodyData != nil {
+			requestBody = bytes.NewReader(bodyData)
+		}
+		data, status, responseHeaders, err := c.doRequest(ctx, method, url, headers, requestBody)
 		if err == nil {
 			if rc.shouldRetry(status) && attempt < rc.MaxAttempts {
 				if rc.RespectRetryAfter {
-					if ra := parseRetryAfter(string(data)); ra > 0 && ra < rc.MaxBackoff {
+					ra := parseRetryAfterHeader(responseHeaders.Get("Retry-After"), time.Now())
+					if ra <= 0 {
+						ra = parseRetryAfter(string(data))
+					}
+					if ra > 0 && (rc.MaxBackoff <= 0 || ra <= rc.MaxBackoff) {
 						backoff = ra
 					}
 				}
@@ -204,10 +249,57 @@ func (c *Client) doWithRetry(ctx context.Context, method, url string, headers ma
 }
 
 func truncateBody(s string) string {
+	s = redact(s)
 	if len(s) > 512 {
 		return s[:512] + "..."
 	}
 	return s
+}
+
+func responseError(method, requestURL string, status int, data []byte) error {
+	return &ResponseError{StatusCode: status, Method: method, URL: safeURL(requestURL), Body: truncateBody(strings.TrimSpace(string(data)))}
+}
+
+func safeURL(value string) string {
+	u, err := url.Parse(value)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	query := u.Query()
+	for key := range query {
+		lower := strings.ToLower(key)
+		if strings.Contains(lower, "token") || strings.Contains(lower, "key") || strings.Contains(lower, "auth") {
+			query.Set(key, "REDACTED")
+		}
+	}
+	u.RawQuery = query.Encode()
+	return u.String()
+}
+
+var secretPattern = regexp.MustCompile(`(?i)(api[_-]?key|token|authorization)(["']?\s*[:=]\s*["']?)[^"'\s&,}]+`)
+
+func redact(value string) string { return secretPattern.ReplaceAllString(value, `${1}${2}REDACTED`) }
+
+func retryableMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
+func parseRetryAfterHeader(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil && when.After(now) {
+		return when.Sub(now)
+	}
+	return 0
 }
 
 func parseRetryAfter(body string) time.Duration {

@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
+	"github.com/calmcacil/CalmsToolkit/internal/console"
 	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/calmcacil/CalmsToolkit/internal/httputil"
 )
@@ -122,24 +124,6 @@ type Summary struct {
 	Items       []CalendarItem `json:"items"`
 }
 
-type fetchEpisodeResult struct {
-	Instance string
-	Episodes []SonarrEpisode
-	Err      error
-}
-
-type fetchMovieResult struct {
-	Instance string
-	Movies   []RadarrMovie
-	Err      error
-}
-
-type fetchQueueResult struct {
-	Instance string
-	Queue    *QueueResponse
-	Err      error
-}
-
 // BuildToolConfig constructs a ToolConfig from the global toolkit configuration.
 func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 	cfg := ToolConfig{
@@ -197,36 +181,67 @@ func calculateDateRange(days, daysPast int) (start, end time.Time) {
 }
 
 // Run executes the media calendar tool.
-func Run(cfg ToolConfig) {
+func Run(ctx context.Context, cfg ToolConfig) error {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
-		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
-		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
-		os.Exit(1)
+		return fmt.Errorf("no Sonarr or Radarr instances configured")
 	}
 
 	if cfg.JSONOutput {
-		ctx := context.Background()
-		items, issues, err := aggregateCalendar(ctx, cfg)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
-		if err := displayJSON(items, issues, cfg); err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		return runJSON(ctx, cfg)
 	}
 
 	p := colors.GetPalette(cfg.Theme)
-	ctx := context.Background()
 	if err := runWithSubagents(ctx, cfg, p); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		os.Exit(1)
+		return err
+	}
+	return nil
+}
+
+func runJSON(ctx context.Context, cfg ToolConfig) error {
+	var lastHash [sha256.Size]byte
+	for {
+		items, issues, warnings, err := aggregateCalendarDetailed(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		snapshot, _ := json.Marshal(struct {
+			Items    []CalendarItem
+			Issues   []QueueIssue
+			Warnings []string
+		}{items, issues, warnings})
+		hash := sha256.Sum256(snapshot)
+		if hash != lastHash {
+			if err := displayJSON(items, issues, cfg, len(warnings) > 0, warnings); err != nil {
+				return err
+			}
+			lastHash = hash
+		}
+		if len(warnings) > 0 && cfg.Strict {
+			return &core.PartialError{Warnings: warnings}
+		}
+		if !cfg.WatchMode {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(cfg.WatchSeconds) * time.Second):
+		}
 	}
 }
 
 func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []QueueIssue, error) {
+	items, issues, warnings, err := aggregateCalendarDetailed(ctx, cfg)
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", warning)
+	}
+	if err == nil && len(warnings) > 0 && cfg.Strict {
+		err = &core.PartialError{Warnings: warnings}
+	}
+	return items, issues, err
+}
+
+func aggregateCalendarDetailed(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []QueueIssue, []string, error) {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 
 	client := httputil.NewTransportClient(cfg.Timeout)
@@ -270,25 +285,26 @@ func aggregateCalendar(ctx context.Context, cfg ToolConfig) ([]CalendarItem, []Q
 		})
 	}
 
+	warnings := []string{}
 	if err := g.Wait(); err != nil {
-		fmt.Fprintf(os.Stderr, "WARNING: %v\n", err)
+		warnings = append(warnings, err.Error())
 	}
 
 	if successes == 0 && totalSources > 0 {
-		return items, queueIssues, fmt.Errorf("all %d source(s) failed to return data", totalSources)
+		return items, queueIssues, warnings, fmt.Errorf("all %d source(s) failed to return data", totalSources)
 	}
 
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].AirTime.Before(items[j].AirTime)
 	})
 
-	return items, queueIssues, nil
+	return items, queueIssues, warnings, nil
 }
 
 func fetchSonarrInstance(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	episodes, err := fetchSonarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
-		return fmt.Errorf("Sonarr %s: %w", inst.Name, err)
+		return fmt.Errorf("sonarr %s: %w", inst.Name, err)
 	}
 
 	mu.Lock()
@@ -349,7 +365,7 @@ func fetchSonarrInstance(ctx context.Context, client *httputil.Client, inst conf
 func fetchRadarrInstance(ctx context.Context, client *httputil.Client, inst config.ArrInstance, start, end time.Time, debug bool, mu, qMu *sync.Mutex, items *[]CalendarItem, queueIssues *[]QueueIssue, seen map[string]bool) error {
 	movies, err := fetchRadarrCalendar(ctx, client, inst, start, end, debug)
 	if err != nil {
-		return fmt.Errorf("Radarr %s: %w", inst.Name, err)
+		return fmt.Errorf("radarr %s: %w", inst.Name, err)
 	}
 
 	mu.Lock()
@@ -361,14 +377,15 @@ func fetchRadarrInstance(ctx context.Context, client *httputil.Client, inst conf
 		seen[key] = true
 
 		var releaseTime time.Time
-		if movie.DigitalDate != "" {
-			releaseTime, err = parseDateFlexible(movie.DigitalDate)
-		}
-		if releaseTime.IsZero() && movie.ReleaseDate != "" {
-			releaseTime, err = parseDateFlexible(movie.ReleaseDate)
-		}
-		if releaseTime.IsZero() && movie.InCinemas != "" {
-			releaseTime, err = parseDateFlexible(movie.InCinemas)
+		for _, candidate := range []string{movie.DigitalDate, movie.ReleaseDate, movie.InCinemas} {
+			if candidate == "" {
+				continue
+			}
+			parsed, parseErr := parseDateFlexible(candidate)
+			if parseErr == nil {
+				releaseTime = parsed
+				break
+			}
 		}
 		if releaseTime.IsZero() {
 			if debug {
@@ -465,7 +482,7 @@ func fetchQueue(ctx context.Context, client *httputil.Client, inst config.ArrIns
 	return &queue, nil
 }
 
-func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg ToolConfig) error {
+func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg ToolConfig, partial bool, warnings []string) error {
 	start, end := calculateDateRange(cfg.Days, cfg.DaysPast)
 	now := time.Now()
 
@@ -502,9 +519,7 @@ func displayJSON(items []CalendarItem, queueIssues []QueueIssue, cfg ToolConfig)
 		Items:       items,
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(summary)
+	return console.WriteEnvelope(os.Stdout, "calendar", summary, partial, warnings, now)
 }
 
 func applyFilters(items []CalendarItem, cfg ToolConfig) []CalendarItem {

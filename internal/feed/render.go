@@ -3,7 +3,6 @@ package feed
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/console"
 )
 
 func formatRelativeTime(t time.Time) string {
@@ -227,10 +227,8 @@ func renderTable(events []HistoryEvent, cfg ToolConfig, p *colors.Palette) {
 	os.Stdout.Write(buf.Bytes())
 }
 
-func renderJSON(events []HistoryEvent) {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	encoder.Encode(events)
+func renderJSON(events []HistoryEvent, partial bool, warnings []string) {
+	_ = console.WriteEnvelope(os.Stdout, "feed", events, partial, warnings, time.Now())
 }
 
 func getActionColor(action string, p *colors.Palette) string {

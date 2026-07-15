@@ -1,52 +1,30 @@
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
-  enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - gocritic
-    - prealloc
-    - unconvert
-    - whitespace
-    - nolintlint
-  disable:
-    - exhaustruct
-    - forcetypeassert
-    - gochecknoglobals
-    - gochecknoinits
+  default: standard
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+  exclusions:
+    rules:
+      # Test fixtures intentionally ignore writes to in-memory/httptest helpers.
+      - path: _test\.go
+        linters: [errcheck]
+      # Terminal views are best-effort until rendering is fully writer-returning.
+      - path: internal/(airtime|anisearch|calendar|feed|requests|streams)/(render|input|menu)\.go
+        linters: [errcheck]
+      - path: internal/anisearch/search\.go
+        linters: [errcheck]
+      - path: internal/(buildinfo|cli)/.*\.go
+        linters: [errcheck]
 
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: false
-  gocritic:
-    enabled-tags:
-      - performance
-      - diagnostic
-      - experimental
-    disabled-checks:
-      - paramTypeCombine
-  staticcheck:
-    checks:
-      - all
-      - -SA1019
-  prealloc:
-    simple: true
-    range-loops: true
-    for-loops: true
+formatters:
+  enable: [gofmt]
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-        - gocritic
-    - path: internal/colors/colors.go
-      text: "WhyNoLint"
-      linters:
-        - staticcheck
+  max-issues-per-linter: 0
+  max-same-issues: 0

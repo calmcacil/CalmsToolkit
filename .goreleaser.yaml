@@ -1,0 +1,41 @@
+version: 2
+
+project_name: calmstoolkit
+
+builds:
+  - id: calmstoolkit
+    main: ./cmd/calmstoolkit
+    binary: calmstoolkit
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/calmcacil/CalmsToolkit/internal/buildinfo.Version={{ .Version }}
+        -X github.com/calmcacil/CalmsToolkit/internal/buildinfo.Commit={{ .Commit }}
+        -X github.com/calmcacil/CalmsToolkit/internal/buildinfo.Date={{ .Date }}
+
+archives:
+  - id: linux
+    ids:
+      - calmstoolkit
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  disable: true
+
+release:
+  mode: append
