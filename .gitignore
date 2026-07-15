@@ -38,6 +38,12 @@ Thumbs.db
 *.env
 !.env.example
 
+# Private keys and certificate bundles
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Log files
 *.log
 *.jsonl
