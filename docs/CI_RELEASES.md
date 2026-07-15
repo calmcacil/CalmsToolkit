@@ -74,7 +74,7 @@ There is no package registry publication, OIDC trust, SBOM, or provenance attest
 
 ## Maintenance
 
-Dependabot opens weekly grouped updates for Go dependencies and GitHub Actions. Action updates must remain pinned to an immutable SHA and retain a version comment. Review upstream release notes before merging major action changes.
+Dependabot opens weekly grouped updates for Go dependencies and GitHub Actions. It prefixes their titles with `build(deps):` and `ci(deps):`, respectively, so generated PRs pass the Conventional Commit gate. Action updates must remain pinned to an immutable SHA and retain a version comment. Review upstream release notes before merging major action changes.
 
 To test the artifact definition without publishing:
 
