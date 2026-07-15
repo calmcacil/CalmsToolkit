@@ -2,12 +2,60 @@ package httputil
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRetryReplaysBodyAndReadsRetryAfterHeader(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		body, _ := io.ReadAll(r.Body)
+		if string(body) != `{"value":1}` {
+			t.Errorf("attempt %d body=%q", attempts, body)
+		}
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"message":"ok"}`))
+	}))
+	defer server.Close()
+	client := NewClient(time.Second)
+	var result testJSON
+	rc := DefaultRetry()
+	rc.InitialBackoff = time.Millisecond
+	rc.MaxBackoff = 2 * time.Millisecond
+	if err := client.DoJSONWithRetry(context.Background(), http.MethodPut, server.URL, nil, strings.NewReader(`{"value":1}`), &result, rc); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || result.Message != "ok" {
+		t.Fatalf("attempts=%d result=%+v", attempts, result)
+	}
+}
+
+func TestResponseErrorRedactsSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"api_key":"supersecret"}`))
+	}))
+	defer server.Close()
+	err := NewClient(time.Second).DoJSON(context.Background(), http.MethodGet, server.URL+"?token=querysecret", nil, nil, nil)
+	var responseErr *ResponseError
+	if !errors.As(err, &responseErr) {
+		t.Fatalf("error type=%T", err)
+	}
+	if strings.Contains(err.Error(), "supersecret") || strings.Contains(err.Error(), "querysecret") {
+		t.Fatalf("secret leaked: %v", err)
+	}
+}
 
 func TestNewClient(t *testing.T) {
 	c := NewClient(5 * time.Second)

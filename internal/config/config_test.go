@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,14 +18,45 @@ func TestDefaultToolkitConfig(t *testing.T) {
 	if cfg.MediaCalendar.Days != 1 {
 		t.Errorf("Days = %d, want 1", cfg.MediaCalendar.Days)
 	}
-	if cfg.MediaStreams.ServerType != "both" {
-		t.Errorf("ServerType = %q, want %q", cfg.MediaStreams.ServerType, "both")
+	if cfg.MediaStreams.ServerType != "" {
+		t.Errorf("ServerType = %q, want empty until a service is configured", cfg.MediaStreams.ServerType)
 	}
 	if cfg.MediaRequests.OverseerrURL != "http://localhost:5055" {
 		t.Errorf("OverseerrURL = %q, want %q", cfg.MediaRequests.OverseerrURL, "http://localhost:5055")
 	}
 	if cfg.ArrFeed.PollInterval != "5s" {
 		t.Errorf("PollInterval = %q, want %q", cfg.ArrFeed.PollInterval, "5s")
+	}
+}
+
+func TestValidateAggregatesProblems(t *testing.T) {
+	cfg := DefaultToolkitConfig()
+	cfg.General.Timeout = "bad"
+	cfg.Sonarr = []ArrInstance{{Name: "Same", URL: "not-url"}, {Name: "same", URL: "also-bad"}}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected validation errors")
+	}
+	for _, want := range []string{"general.timeout", "invalid url", "duplicate name", "api_key"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestApplyEnvironmentPrecedence(t *testing.T) {
+	t.Setenv("PLEX_TOKEN", "legacy")
+	t.Setenv("CALMSTOOLKIT_PLEX_TOKEN", "new")
+	t.Setenv("CALMSTOOLKIT_SONARR_SONARR_HD_API_KEY", "instance")
+	cfg := DefaultToolkitConfig()
+	cfg.MediaStreams.PlexToken = "file"
+	cfg.Sonarr = []ArrInstance{{Name: "Sonarr HD", URL: "http://localhost", APIKey: "file"}}
+	ApplyEnvironment(cfg)
+	if cfg.MediaStreams.PlexToken != "new" {
+		t.Fatalf("token=%q", cfg.MediaStreams.PlexToken)
+	}
+	if cfg.Sonarr[0].APIKey != "instance" {
+		t.Fatalf("instance token=%q", cfg.Sonarr[0].APIKey)
 	}
 }
 

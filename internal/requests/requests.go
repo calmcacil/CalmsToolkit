@@ -3,7 +3,6 @@ package requests
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
@@ -26,24 +25,19 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 }
 
 // Run executes the media requests interactive tool.
-func Run(cfg ToolConfig) {
+func Run(ctx context.Context, cfg ToolConfig) error {
 	if cfg.APIKey == "" {
-		fmt.Fprintf(os.Stderr, "ERROR: API key is not set\n")
-		fmt.Fprintf(os.Stderr, "Set api_key in ~/.config/calmstoolkit/config.json or use -token flag\n")
-		os.Exit(1)
+		return fmt.Errorf("API key is not set")
 	}
 
 	if cfg.ServerURL == "" {
-		fmt.Fprintf(os.Stderr, "ERROR: Server URL is not set\n")
-		fmt.Fprintf(os.Stderr, "Set overseerr_url in ~/.config/calmstoolkit/config.json or use -url flag\n")
-		os.Exit(1)
+		return fmt.Errorf("server URL is not set")
 	}
 
-	ctx := context.Background()
 	if err := testConnection(ctx, cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Failed to connect to server: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("connect to server: %w", err)
 	}
 
 	runInteractiveMenu(ctx, cfg)
+	return nil
 }

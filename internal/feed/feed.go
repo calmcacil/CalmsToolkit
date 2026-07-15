@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
 	"slices"
-	"syscall"
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
@@ -61,32 +59,29 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 }
 
 // Run executes the Arr event feed tool.
-func Run(cfg ToolConfig) {
+func Run(ctx context.Context, cfg ToolConfig) error {
 	if len(cfg.SonarrInstances) == 0 && len(cfg.RadarrInstances) == 0 {
-		fmt.Fprintf(os.Stderr, "ERROR: No Sonarr or Radarr instances configured\n")
-		fmt.Fprintf(os.Stderr, "Run 'make setup' or edit ~/.config/calmstoolkit/config.json\n")
-		os.Exit(1)
+		return fmt.Errorf("no Sonarr or Radarr instances configured")
 	}
 
 	client := httputil.NewClient(cfg.Timeout)
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
 	p := colors.GetPalette(cfg.Theme)
 
 	if cfg.Watch {
-		runWatchMode(ctx, cfg, client, p)
+		return runWatchMode(ctx, cfg, client, p)
 	} else {
-		runSingleMode(ctx, cfg, client, p)
+		if err := runSingleMode(ctx, cfg, client, p); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func runSingleMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, p *colors.Palette) {
+func runSingleMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, p *colors.Palette) error {
 	since := time.Now().Add(-cfg.HistoryWindow)
-	events, err := fetchAllHistory(ctx, client, cfg, since)
+	events, warnings, err := fetchAllHistoryDetailed(ctx, client, cfg, since)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	events = filterEvents(events, cfg)
@@ -96,14 +91,21 @@ func runSingleMode(ctx context.Context, cfg ToolConfig, client *httputil.Client,
 	}
 
 	if cfg.JSONOutput {
-		renderJSON(events)
+		renderJSON(events, len(warnings) > 0, warnings)
 	} else {
+		for _, warning := range warnings {
+			fmt.Fprintf(os.Stderr, "WARNING: %s\n", warning)
+		}
 		renderTable(events, cfg, p)
 	}
+	if len(warnings) > 0 && cfg.Strict {
+		return &core.PartialError{Warnings: warnings}
+	}
+	return nil
 }
 
-func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, p *colors.Palette) {
-	if !cfg.JSONOutput {
+func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, p *colors.Palette) error {
+	if !cfg.JSONOutput && !cfg.PlainOutput {
 		fmt.Print(colors.HideCursor)
 		defer fmt.Print(colors.ShowCursor)
 	}
@@ -111,14 +113,16 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, 
 	eventCache := make([]HistoryEvent, 0, 100)
 	lastFetch := time.Now().Add(-cfg.HistoryWindow)
 
-	fmt.Print(colors.ClearScreen + colors.HomeCursor)
+	if !cfg.JSONOutput && !cfg.PlainOutput {
+		fmt.Print(colors.ClearScreen + colors.HomeCursor)
+	}
 
 	var lastHash string
 
 	for {
-		newEvents, err := fetchAllHistory(ctx, client, cfg, lastFetch)
+		newEvents, warnings, err := fetchAllHistoryDetailed(ctx, client, cfg, lastFetch)
 		if err != nil {
-			if !cfg.JSONOutput {
+			if !cfg.JSONOutput && !cfg.PlainOutput {
 				fmt.Print(colors.HomeCursor)
 				clr := getColorFunc(cfg, p)
 				fmt.Fprintf(os.Stderr, "%sERROR: %v%s\n", clr(p.Error), err, clr(p.Reset))
@@ -127,6 +131,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, 
 			}
 		} else {
 			newCount := 0
+			newlyAdded := make([]HistoryEvent, 0, len(newEvents))
 			for _, event := range newEvents {
 				dup := false
 				for i := len(eventCache) - 1; i >= 0 && i >= len(eventCache)-50; i-- {
@@ -137,6 +142,7 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, 
 				}
 				if !dup {
 					eventCache = append(eventCache, event)
+					newlyAdded = append(newlyAdded, event)
 					newCount++
 				}
 			}
@@ -152,35 +158,47 @@ func runWatchMode(ctx context.Context, cfg ToolConfig, client *httputil.Client, 
 			}
 
 			if cfg.JSONOutput {
-				renderJSON(filteredEvents)
+				newlyAdded = filterEvents(newlyAdded, cfg)
+				if len(newlyAdded) > 0 || len(warnings) > 0 {
+					renderJSON(newlyAdded, len(warnings) > 0, warnings)
+				}
 			} else {
 				newHash := computeFeedHash(filteredEvents)
 				if newHash == lastHash && newCount == 0 {
 					select {
 					case <-ctx.Done():
-						fmt.Print(colors.ShowCursor)
-						return
+						if !cfg.PlainOutput {
+							fmt.Print(colors.ShowCursor)
+						}
+						return ctx.Err()
 					case <-time.After(cfg.PollInterval):
 					}
 					continue
 				}
 				lastHash = newHash
-				fmt.Print(colors.HomeCursor)
+				if !cfg.PlainOutput {
+					fmt.Print(colors.HomeCursor)
+				}
 				renderTable(filteredEvents, cfg, p)
-				fmt.Print(colors.EraseDown)
+				if !cfg.PlainOutput {
+					fmt.Print(colors.EraseDown)
+				}
 			}
 
 			if newCount > 0 {
 				lastFetch = time.Now()
 			}
+			if len(warnings) > 0 && cfg.Strict {
+				return &core.PartialError{Warnings: warnings}
+			}
 		}
 
 		select {
 		case <-ctx.Done():
-			if !cfg.JSONOutput {
+			if !cfg.JSONOutput && !cfg.PlainOutput {
 				fmt.Print(colors.ShowCursor)
 			}
-			return
+			return ctx.Err()
 		case <-time.After(cfg.PollInterval):
 		}
 	}

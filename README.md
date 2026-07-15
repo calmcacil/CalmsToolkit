@@ -1,166 +1,48 @@
 # CalmsToolkit
 
-Various tools for managing media servers and related services.
+CalmsToolkit is one Linux-focused, SSH-friendly command for a personal media stack. It keeps the project’s compact Unicode cards, semantic colors, and Catppuccin themes while providing safe plain and machine output for scripts.
 
-## Tools
-
-### Media Requests (Interactive)
-
-An interactive CLI tool for managing media requests through Overseerr/Jellyseerr with an intuitive menu-driven interface.
-
-#### Features
-
-- Interactive Menu: Easy-to-navigate menu system with hotkeys
-- Search Media: Search TMDB database for movies and TV shows
-- Smart Season Selection: Request all seasons or specific ones for TV shows
-- Request Management: View, approve, and decline pending requests
-- Status Indicators: Visual feedback for available/requested/pending media
-- Root Folder Override: Select custom root folders when approving requests
-- Colored Output: ANSI colors for better readability
-- JSON Config: Configuration via ~/.config/calmstoolkit/config.json
-
-#### Quick Start
+## Install
 
 ```bash
-# Set up configuration
-make setup
-
-# Build the binary
 make build
-
-# Run interactive menu
-./bin/media-requests
+sudo make install
+calmstoolkit config setup
 ```
 
-#### Documentation
+`make build-all` produces static Linux amd64 and arm64 binaries. Configuration remains at `~/.config/calmstoolkit/config.json` with mode `0600`; override it with `--config` or `CALMSTOOLKIT_CONFIG`.
 
-- **[docs/user/README_MEDIA_REQUESTS.md](docs/user/README_MEDIA_REQUESTS.md)** - Complete documentation and usage guide
-- **[docs/research/OVERSEERR_API_RESEARCH.md](docs/research/OVERSEERR_API_RESEARCH.md)** - API endpoint reference
+## Commands
 
-### Media Streams Monitor
+```text
+calmstoolkit streams                 Plex/Jellyfin sessions
+calmstoolkit calendar                Sonarr/Radarr releases
+calmstoolkit requests                Interactive Overseerr/Jellyseerr requests
+calmstoolkit airtime <query>         Library airtime lookup
+calmstoolkit feed                    Sonarr/Radarr activity
+calmstoolkit anime <query>           AniList search with TVDB mapping
+calmstoolkit config setup|validate   Configuration management
+calmstoolkit doctor                  Local and service diagnostics
+calmstoolkit version                 Build information
+```
 
-Monitor active streams on both Plex and Jellyfin servers with detailed information about users, transcoding status, bandwidth, and quality. Supports session history tracking in watch mode.
+Run `calmstoolkit <command> --help` for feature flags. Global flags are `--config`, `--output`, `--theme`, `--no-color`, `--timeout`, `--debug`, `--quiet`, and `--strict`.
 
-#### Features
-
-- Multi-Server: Monitor both Plex and Jellyfin servers simultaneously or individually
-- Session History: Track recently ended sessions in watch mode (configurable duration)
-- Fast: ~10x faster than bash implementations
-- Color Output: ANSI colored terminal output with distinct styling for ended sessions
-- JSON Output: Machine-readable format for automation and monitoring
-- Watch Mode: Continuous real-time monitoring with auto-refresh and history tracking
-- Rich Details: Shows transcoding status, bandwidth, quality, codecs, duration, and more
-- Audio Support: Handles both video (movies/TV) and audio (music) streams
-
-#### Quick Start
+Output is `auto`, `terminal`, `plain`, `json`, or `ndjson`. Auto uses the rich terminal view only on a capable UTF-8 TTY and otherwise selects plain output. Watch commands require NDJSON rather than JSON for machine output. Diagnostics always go to stderr.
 
 ```bash
-# Run with both Plex and Jellyfin
-./bin/media-streams -server both
-
-# Plex only
-./bin/media-streams -server plex -plex-token "your-token"
-
-# Jellyfin only
-./bin/media-streams -server jellyfin -jellyfin-token "your-token"
-
-# Watch mode with session history
-./bin/media-streams -watch -interval 5 -history-duration 10m
-
-# JSON output for automation
-./bin/media-streams -json | jq '.total_streams'
+calmstoolkit streams --server plex
+calmstoolkit calendar --days 7 --filter missing
+calmstoolkit feed --watch --output ndjson | jq -c .data
+calmstoolkit anime "Frieren" --output json
 ```
 
-### Media Calendar
+See [migration](docs/user/MIGRATION_UNIFIED_CLI.md), [CLI behavior](docs/user/CLI_SPEC.md), and [architecture](docs/ARCHITECTURE.md).
 
-Display upcoming TV episodes and movie releases from Sonarr and Radarr in a concise calendar view.
-
-#### Features
-
-- Multi-Instance: Monitor multiple Sonarr and Radarr instances simultaneously
-- Calendar View: Horizontal and vertical layouts adapt to terminal width
-- Filters: Filter by availability, missing, premieres, or monitored status
-- Queue Warnings: Alerts for items needing manual intervention
-- Watch Mode: Continuous monitoring with auto-refresh
-- JSON Output: Machine-readable format for automation
-
-#### Quick Start
+## Development
 
 ```bash
-./bin/media-calendar -days 7
-./bin/media-calendar -days 7 -days-past 1 -filter missing
-./bin/media-calendar -watch -interval 300
-./bin/media-calendar -json
+make check   # format, tidy, vet, race tests, Linux builds
 ```
 
-### Media Airtime
-
-Look up next upcoming and last aired dates for any show or movie in your Sonarr/Radarr library with fuzzy matching and an interactive selection prompt.
-
-#### Features
-
-- Fuzzy Search: Find shows and movies with partial or approximate name matching
-- Interactive Selection: Pick from multiple matches with a numbered menu
-- Airtime Display: Shows next upcoming airtime or last aired episode with relative dates ("in 3 days", "yesterday")
-- Per-Season Detail: Current season detection with episode on-disk status
-- Multi-Instance: Searches across all configured Sonarr and Radarr instances
-- JSON Output: Machine-readable format for automation
-
-#### Quick Start
-
-```bash
-./bin/media-airtime "clarkson"
-./bin/media-airtime "clarkson's farm"
-./bin/media-airtime -type movie "inception 2010"
-./bin/media-airtime -exact "Clarkson's Farm"
-./bin/media-airtime -json "dune"
-```
-
-### ARR Feed
-
-Monitor Sonarr and Radarr history events (grabbed, imported, failed) in real-time.
-
-#### Features
-
-- Multi-Instance: Monitor multiple Sonarr and Radarr instances simultaneously
-- Event Filtering: Show/hide grabbed, imported, failed, deleted, and ignored events
-- Watch Mode: Continuous real-time monitoring
-- JSON Output: Machine-readable format for automation
-
-#### Quick Start
-
-```bash
-./bin/arr-feed
-./bin/arr-feed -watch
-./bin/arr-feed -show-grabbed -show-failed
-./bin/arr-feed -json
-```
-
-## Configuration
-
-All tools use a shared JSON configuration file at `~/.config/calmstoolkit/config.json`.
-
-Run `make setup` to generate your configuration interactively.
-
-## Building
-
-```bash
-# Current platform
-make build
-
-# All platforms (Linux, macOS, Windows, FreeBSD)
-make build-all
-
-# Install to /usr/local/bin
-make install
-```
-
-## Testing
-
-```bash
-make test
-```
-
-## License
-
-MIT License
+New commands must follow [Adding a Tool](docs/ADDING_A_TOOL.md). Never commit the configuration file, tokens, or logs containing credentials.

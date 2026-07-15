@@ -14,6 +14,11 @@ import (
 )
 
 func fetchAllHistory(ctx context.Context, client *httputil.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, error) {
+	events, _, err := fetchAllHistoryDetailed(ctx, client, cfg, since)
+	return events, err
+}
+
+func fetchAllHistoryDetailed(ctx context.Context, client *httputil.Client, cfg ToolConfig, since time.Time) ([]HistoryEvent, []string, error) {
 	var wg sync.WaitGroup
 	eventsChan := make(chan []HistoryEvent, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
 	errorsChan := make(chan error, len(cfg.SonarrInstances)+len(cfg.RadarrInstances))
@@ -49,7 +54,9 @@ func fetchAllHistory(ctx context.Context, client *httputil.Client, cfg ToolConfi
 	close(errorsChan)
 
 	var allEvents []HistoryEvent
+	successes := 0
 	for events := range eventsChan {
+		successes++
 		allEvents = append(allEvents, events...)
 	}
 
@@ -58,15 +65,19 @@ func fetchAllHistory(ctx context.Context, client *httputil.Client, cfg ToolConfi
 		errors = append(errors, err)
 	}
 
-	if len(allEvents) == 0 && len(errors) > 0 {
-		return nil, fmt.Errorf("all instances failed: %v", errors)
+	warnings := make([]string, len(errors))
+	for i, err := range errors {
+		warnings[i] = err.Error()
+	}
+	if successes == 0 && len(errors) > 0 {
+		return nil, warnings, fmt.Errorf("all instances failed: %v", errors)
 	}
 
 	sort.Slice(allEvents, func(i, j int) bool {
 		return allEvents[i].When.After(allEvents[j].When)
 	})
 
-	return allEvents, nil
+	return allEvents, warnings, nil
 }
 
 func fetchSonarrHistory(ctx context.Context, client *httputil.Client, inst config.ArrInstance, since time.Time, showSubtitles bool) ([]HistoryEvent, error) {

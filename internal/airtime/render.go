@@ -120,7 +120,7 @@ func interactiveSelect(ctx context.Context, candidates []scoredMatch, query stri
 				return nil
 			}
 			if line == "s" {
-				fmt.Fprintf(os.Stderr, "Start a new search with: media-airtime <new query>\n")
+				fmt.Fprintf(os.Stderr, "Start a new search with: calmstoolkit airtime <new query>\n")
 				return nil
 			}
 

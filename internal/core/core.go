@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -13,13 +14,21 @@ type CommonConfig struct {
 	NoColor      bool
 	Theme        string
 	JSONOutput   bool
+	PlainOutput  bool
 	Watch        bool
 	WatchSeconds int
 	Debug        bool
 	Quiet        bool
+	Strict       bool
 	Logger       *slog.Logger
 	Palette      *colors.Palette
 }
+
+// PartialError reports usable data accompanied by source failures.
+type PartialError struct{ Warnings []string }
+
+func (e *PartialError) Error() string       { return fmt.Sprintf("partial result: %v", e.Warnings) }
+func (e *PartialError) PartialResult() bool { return true }
 
 func FromToolkit(tk *config.ToolkitConfig) CommonConfig {
 	c := CommonConfig{}

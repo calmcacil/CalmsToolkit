@@ -3,7 +3,6 @@ package streams
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
+	"github.com/calmcacil/CalmsToolkit/internal/console"
 )
 
 func formatTimeSince(t time.Time) string {
@@ -42,7 +42,7 @@ func formatTimeSince(t time.Time) string {
 	return fmt.Sprintf("%d hours ago", hours)
 }
 
-func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error {
+func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int, partial bool, warnings []string) error {
 	summary := Summary{
 		TotalStreams:    len(streams),
 		PlexStreams:     plexCount,
@@ -64,9 +64,7 @@ func displayJSONOutput(streams []StreamInfo, plexCount, jellyfinCount int) error
 	summary.TranscodingCount = transcodeCount
 	summary.TotalBandwidth = totalBandwidth
 
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(summary)
+	return console.WriteEnvelope(os.Stdout, "streams", summary, partial, warnings, time.Now())
 }
 
 func renderProgressBar(pct float64, width int) string {
@@ -200,7 +198,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 	return nil
 }
 
-func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor bool, p *colors.Palette) error {
+func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *SessionHistory, plexCount, jellyfinCount int, noColor, plain bool, p *colors.Palette) error {
 	clr := colors.ClrFunc(noColor)
 
 	rawW := getTermWidth()
@@ -209,7 +207,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 	var buf bytes.Buffer
 	bw := bufio.NewWriter(&buf)
 
-	fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	if !plain {
+		fmt.Fprint(bw, colors.ClearScreen+colors.HomeCursor)
+	}
 
 	// Title
 	title := "Media Streams Monitor"
@@ -246,7 +246,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		fmt.Fprint(bw, clr(p.Reset))
 		fmt.Fprint(bw, "│\n")
 		boxStreamBottom(bw, termW)
-		fmt.Fprint(bw, colors.EraseDown)
+		if !plain {
+			fmt.Fprint(bw, colors.EraseDown)
+		}
 		bw.Flush()
 		os.Stdout.Write(buf.Bytes())
 		return nil
@@ -291,7 +293,9 @@ func displayTerminalOutputWithHistory(currentStreams []StreamInfo, history *Sess
 		boxStreamBottom(bw, termW)
 	}
 
-	fmt.Fprint(bw, colors.EraseDown)
+	if !plain {
+		fmt.Fprint(bw, colors.EraseDown)
+	}
 	bw.Flush()
 	os.Stdout.Write(buf.Bytes())
 	return nil

@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.0.0] — 2026-07-15
+
+### Changed
+- Consolidated the toolkit behind one Linux `calmstoolkit` Cobra command tree.
+- Added shared runtime injection, output modes, terminal capability detection, and versioned machine envelopes.
+- Added config path/environment precedence, aggregate validation, atomic `0600` saves, `doctor`, and `config validate`.
+- Hardened HTTP transport defaults, bounded bodies, safe replay/retry, `Retry-After`, and redacted typed errors.
+
+### Fixed
+- Made AniSearch TVDB season-one selection deterministic.
+- Preserved configured no-color and watch interval values unless flags are explicitly supplied.
+
 ## [6.0.0] — 2026-06-01
 
 Architecture refactor — no user-facing API changes.

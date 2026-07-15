@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/colors"
@@ -47,42 +45,45 @@ func BuildToolConfig(tk *config.ToolkitConfig) ToolConfig {
 }
 
 // Run executes the media streams monitor tool.
-func Run(cfg ToolConfig) {
+func Run(ctx context.Context, cfg ToolConfig) error {
 	p := colors.GetPalette(cfg.Theme)
 
 	if cfg.Watch {
-		fmt.Print(colors.HideCursor)
-		defer fmt.Print(colors.ShowCursor)
+		if !cfg.JSONOutput && !cfg.PlainOutput {
+			fmt.Print(colors.HideCursor)
+			defer fmt.Print(colors.ShowCursor)
+		}
 
 		history := &SessionHistory{
 			Records: make(map[string]*SessionRecord),
 		}
 
-		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		defer cancel()
-
-		fmt.Print(colors.ClearScreen + colors.HomeCursor)
+		if !cfg.JSONOutput && !cfg.PlainOutput {
+			fmt.Print(colors.ClearScreen + colors.HomeCursor)
+		}
 
 		var lastHash string
 
 		for {
 			if err := displayAllSessionsWithHistory(ctx, cfg, history, &lastHash, p); err != nil {
 				fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+				if cfg.Strict {
+					return err
+				}
 			}
 			select {
 			case <-ctx.Done():
 				fmt.Fprintln(os.Stderr, "\nShutting down.")
-				return
+				return ctx.Err()
 			case <-time.After(time.Duration(cfg.WatchSeconds) * time.Second):
 			}
 		}
 	}
 
-	ctx := context.Background()
 	if err := displayAllSessions(ctx, cfg, p); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
-		return
+		return err
 	}
+	return nil
 }
 
 func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history *SessionHistory, lastHash *string, p *colors.Palette) error {
@@ -117,18 +118,30 @@ func displayAllSessionsWithHistory(ctx context.Context, cfg ToolConfig, history 
 	if allFailed(cfg.ServerType, plexErr, jellyfinErr) {
 		return fmt.Errorf("all servers failed: plex: %v, jellyfin: %v", maybeError(plexErr), maybeError(jellyfinErr))
 	}
+	partial, warnings := partialFailures(plexErr, jellyfinErr)
 
-	if cfg.JSONOutput {
-		return displayJSONOutput(allStreams, plexCount, jellyfinCount)
-	}
-
-	newHash := computeStreamsHash(history)
+	newHash := computeStreamsHash(history) + strings.Join(warnings, "|")
 	if *lastHash == newHash {
 		return nil
 	}
 	*lastHash = newHash
+	if cfg.JSONOutput {
+		if err := displayJSONOutput(allStreams, plexCount, jellyfinCount, partial, warnings); err != nil {
+			return err
+		}
+		if partial && cfg.Strict {
+			return &core.PartialError{Warnings: warnings}
+		}
+		return nil
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", warning)
+	}
+	if partial && cfg.Strict {
+		return &core.PartialError{Warnings: warnings}
+	}
 
-	return displayTerminalOutputWithHistory(allStreams, history, plexCount, jellyfinCount, cfg.NoColor, p)
+	return displayTerminalOutputWithHistory(allStreams, history, plexCount, jellyfinCount, cfg.NoColor, cfg.PlainOutput, p)
 }
 
 func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) error {
@@ -161,12 +174,36 @@ func displayAllSessions(ctx context.Context, cfg ToolConfig, p *colors.Palette) 
 	if allFailed(cfg.ServerType, plexErr, jellyfinErr) {
 		return fmt.Errorf("all servers failed: plex: %v, jellyfin: %v", maybeError(plexErr), maybeError(jellyfinErr))
 	}
+	partial, warnings := partialFailures(plexErr, jellyfinErr)
 
 	if cfg.JSONOutput {
-		return displayJSONOutput(allStreams, plexCount, jellyfinCount)
+		if err := displayJSONOutput(allStreams, plexCount, jellyfinCount, partial, warnings); err != nil {
+			return err
+		}
+		if partial && cfg.Strict {
+			return &core.PartialError{Warnings: warnings}
+		}
+		return nil
+	}
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "WARNING: %s\n", warning)
+	}
+	if partial && cfg.Strict {
+		return &core.PartialError{Warnings: warnings}
 	}
 
 	return displayTerminalOutput(allStreams, plexCount, jellyfinCount, cfg.NoColor, p)
+}
+
+func partialFailures(plexErr, jellyfinErr error) (bool, []string) {
+	warnings := make([]string, 0, 2)
+	if plexErr != nil {
+		warnings = append(warnings, "Plex: "+plexErr.Error())
+	}
+	if jellyfinErr != nil {
+		warnings = append(warnings, "Jellyfin: "+jellyfinErr.Error())
+	}
+	return len(warnings) > 0, warnings
 }
 
 func allFailed(serverType string, plexErr, jellyfinErr error) bool {
