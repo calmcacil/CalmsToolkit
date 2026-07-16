@@ -2,15 +2,40 @@
 
 CalmsToolkit is one Linux-focused, SSH-friendly command for a personal media stack. It keeps the project’s compact Unicode cards, semantic colors, and Catppuccin themes while providing safe plain and machine output for scripts.
 
-## Install
+## Install from GitHub Releases
+
+CalmsToolkit publishes Linux binaries for `amd64` (most Intel/AMD systems) and
+`arm64`. This installs the latest release in `/usr/local/bin` and verifies it
+against the published checksum before installation:
 
 ```bash
-make build
-sudo make install
+(
+  set -eu
+  repo="https://github.com/calmcacil/CalmsToolkit"
+  version="$(curl -fsSL -o /dev/null -w '%{url_effective}' "$repo/releases/latest" | sed 's#.*/##')"
+  case "$(uname -m)" in
+    x86_64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  esac
+  archive="calmstoolkit_${version#v}_linux_${arch}.tar.gz"
+  workdir="$(mktemp -d)"
+  trap 'rm -rf "$workdir"' EXIT
+  curl -fL "$repo/releases/download/$version/$archive" -o "$workdir/$archive"
+  curl -fL "$repo/releases/download/$version/checksums.txt" -o "$workdir/checksums.txt"
+  (cd "$workdir" && sha256sum --ignore-missing --check checksums.txt)
+  tar -xzf "$workdir/$archive" -C "$workdir"
+  sudo install -m 0755 "$workdir/calmstoolkit" /usr/local/bin/calmstoolkit
+)
+
+calmstoolkit version
 calmstoolkit config setup
 ```
 
-`make build-all` produces static Linux amd64 and arm64 binaries. Configuration remains at `~/.config/calmstoolkit/config.json` with mode `0600`; override it with `--config` or `CALMSTOOLKIT_CONFIG`.
+You need `curl`, `tar`, and `sha256sum`. For manual downloads, upgrades,
+non-root installation, and removal, see the [installation guide](docs/user/INSTALLATION.md).
+Configuration is stored at `~/.config/calmstoolkit/config.json` with mode
+`0600`; override it with `--config` or `CALMSTOOLKIT_CONFIG`.
 
 ## Commands
 
@@ -37,9 +62,7 @@ calmstoolkit feed --watch --output ndjson | jq -c .data
 calmstoolkit anime "Frieren" --output json
 ```
 
-See [migration](docs/user/MIGRATION_UNIFIED_CLI.md), [CLI behavior](docs/user/CLI_SPEC.md), and [architecture](docs/ARCHITECTURE.md).
-
-Prebuilt Linux `amd64` and `arm64` archives are published on GitHub Releases. Public releases follow Semantic Versioning and are generated from Conventional Commit pull-request titles.
+See [migration](docs/user/MIGRATION_UNIFIED_CLI.md), [CLI behavior](docs/user/CLI_SPEC.md), and [architecture](docs/ARCHITECTURE.md). Public releases follow Semantic Versioning and are generated from Conventional Commit pull-request titles.
 
 ## Development
 

@@ -1,6 +1,8 @@
 # Unified CLI migration
 
 CalmsToolkit now installs only `calmstoolkit`. The JSON configuration remains compatible.
+Install or upgrade it from [GitHub Releases](INSTALLATION.md); replacing the
+binary does not overwrite the existing configuration file.
 
 | Previous command | New command |
 |---|---|

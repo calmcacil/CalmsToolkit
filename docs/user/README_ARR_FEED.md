@@ -1,5 +1,8 @@
 # Activity feed
 
+Install `calmstoolkit` using the [GitHub Releases installation guide](INSTALLATION.md)
+before following these examples.
+
 `calmstoolkit feed` combines Sonarr and Radarr history. It shows grabbed, imported, and failed events by default and can include deleted, ignored, or subtitle details.
 
 ```bash
