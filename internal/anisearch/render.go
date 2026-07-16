@@ -27,8 +27,8 @@ func innerWidth() int {
 	if w < 40 {
 		w = 40
 	}
-	if w > 100 {
-		w = 100
+	if w > 80 {
+		w = 80
 	}
 	return w - 2 // subtract box borders
 }
@@ -123,7 +123,7 @@ func formatSearchLine(num int, show Show, highlighted bool, mapping *AnibridgeMa
 		scoreLabel = fmt.Sprintf(" ·  %s%d%%%s", clr(p.Accent), *show.AverageRank, clr(p.Reset))
 	}
 
-	meta := fmt.Sprintf(" %s% s%s%s", clr(p.Subdued), fmtBadge, epLabel, scoreLabel)
+	meta := fmt.Sprintf(" %s%s %s%s", clr(p.Subdued), fmtBadge, epLabel, scoreLabel)
 
 	// Status indicator
 	statusLabel := ""

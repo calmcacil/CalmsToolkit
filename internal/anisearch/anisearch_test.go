@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/calmcacil/CalmsToolkit/internal/colors"
 	"github.com/calmcacil/CalmsToolkit/internal/config"
 	"github.com/calmcacil/CalmsToolkit/internal/core"
 	"github.com/klauspost/compress/zstd"
@@ -699,6 +700,34 @@ func TestTruncateVis(t *testing.T) {
 				t.Errorf("truncateVis(%q, %d) = %q, want %q", tt.s, tt.maxLen, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRenderSearchResultsLayout(t *testing.T) {
+	title := "Frieren: Beyond Journey’s End"
+	episodes := 28
+	score := 91
+	result := &SearchResult{
+		Media: []Show{{
+			Title:       Title{English: &title},
+			Format:      "TV",
+			Episodes:    &episodes,
+			AverageRank: &score,
+			Status:      "FINISHED",
+		}},
+		PageInfo: PageInfo{CurrentPage: 1, HasNextPage: true},
+	}
+
+	output := renderSearchResults("Frieren", result, -1, nil, ToolConfig{CommonConfig: core.CommonConfig{NoColor: true}})
+	if !strings.Contains(output, "[TV] 28 eps ·  91% [Finished]") {
+		t.Fatalf("search result metadata is not spaced correctly:\n%s", output)
+	}
+
+	const wantWidth = 80
+	for i, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
+		if got := colors.VisibleLen(line); got != wantWidth {
+			t.Errorf("line %d width = %d, want %d: %q", i+1, got, wantWidth, line)
+		}
 	}
 }
 
