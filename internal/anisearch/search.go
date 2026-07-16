@@ -3,7 +3,9 @@ package anisearch
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/calmcacil/CalmsToolkit/internal/config"
@@ -132,11 +134,11 @@ func runInteractive(ctx context.Context, client *AniListClient, query string, cu
 	selected := 0
 	currentPage := 1
 
-	runInRawTerminal(func() {
+	runInRawTerminal(func(raw bool) {
 		for {
 			// Render search results.
 			output := renderSearchResults(query, currentResult, selected, mapping, cfg)
-			fmt.Fprint(os.Stdout, "\033[H\033[J"+output)
+			writeTerminalFrame(os.Stdout, output, raw)
 
 			// Read key.
 			key := readKey()
@@ -152,7 +154,7 @@ func runInteractive(ctx context.Context, client *AniListClient, query string, cu
 				}
 			case KeyEnter:
 				if selected >= 0 && selected < len(currentResult.Media) {
-					runDetailView(currentResult.Media[selected], mapping, cfg)
+					runDetailView(currentResult.Media[selected], mapping, cfg, raw)
 				}
 			case KeyNext:
 				if currentResult.PageInfo.HasNextPage {
@@ -186,14 +188,14 @@ func runInteractive(ctx context.Context, client *AniListClient, query string, cu
 }
 
 // runDetailView shows the detail for a single show until the user presses B or Q.
-func runDetailView(show Show, mapping *AnibridgeMapping, cfg ToolConfig) {
+func runDetailView(show Show, mapping *AnibridgeMapping, cfg ToolConfig, raw bool) {
 	tvdbID := 0
 	if mapping != nil {
 		tvdbID, _ = mapping.LookupByAniList(show.ID)
 	}
 
 	output := renderDetail(show, tvdbID, cfg)
-	fmt.Fprint(os.Stdout, "\033[H\033[J"+output)
+	writeTerminalFrame(os.Stdout, output, raw)
 
 	for {
 		key := readKey()
@@ -206,4 +208,11 @@ func runDetailView(show Show, mapping *AnibridgeMapping, cfg ToolConfig) {
 			return
 		}
 	}
+}
+
+func writeTerminalFrame(w io.Writer, frame string, raw bool) {
+	if raw {
+		frame = strings.ReplaceAll(frame, "\n", "\r\n")
+	}
+	fmt.Fprint(w, "\033[H\033[J"+frame)
 }

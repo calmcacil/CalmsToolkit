@@ -73,24 +73,24 @@ func readKey() KeyEvent {
 
 // runInRawTerminal executes f while stdin is in raw terminal mode.
 // It restores the terminal state before returning.
-func runInRawTerminal(f func()) {
+func runInRawTerminal(f func(raw bool)) {
 	fd := int(os.Stdin.Fd())
 
 	if !term.IsTerminal(fd) {
 		// Not a terminal; just run f directly.
-		f()
+		f(false)
 		return
 	}
 
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
 		// Cannot set raw mode; run f directly anyway.
-		f()
+		f(false)
 		return
 	}
 	defer term.Restore(fd, oldState) //nolint:errcheck
 
-	f()
+	f(true)
 }
 
 // PromptForQuery reads a search query from stdin.

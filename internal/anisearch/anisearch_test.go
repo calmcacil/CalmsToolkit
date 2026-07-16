@@ -731,6 +731,26 @@ func TestRenderSearchResultsLayout(t *testing.T) {
 	}
 }
 
+func TestWriteTerminalFrameUsesCRLFInRawMode(t *testing.T) {
+	var output bytes.Buffer
+	writeTerminalFrame(&output, "first\nsecond\n", true)
+
+	want := "\033[H\033[Jfirst\r\nsecond\r\n"
+	if got := output.String(); got != want {
+		t.Fatalf("writeTerminalFrame() = %q, want %q", got, want)
+	}
+}
+
+func TestWriteTerminalFramePreservesNewlinesOutsideRawMode(t *testing.T) {
+	var output bytes.Buffer
+	writeTerminalFrame(&output, "first\nsecond\n", false)
+
+	want := "\033[H\033[Jfirst\nsecond\n"
+	if got := output.String(); got != want {
+		t.Fatalf("writeTerminalFrame() = %q, want %q", got, want)
+	}
+}
+
 func TestFormatEpisodes(t *testing.T) {
 	tests := []struct {
 		name string
