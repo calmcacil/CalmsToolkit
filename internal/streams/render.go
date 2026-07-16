@@ -170,7 +170,7 @@ func displayTerminalOutput(streams []StreamInfo, plexCount, jellyfinCount int, n
 
 	// Empty state
 	if len(streams) == 0 {
-		boxStreamBottom(bw, termW)
+		boxStreamSep(bw, termW)
 		fmt.Fprint(bw, "│")
 		fmt.Fprint(bw, clr(p.Success))
 		fmt.Fprint(bw, colors.PadRight(" No active streams ", boxW))
