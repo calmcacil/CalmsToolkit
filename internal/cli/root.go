@@ -2,7 +2,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,11 +36,16 @@ type globalOptions struct {
 func NewRootCommand(rt *app.Runtime) *cobra.Command {
 	var global globalOptions
 	root := &cobra.Command{
-		Use:               "calmstoolkit",
-		Short:             "A unified SSH-friendly media toolkit",
-		SilenceErrors:     true,
-		SilenceUsage:      true,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error { return configureRuntime(cmd, rt, global) },
+		Use:           "calmstoolkit",
+		Short:         "A unified SSH-friendly media toolkit",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if cmd.Name() == "completion" || strings.HasPrefix(cmd.Name(), "__complete") {
+				return nil
+			}
+			return configureRuntime(cmd, rt, global)
+		},
 	}
 	root.SetIn(rt.Stdin)
 	root.SetOut(rt.Stdout)
@@ -56,7 +59,9 @@ func NewRootCommand(rt *app.Runtime) *cobra.Command {
 	f.BoolVar(&global.debug, "debug", false, "enable redacted diagnostics")
 	f.BoolVar(&global.quiet, "quiet", false, "suppress informational diagnostics")
 	f.BoolVar(&global.strict, "strict", false, "fail with status 3 on partial results")
-	root.AddCommand(newStreamsCommand(rt), newCalendarCommand(rt), newRequestsCommand(rt), newAirtimeCommand(rt), newFeedCommand(rt), newAnimeCommand(rt), newConfigCommand(rt), newDoctorCommand(rt), newVersionCommand(rt))
+	_ = root.RegisterFlagCompletionFunc("output", fixedCompletions("auto", "terminal", "plain", "json", "ndjson"))
+	_ = root.RegisterFlagCompletionFunc("theme", fixedCompletions("default", "catppuccin-mocha", "catppuccin-latte"))
+	root.AddCommand(newStreamsCommand(rt), newCalendarCommand(rt), newRequestsCommand(rt), newAirtimeCommand(rt), newFeedCommand(rt), newAnimeCommand(rt), newConfigCommand(rt), newCompletionCommand(), newDoctorCommand(rt), newVersionCommand(rt))
 	return root
 }
 
@@ -204,6 +209,7 @@ func newStreamsCommand(rt *app.Runtime) *cobra.Command {
 	f.BoolVar(&watch, "watch", false, "continuously monitor")
 	f.IntVar(&interval, "interval", 0, "watch interval in seconds")
 	f.DurationVar(&history, "history-duration", 0, "session history duration")
+	_ = cmd.RegisterFlagCompletionFunc("server", fixedCompletions("plex", "jellyfin", "both"))
 	return cmd
 }
 
@@ -322,6 +328,7 @@ func newAirtimeCommand(rt *app.Runtime) *cobra.Command {
 	f.IntVar(&future, "future", 0, "future days")
 	f.BoolVar(&noBanner, "no-banner", false, "suppress banner")
 	f.BoolVar(&full, "full-season", false, "show full season")
+	_ = cmd.RegisterFlagCompletionFunc("type", fixedCompletions("auto", "series", "movie"))
 	return cmd
 }
 
@@ -419,17 +426,30 @@ func newConfigCommand(rt *app.Runtime) *cobra.Command {
 		return nil
 	}}
 	var force, defaults bool
-	setup := &cobra.Command{Use: "setup", Args: cobra.NoArgs, Short: "Create a secure default configuration", RunE: func(*cobra.Command, []string) error {
+	setup := &cobra.Command{Use: "setup", Args: cobra.NoArgs, Short: "Interactively configure every CalmsToolkit feature", Long: "Guide the user through general settings, services, feature defaults, and paths, then securely save the complete configuration.", RunE: func(*cobra.Command, []string) error {
+		if rt.Output == console.OutputJSON || rt.Output == console.OutputNDJSON {
+			return app.Error(app.ExitUsage, errors.New("config setup is interactive and does not support JSON or NDJSON output"))
+		}
 		_, statErr := os.Stat(rt.ConfigPath)
 		if statErr == nil && defaults && !force {
 			return app.Error(app.ExitUsage, fmt.Errorf("configuration already exists at %s (use --force to replace)", rt.ConfigPath))
 		}
-		cfg := rt.Config
+		var cfg *config.ToolkitConfig
 		if force || statErr != nil {
 			cfg = config.DefaultToolkitConfig()
+		} else {
+			var err error
+			cfg, err = config.LoadPersistedToolkitConfigAt(rt.ConfigPath)
+			if err != nil {
+				return err
+			}
 		}
 		if !defaults {
 			if err := promptSetup(rt, cfg); err != nil {
+				if errors.Is(err, errSetupCancelled) {
+					fmt.Fprintln(rt.Stderr, "Setup cancelled; no changes were saved.")
+					return nil
+				}
 				return app.Error(app.ExitUsage, err)
 			}
 		}
@@ -439,80 +459,13 @@ func newConfigCommand(rt *app.Runtime) *cobra.Command {
 		if err := cfg.SaveAt(rt.ConfigPath); err != nil {
 			return err
 		}
-		fmt.Fprintf(rt.Stdout, "Created %s with mode 0600. Add service credentials, then run 'calmstoolkit config validate'.\n", rt.ConfigPath)
+		fmt.Fprintf(rt.Stdout, "Saved configuration to %s with mode 0600. Run 'calmstoolkit config validate' or 'calmstoolkit doctor' to verify it.\n", rt.ConfigPath)
 		return nil
 	}}
 	setup.Flags().BoolVar(&force, "force", false, "replace existing configuration")
-	setup.Flags().BoolVar(&defaults, "defaults", false, "write defaults without prompting")
+	setup.Flags().BoolVar(&defaults, "defaults", false, "write all defaults without prompting")
 	parent.AddCommand(setup, validate)
 	return parent
-}
-
-func promptSetup(rt *app.Runtime, cfg *config.ToolkitConfig) error {
-	scanner := bufio.NewScanner(rt.Stdin)
-	prompt := func(label, current string) (string, error) {
-		if current == "" {
-			fmt.Fprintf(rt.Stdout, "%s: ", label)
-		} else {
-			display := current
-			lower := strings.ToLower(label)
-			if strings.Contains(lower, "token") || strings.Contains(lower, "key") {
-				display = "configured"
-			}
-			fmt.Fprintf(rt.Stdout, "%s [%s]: ", label, display)
-		}
-		if !scanner.Scan() {
-			if err := scanner.Err(); err != nil {
-				return "", err
-			}
-			return "", fmt.Errorf("input ended while reading %s", label)
-		}
-		value := strings.TrimSpace(scanner.Text())
-		if value == "" {
-			return current, nil
-		}
-		return value, nil
-	}
-	var err error
-	if cfg.General.Timeout, err = prompt("HTTP timeout", cfg.General.Timeout); err != nil {
-		return err
-	}
-	if cfg.General.Theme, err = prompt("Theme", cfg.General.Theme); err != nil {
-		return err
-	}
-	if cfg.MediaStreams.PlexURL, err = prompt("Plex URL", cfg.MediaStreams.PlexURL); err != nil {
-		return err
-	}
-	if cfg.MediaStreams.PlexToken, err = prompt("Plex token", cfg.MediaStreams.PlexToken); err != nil {
-		return err
-	}
-	if cfg.MediaStreams.JellyfinURL, err = prompt("Jellyfin URL", cfg.MediaStreams.JellyfinURL); err != nil {
-		return err
-	}
-	if cfg.MediaStreams.JellyfinToken, err = prompt("Jellyfin token", cfg.MediaStreams.JellyfinToken); err != nil {
-		return err
-	}
-	if cfg.MediaRequests.OverseerrURL, err = prompt("Overseerr/Jellyseerr URL", cfg.MediaRequests.OverseerrURL); err != nil {
-		return err
-	}
-	if cfg.MediaRequests.APIKey, err = prompt("Requests API key", cfg.MediaRequests.APIKey); err != nil {
-		return err
-	}
-	if cfg.AniSearch.MappingURL, err = prompt("AniSearch mapping URL", cfg.AniSearch.MappingURL); err != nil {
-		return err
-	}
-	if cfg.AniSearch.MappingPath, err = prompt("AniSearch mapping cache path", cfg.AniSearch.MappingPath); err != nil {
-		return err
-	}
-	limit, err := prompt("AniSearch result limit", strconv.Itoa(cfg.AniSearch.Limit))
-	if err != nil {
-		return err
-	}
-	cfg.AniSearch.Limit, err = strconv.Atoi(limit)
-	if err != nil {
-		return fmt.Errorf("AniSearch result limit: %w", err)
-	}
-	return nil
 }
 
 type doctorCheck struct {

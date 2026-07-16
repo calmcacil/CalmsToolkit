@@ -60,6 +60,31 @@ func TestApplyEnvironmentPrecedence(t *testing.T) {
 	}
 }
 
+func TestLoadPersistedToolkitConfigDoesNotApplyEnvironment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := DefaultToolkitConfig()
+	cfg.MediaStreams.PlexToken = "file"
+	if err := cfg.SaveAt(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CALMSTOOLKIT_PLEX_TOKEN", "environment")
+
+	persisted, err := LoadPersistedToolkitConfigAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.MediaStreams.PlexToken != "file" {
+		t.Fatalf("persisted token=%q", persisted.MediaStreams.PlexToken)
+	}
+	loaded, err := LoadToolkitConfigAt(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.MediaStreams.PlexToken != "environment" {
+		t.Fatalf("runtime token=%q", loaded.MediaStreams.PlexToken)
+	}
+}
+
 func TestConfigSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	origHome := os.Getenv("HOME")
@@ -213,6 +238,30 @@ func TestConfigValidate(t *testing.T) {
 			}
 			if !tt.wantErr && err != nil {
 				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateAllScalarConstraints(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*ToolkitConfig)
+		want   string
+	}{
+		{"theme", func(c *ToolkitConfig) { c.General.Theme = "unknown" }, "general.theme"},
+		{"past calendar days", func(c *ToolkitConfig) { c.MediaCalendar.DaysPast = -1 }, "days_past"},
+		{"mapping URL", func(c *ToolkitConfig) { c.AniSearch.MappingURL = "invalid" }, "mapping_url"},
+		{"stream history duration", func(c *ToolkitConfig) { c.MediaStreams.HistoryDuration = "0s" }, "history_duration"},
+		{"feed polling duration", func(c *ToolkitConfig) { c.ArrFeed.PollInterval = "-1s" }, "poll_interval"},
+		{"feed history duration", func(c *ToolkitConfig) { c.ArrFeed.HistoryWindow = "0s" }, "history_window"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultToolkitConfig()
+			tt.change(cfg)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.want)
 			}
 		})
 	}

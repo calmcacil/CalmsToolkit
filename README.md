@@ -36,6 +36,12 @@ You need `curl`, `tar`, and `sha256sum`. For manual downloads, upgrades,
 non-root installation, and removal, see the [installation guide](docs/user/INSTALLATION.md).
 Configuration is stored at `~/.config/calmstoolkit/config.json` with mode
 `0600`; override it with `--config` or `CALMSTOOLKIT_CONFIG`.
+`calmstoolkit config setup` is both a first-run wizard and a configuration
+editor. Choose a numbered section to update one feature, `A` to walk through
+every section, or `S` to validate and save. Existing values are retained when
+you press Enter, optional values can be cleared with `-`, and credentials are
+never displayed. Sonarr and Radarr screens support adding, editing, and removing
+multiple instances.
 For Sonarr and Radarr instances, `url` is the address CalmsToolkit uses for API
 requests. Set the optional `external_url` when browser links must use a different
 address, such as when the API URL contains a container-only hostname.
@@ -50,11 +56,29 @@ calmstoolkit airtime <query>         Library airtime lookup
 calmstoolkit feed                    Sonarr/Radarr activity
 calmstoolkit anime <query>           AniList search with TVDB mapping
 calmstoolkit config setup|validate   Configuration management
+calmstoolkit completion <shell>      Generate shell completions
 calmstoolkit doctor                  Local and service diagnostics
 calmstoolkit version                 Build information
 ```
 
 Run `calmstoolkit <command> --help` for feature flags. Global flags are `--config`, `--output`, `--theme`, `--no-color`, `--timeout`, `--debug`, `--quiet`, and `--strict`.
+
+## Shell completions
+
+Completion scripts include commands, subcommands, local and persistent flags,
+and known values for flags such as `--output`, `--theme`, `--server`, and
+`--type`. Generate a script for bash, zsh, or fish:
+
+```bash
+# Bash (user installation; create the directory if needed)
+calmstoolkit completion bash > ~/.local/share/bash-completion/completions/calmstoolkit
+
+# Zsh (the target directory must be in fpath)
+calmstoolkit completion zsh > "${fpath[1]}/_calmstoolkit"
+
+# Fish
+calmstoolkit completion fish > ~/.config/fish/completions/calmstoolkit.fish
+```
 
 Output is `auto`, `terminal`, `plain`, `json`, or `ndjson`. Auto uses the rich terminal view only on a capable UTF-8 TTY and otherwise selects plain output. Watch commands require NDJSON rather than JSON for machine output. Diagnostics always go to stderr.
 
