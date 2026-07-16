@@ -65,7 +65,47 @@ calmstoolkit doctor
 
 The configuration is written to `~/.config/calmstoolkit/config.json` with
 permissions `0600`. Use `--config` or `CALMSTOOLKIT_CONFIG` to select a different
-file.
+file. Setup opens a section menu: select one feature to edit, choose `A` for the
+complete guided onboarding flow, `S` to validate and save, or `Q` to leave the
+file unchanged. Enter accepts the displayed value and `-` clears an optional
+value. Existing credentials are shown only as `configured`.
+
+## Shell completions
+
+The generated scripts cover commands, subcommands, flags, persistent flags, and
+known option values. Create the destination directory first if it does not
+already exist.
+
+### Bash
+
+For a user-local installation of `bash-completion`:
+
+```bash
+mkdir -p ~/.local/share/bash-completion/completions
+calmstoolkit completion bash > ~/.local/share/bash-completion/completions/calmstoolkit
+```
+
+Start a new shell after installation. Distribution-wide completion directories
+vary; `/usr/share/bash-completion/completions/` is common.
+
+### Zsh
+
+Write the script to a directory already present in `fpath`, then start a new
+shell (or run `compinit`):
+
+```zsh
+calmstoolkit completion zsh > "${fpath[1]}/_calmstoolkit"
+autoload -U compinit && compinit
+```
+
+### Fish
+
+```bash
+mkdir -p ~/.config/fish/completions
+calmstoolkit completion fish > ~/.config/fish/completions/calmstoolkit.fish
+```
+
+Fish discovers the file automatically in new and current sessions.
 
 ## Upgrade
 

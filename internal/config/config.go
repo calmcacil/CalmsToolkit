@@ -161,7 +161,7 @@ func ResolvePath(explicit string) string {
 // DefaultToolkitConfig returns a ToolkitConfig with sensible defaults.
 func DefaultToolkitConfig() *ToolkitConfig {
 	return &ToolkitConfig{
-		Version: 1,
+		Version: CurrentVersion,
 		General: GeneralConfig{
 			Timeout: "10s",
 			NoColor: false,
@@ -220,6 +220,18 @@ func LoadToolkitConfig() (*ToolkitConfig, error) {
 // LoadToolkitConfigAt loads a configuration file. An empty path uses
 // CALMSTOOLKIT_CONFIG or the standard user path.
 func LoadToolkitConfigAt(explicitPath string) (*ToolkitConfig, error) {
+	cfg, err := LoadPersistedToolkitConfigAt(explicitPath)
+	if err != nil {
+		return nil, err
+	}
+	ApplyEnvironment(cfg)
+	return cfg, nil
+}
+
+// LoadPersistedToolkitConfigAt loads only values stored in a configuration
+// file, without applying environment overrides. Setup uses it to avoid writing
+// environment-only credentials back to disk.
+func LoadPersistedToolkitConfigAt(explicitPath string) (*ToolkitConfig, error) {
 	path := ResolvePath(explicitPath)
 	if path == "" {
 		return nil, fmt.Errorf("cannot determine home directory")
@@ -228,7 +240,7 @@ func LoadToolkitConfigAt(explicitPath string) (*ToolkitConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("config not found at %s (run 'make setup')", path)
+			return nil, fmt.Errorf("config not found at %s (run 'calmstoolkit config setup')", path)
 		}
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
@@ -251,7 +263,6 @@ func LoadToolkitConfigAt(explicitPath string) (*ToolkitConfig, error) {
 		cfg.Radarr[i].ExternalURL = strings.TrimSuffix(cfg.Radarr[i].ExternalURL, "/")
 	}
 
-	ApplyEnvironment(cfg)
 	return cfg, nil
 }
 
@@ -295,7 +306,7 @@ func firstEnvironment(primary, legacy, fallback string) string {
 func (c *ToolkitConfig) Validate() error {
 	var problems []error
 	add := func(format string, args ...any) { problems = append(problems, fmt.Errorf(format, args...)) }
-	if c.Version < 1 {
+	if c.Version != CurrentVersion {
 		add("unsupported version: %d", c.Version)
 	}
 
@@ -349,19 +360,22 @@ func (c *ToolkitConfig) Validate() error {
 	if d, err := time.ParseDuration(c.General.Timeout); err != nil || d <= 0 {
 		add("general.timeout: invalid positive duration %q", c.General.Timeout)
 	}
+	if c.General.Theme != "default" && c.General.Theme != "catppuccin-mocha" && c.General.Theme != "catppuccin-latte" {
+		add("general.theme: unknown theme %q", c.General.Theme)
+	}
 	if dt := c.MediaStreams.HistoryDuration; dt != "" {
-		if _, err := time.ParseDuration(dt); err != nil {
-			add("media_streams.history_duration: invalid duration %q", dt)
+		if d, err := time.ParseDuration(dt); err != nil || d <= 0 {
+			add("media_streams.history_duration: invalid positive duration %q", dt)
 		}
 	}
 	if dt := c.ArrFeed.PollInterval; dt != "" {
-		if _, err := time.ParseDuration(dt); err != nil {
-			add("arr_feed.poll_interval: invalid duration %q", dt)
+		if d, err := time.ParseDuration(dt); err != nil || d <= 0 {
+			add("arr_feed.poll_interval: invalid positive duration %q", dt)
 		}
 	}
 	if dt := c.ArrFeed.HistoryWindow; dt != "" {
-		if _, err := time.ParseDuration(dt); err != nil {
-			add("arr_feed.history_window: invalid duration %q", dt)
+		if d, err := time.ParseDuration(dt); err != nil || d <= 0 {
+			add("arr_feed.history_window: invalid positive duration %q", dt)
 		}
 	}
 
@@ -370,6 +384,9 @@ func (c *ToolkitConfig) Validate() error {
 	}
 	if c.MediaCalendar.Days < 0 {
 		add("media_calendar.days: must be >= 0")
+	}
+	if c.MediaCalendar.DaysPast < 0 {
+		add("media_calendar.days_past: must be >= 0")
 	}
 	if c.MediaCalendar.WatchInterval < 1 {
 		add("media_calendar.watch_interval: must be >= 1")
@@ -398,6 +415,9 @@ func (c *ToolkitConfig) Validate() error {
 	}
 	if c.MediaRequests.OverseerrURL != "" && !validHTTPURL(c.MediaRequests.OverseerrURL) {
 		add("media_requests.overseerr_url: invalid url %q", c.MediaRequests.OverseerrURL)
+	}
+	if !validHTTPURL(c.AniSearch.MappingURL) {
+		add("anisearch.mapping_url: invalid url %q", c.AniSearch.MappingURL)
 	}
 
 	serverType := c.MediaStreams.ServerType
