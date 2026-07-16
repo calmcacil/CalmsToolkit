@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/calmcacil/CalmsToolkit/compare/v1.0.1...v1.1.0) (2026-07-16)
+
+
+### Features
+
+* **calendar:** add external service URLs ([7522889](https://github.com/calmcacil/CalmsToolkit/commit/7522889699668e7be7dab4a49db706cc06f1c313))
+
 ## [1.0.1](https://github.com/calmcacil/CalmsToolkit/compare/v1.0.0...v1.0.1) (2026-07-16)
 
 
