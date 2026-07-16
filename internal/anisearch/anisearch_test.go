@@ -751,6 +751,30 @@ func TestWriteTerminalFramePreservesNewlinesOutsideRawMode(t *testing.T) {
 	}
 }
 
+func TestRenderDetailContainsLongFields(t *testing.T) {
+	long := strings.Repeat("very-long-value-", 20)
+	show := Show{
+		Title:       Title{English: &long, Native: &long},
+		Format:      long,
+		Status:      long,
+		Season:      long,
+		Genres:      []string{long},
+		Tags:        []Tag{{Name: long}},
+		Description: long,
+		Studios:     &Studios{Nodes: []StudioNode{{Name: long}}},
+	}
+
+	const wantWidth = 80
+	for _, noColor := range []bool{true, false} {
+		output := renderDetail(show, 424536, ToolConfig{CommonConfig: core.CommonConfig{NoColor: noColor}})
+		for i, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
+			if got := colors.VisibleLen(line); got != wantWidth {
+				t.Errorf("NoColor=%t line %d width = %d, want %d: %q", noColor, i+1, got, wantWidth, line)
+			}
+		}
+	}
+}
+
 func TestFormatEpisodes(t *testing.T) {
 	tests := []struct {
 		name string

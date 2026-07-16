@@ -172,6 +172,7 @@ func renderDetail(show Show, tvdbID int, cfg ToolConfig) string {
 
 	// Top border + title
 	title := " " + show.Title.DisplayTitle() + " "
+	title = truncateVis(title, iW)
 	topLine := "┌" + title + strings.Repeat("─", iW-colors.VisibleLen(title)) + "┐\n"
 	bw.WriteString(topLine)
 
@@ -179,7 +180,8 @@ func renderDetail(show Show, tvdbID int, cfg ToolConfig) string {
 	if show.Title.Native != nil && *show.Title.Native != "" &&
 		(show.Title.Romaji == nil || *show.Title.Romaji != *show.Title.Native) &&
 		(show.Title.English == nil || *show.Title.English != *show.Title.Native) {
-		nativeLine := " " + clr(p.Subdued) + *show.Title.Native + clr(p.Reset)
+		nativeTitle := truncateVis(*show.Title.Native, iW-1)
+		nativeLine := " " + clr(p.Subdued) + nativeTitle + clr(p.Reset)
 		nativeLine = colors.PadRight(nativeLine, iW)
 		bw.WriteString("│" + nativeLine + "│\n")
 	}
@@ -203,28 +205,22 @@ func renderDetail(show Show, tvdbID int, cfg ToolConfig) string {
 		left := infoRows[row*2]
 		right := infoRows[row*2+1]
 
-		leftStr := fmt.Sprintf(" %s%s:%s %s", clr(p.Bold), left[0], clr(p.Reset), left[1])
-		rightStr := fmt.Sprintf("%s%s:%s %s", clr(p.Bold), right[0], clr(p.Reset), right[1])
-
-		// Layout: leftStr | padding | rightStr, totaling iW
-		leftVis := colors.VisibleLen(leftStr)
 		colWidth := iW / 2
-		if leftVis > colWidth {
-			leftStr = truncateVis(leftStr, colWidth)
-			leftVis = colors.VisibleLen(leftStr)
-		}
-		padding := iW - leftVis - colors.VisibleLen(rightStr) - 1 // -1 for space
-		if padding < 1 {
-			padding = 1
-		}
-		line := leftStr + strings.Repeat(" ", padding) + rightStr
-		line = colors.PadRight(line, iW)
+		rightWidth := iW - colWidth
+		leftPrefix := fmt.Sprintf(" %s%s:%s ", clr(p.Bold), left[0], clr(p.Reset))
+		rightPrefix := fmt.Sprintf("%s%s:%s ", clr(p.Bold), right[0], clr(p.Reset))
+		leftValue := truncateVis(left[1], colWidth-colors.VisibleLen(leftPrefix))
+		rightValue := truncateVis(right[1], rightWidth-colors.VisibleLen(rightPrefix))
+		leftStr := colors.PadRight(leftPrefix+leftValue, colWidth)
+		rightStr := colors.PadRight(rightPrefix+rightValue, rightWidth)
+		line := leftStr + rightStr
 		bw.WriteString("│" + line + "│\n")
 	}
 
 	// Genres
 	if len(show.Genres) > 0 {
-		genreLine := " " + clr(p.Subdued) + strings.Join(show.Genres, ", ") + clr(p.Reset)
+		genres := truncateVis(strings.Join(show.Genres, ", "), iW-1)
+		genreLine := " " + clr(p.Subdued) + genres + clr(p.Reset)
 		genreLine = colors.PadRight(genreLine, iW)
 		bw.WriteString("│" + genreLine + "│\n")
 	}
@@ -239,7 +235,8 @@ func renderDetail(show Show, tvdbID int, cfg ToolConfig) string {
 			}
 		}
 		if len(tagNames) > 0 {
-			tagLine := " " + clr(p.Subdued) + "Tags: " + strings.Join(tagNames, ", ") + clr(p.Reset)
+			tags := truncateVis("Tags: "+strings.Join(tagNames, ", "), iW-1)
+			tagLine := " " + clr(p.Subdued) + tags + clr(p.Reset)
 			tagLine = colors.PadRight(tagLine, iW)
 			bw.WriteString("│" + tagLine + "│\n")
 		}
@@ -261,6 +258,7 @@ func renderDetail(show Show, tvdbID int, cfg ToolConfig) string {
 			lines = append(lines, clr(p.Subdued)+"... (truncated)"+clr(p.Reset))
 		}
 		for _, line := range lines {
+			line = truncateVis(line, iW-2)
 			line = " " + line
 			line = colors.PadRight(line, iW)
 			bw.WriteString("│" + line + "│\n")
