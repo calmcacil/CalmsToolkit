@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/calmcacil/CalmsToolkit/compare/v1.2.0...v1.2.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* **anime:** repair search result layout ([#49](https://github.com/calmcacil/CalmsToolkit/issues/49)) ([ba2a712](https://github.com/calmcacil/CalmsToolkit/commit/ba2a712cf184e3ea0cc51bc871ad3af6a2c1bcc2))
+
 ## [1.2.0](https://github.com/calmcacil/CalmsToolkit/compare/v1.1.0...v1.2.0) (2026-07-16)
 
 
