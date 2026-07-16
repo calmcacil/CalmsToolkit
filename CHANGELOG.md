@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/calmcacil/CalmsToolkit/compare/v1.2.2...v1.2.3) (2026-07-16)
+
+
+### Bug Fixes
+
+* **anime:** contain long detail fields ([#53](https://github.com/calmcacil/CalmsToolkit/issues/53)) ([a7c13c1](https://github.com/calmcacil/CalmsToolkit/commit/a7c13c150384b85c28f70aa210344dea1b0bfa03))
+
 ## [1.2.2](https://github.com/calmcacil/CalmsToolkit/compare/v1.2.1...v1.2.2) (2026-07-16)
 
 
