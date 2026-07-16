@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/calmcacil/CalmsToolkit/compare/v1.0.0...v1.0.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* **streams:** repair empty-state box border ([326794d](https://github.com/calmcacil/CalmsToolkit/commit/326794d3c55f471f74fab937dfa07fc4198fe567))
+
 ## 1.0.0 (2026-07-15)
 
 
