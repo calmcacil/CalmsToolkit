@@ -68,7 +68,7 @@ func TestConfigSaveLoadRoundTrip(t *testing.T) {
 
 	cfg := DefaultToolkitConfig()
 	cfg.Sonarr = []ArrInstance{
-		{Name: "Sonarr HD", URL: "http://sonarr:8989", APIKey: "abc123"},
+		{Name: "Sonarr HD", URL: "http://sonarr:8989", ExternalURL: "https://sonarr.example.com", APIKey: "abc123"},
 	}
 	cfg.Radarr = []ArrInstance{
 		{Name: "Radarr HD", URL: "http://radarr:7878", APIKey: "xyz789"},
@@ -96,6 +96,9 @@ func TestConfigSaveLoadRoundTrip(t *testing.T) {
 	}
 	if loaded.Sonarr[0].URL != "http://sonarr:8989" {
 		t.Errorf("Sonarr[0].URL = %q, want %q", loaded.Sonarr[0].URL, "http://sonarr:8989")
+	}
+	if loaded.Sonarr[0].ExternalURL != "https://sonarr.example.com" {
+		t.Errorf("Sonarr[0].ExternalURL = %q, want %q", loaded.Sonarr[0].ExternalURL, "https://sonarr.example.com")
 	}
 	if loaded.Sonarr[0].APIKey != "abc123" {
 		t.Errorf("Sonarr[0].APIKey = %q, want %q", loaded.Sonarr[0].APIKey, "abc123")
@@ -157,6 +160,26 @@ func TestConfigValidate(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid sonarr external URL",
+			cfg: &ToolkitConfig{
+				Version: 1,
+				Sonarr: []ArrInstance{{
+					Name: "x", URL: "http://sonarr:8989", ExternalURL: "sonarr.example.com", APIKey: "y",
+				}},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid radarr external URL",
+			cfg: &ToolkitConfig{
+				Version: 1,
+				Radarr: []ArrInstance{{
+					Name: "x", URL: "http://radarr:7878", ExternalURL: "radarr.example.com", APIKey: "y",
+				}},
+			},
+			wantErr: true,
+		},
+		{
 			name: "invalid timeout",
 			cfg: &ToolkitConfig{
 				Version: 1,
@@ -199,7 +222,7 @@ func TestConfigURLNormalization(t *testing.T) {
 	dir := t.TempDir()
 	cfg := DefaultToolkitConfig()
 	cfg.Sonarr = []ArrInstance{
-		{Name: "Test", URL: "http://example.com/", APIKey: "key"},
+		{Name: "Test", URL: "http://example.com/", ExternalURL: "https://external.example.com/sonarr/", APIKey: "key"},
 	}
 
 	origHome := os.Getenv("HOME")
@@ -217,6 +240,36 @@ func TestConfigURLNormalization(t *testing.T) {
 
 	if loaded.Sonarr[0].URL != "http://example.com" {
 		t.Errorf("URL = %q, want %q", loaded.Sonarr[0].URL, "http://example.com")
+	}
+	if loaded.Sonarr[0].ExternalURL != "https://external.example.com/sonarr" {
+		t.Errorf("ExternalURL = %q, want %q", loaded.Sonarr[0].ExternalURL, "https://external.example.com/sonarr")
+	}
+}
+
+func TestArrInstanceBrowserURL(t *testing.T) {
+	tests := []struct {
+		name string
+		inst ArrInstance
+		want string
+	}{
+		{
+			name: "external URL",
+			inst: ArrInstance{URL: "http://sonarr:8989", ExternalURL: "https://media.example.com/sonarr/"},
+			want: "https://media.example.com/sonarr",
+		},
+		{
+			name: "API URL fallback",
+			inst: ArrInstance{URL: "http://sonarr:8989/"},
+			want: "http://sonarr:8989",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.inst.BrowserURL(); got != tt.want {
+				t.Errorf("BrowserURL() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

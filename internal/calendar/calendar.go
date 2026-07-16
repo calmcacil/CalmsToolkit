@@ -352,7 +352,7 @@ func fetchSonarrInstance(ctx context.Context, client *httputil.Client, inst conf
 			qMu.Lock()
 			*queueIssues = append(*queueIssues, QueueIssue{
 				ServiceName: inst.Name,
-				URL:         inst.URL + "/activity/queue",
+				URL:         inst.BrowserURL() + "/activity/queue",
 				Count:       errorCount,
 			})
 			qMu.Unlock()
@@ -425,7 +425,7 @@ func fetchRadarrInstance(ctx context.Context, client *httputil.Client, inst conf
 			qMu.Lock()
 			*queueIssues = append(*queueIssues, QueueIssue{
 				ServiceName: inst.Name,
-				URL:         inst.URL + "/activity/queue",
+				URL:         inst.BrowserURL() + "/activity/queue",
 				Count:       errorCount,
 			})
 			qMu.Unlock()
