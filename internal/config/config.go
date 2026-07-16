@@ -61,9 +61,19 @@ func Migrate(cfg *ToolkitConfig) error {
 
 // ArrInstance represents a Sonarr or Radarr server instance.
 type ArrInstance struct {
-	Name   string `json:"name"`
-	URL    string `json:"url"`
-	APIKey string `json:"api_key"`
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	ExternalURL string `json:"external_url,omitempty"`
+	APIKey      string `json:"api_key"`
+}
+
+// BrowserURL returns the browser-facing base URL when configured, otherwise
+// it falls back to the API URL used by CalmsToolkit.
+func (i ArrInstance) BrowserURL() string {
+	if externalURL := strings.TrimSuffix(strings.TrimSpace(i.ExternalURL), "/"); externalURL != "" {
+		return externalURL
+	}
+	return strings.TrimSuffix(strings.TrimSpace(i.URL), "/")
 }
 
 // GeneralConfig holds general toolkit settings.
@@ -234,9 +244,11 @@ func LoadToolkitConfigAt(explicitPath string) (*ToolkitConfig, error) {
 
 	for i := range cfg.Sonarr {
 		cfg.Sonarr[i].URL = strings.TrimSuffix(cfg.Sonarr[i].URL, "/")
+		cfg.Sonarr[i].ExternalURL = strings.TrimSuffix(cfg.Sonarr[i].ExternalURL, "/")
 	}
 	for i := range cfg.Radarr {
 		cfg.Radarr[i].URL = strings.TrimSuffix(cfg.Radarr[i].URL, "/")
+		cfg.Radarr[i].ExternalURL = strings.TrimSuffix(cfg.Radarr[i].ExternalURL, "/")
 	}
 
 	ApplyEnvironment(cfg)
@@ -294,6 +306,9 @@ func (c *ToolkitConfig) Validate() error {
 		} else if !validHTTPURL(inst.URL) {
 			add("sonarr_instances[%d]: invalid url %q", i, inst.URL)
 		}
+		if inst.ExternalURL != "" && !validHTTPURL(inst.ExternalURL) {
+			add("sonarr_instances[%d]: invalid external_url %q", i, inst.ExternalURL)
+		}
 		if inst.APIKey == "" {
 			add("sonarr_instances[%d]: api_key is required", i)
 		}
@@ -313,6 +328,9 @@ func (c *ToolkitConfig) Validate() error {
 			add("radarr_instances[%d]: url is required", i)
 		} else if !validHTTPURL(inst.URL) {
 			add("radarr_instances[%d]: invalid url %q", i, inst.URL)
+		}
+		if inst.ExternalURL != "" && !validHTTPURL(inst.ExternalURL) {
+			add("radarr_instances[%d]: invalid external_url %q", i, inst.ExternalURL)
 		}
 		if inst.APIKey == "" {
 			add("radarr_instances[%d]: api_key is required", i)

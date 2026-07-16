@@ -25,3 +25,21 @@ alias arr-feed='calmstoolkit feed'
 ```
 
 Before removing old scripts, walk through `config validate`, `doctor`, one terminal invocation, one piped invocation, and every JSON consumer. JSON now uses the envelope documented in `CLI_SPEC.md`; read feature fields from `.data`.
+
+## Browser-facing Sonarr and Radarr URLs
+
+Existing instance configuration remains valid. If an instance's `url` uses a
+hostname that only resolves from the CalmsToolkit host or container network,
+add an optional `external_url` for links shown to the user:
+
+```json
+{
+  "name": "Sonarr",
+  "url": "http://sonarr:8989",
+  "external_url": "https://sonarr.example.com",
+  "api_key": "..."
+}
+```
+
+API requests and `doctor` continue to use `url`; calendar queue warnings use
+`external_url`. When `external_url` is omitted, links continue to use `url`.

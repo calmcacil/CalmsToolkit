@@ -36,6 +36,9 @@ You need `curl`, `tar`, and `sha256sum`. For manual downloads, upgrades,
 non-root installation, and removal, see the [installation guide](docs/user/INSTALLATION.md).
 Configuration is stored at `~/.config/calmstoolkit/config.json` with mode
 `0600`; override it with `--config` or `CALMSTOOLKIT_CONFIG`.
+For Sonarr and Radarr instances, `url` is the address CalmsToolkit uses for API
+requests. Set the optional `external_url` when browser links must use a different
+address, such as when the API URL contains a container-only hostname.
 
 ## Commands
 

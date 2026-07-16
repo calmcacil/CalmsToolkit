@@ -3,8 +3,10 @@ package calendar
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -168,6 +170,67 @@ func TestFetchQueue(t *testing.T) {
 
 	if len(queue.Records) != 2 {
 		t.Errorf("Records count = %d, want 2", len(queue.Records))
+	}
+}
+
+func TestQueueIssuesUseExternalInstanceURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		calendarAPI string
+		configure   func(config.ArrInstance) ToolConfig
+	}{
+		{
+			name:        "Sonarr",
+			calendarAPI: "/api/v3/calendar",
+			configure: func(inst config.ArrInstance) ToolConfig {
+				return ToolConfig{SonarrInstances: []config.ArrInstance{inst}, Days: 1}
+			},
+		},
+		{
+			name:        "Radarr",
+			calendarAPI: "/api/v3/calendar",
+			configure: func(inst config.ArrInstance) ToolConfig {
+				return ToolConfig{RadarrInstances: []config.ArrInstance{inst}, Days: 1}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case tt.calendarAPI:
+					fmt.Fprint(w, "[]")
+				case "/api/v3/queue":
+					json.NewEncoder(w).Encode(QueueResponse{Records: []QueueItem{{TrackedState: "importFailed"}}})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			inst := config.ArrInstance{
+				Name:        tt.name,
+				URL:         server.URL,
+				ExternalURL: "https://media.example.com/" + strings.ToLower(tt.name),
+				APIKey:      "test-token",
+			}
+			cfg := tt.configure(inst)
+			cfg.Timeout = time.Second
+
+			_, issues, err := aggregateCalendar(context.Background(), cfg)
+			if err != nil {
+				t.Fatalf("aggregateCalendar() error = %v", err)
+			}
+			if len(issues) != 1 {
+				t.Fatalf("got %d queue issues, want 1", len(issues))
+			}
+			want := inst.ExternalURL + "/activity/queue"
+			if issues[0].URL != want {
+				t.Errorf("queue issue URL = %q, want %q", issues[0].URL, want)
+			}
+		})
 	}
 }
 
