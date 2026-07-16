@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/calmcacil/CalmsToolkit/compare/v1.1.0...v1.2.0) (2026-07-16)
+
+
+### Features
+
+* **cli:** modernize config setup and add completions ([#47](https://github.com/calmcacil/CalmsToolkit/issues/47)) ([bd17e0e](https://github.com/calmcacil/CalmsToolkit/commit/bd17e0e458bb71bd8860e193c889292acec3a0d4))
+
 ## [1.1.0](https://github.com/calmcacil/CalmsToolkit/compare/v1.0.1...v1.1.0) (2026-07-16)
 
 
