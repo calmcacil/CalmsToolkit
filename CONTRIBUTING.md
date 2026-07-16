@@ -1,5 +1,8 @@
 # Contributing
 
+These instructions are for a source checkout. End users should install a
+published binary using the [GitHub Releases installation guide](docs/user/INSTALLATION.md).
+
 Run `make check` before submitting changes. It formats source, verifies module tidiness, runs vet and race tests, and builds Linux amd64/arm64 artifacts.
 
 Also run the pinned golangci-lint, actionlint, and govulncheck commands in `docs/CI_RELEASES.md` when changing code or workflows. CI is authoritative.
