@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/calmcacil/CalmsToolkit/compare/v1.2.1...v1.2.2) (2026-07-16)
+
+
+### Bug Fixes
+
+* **anime:** render frames correctly in raw terminals ([#51](https://github.com/calmcacil/CalmsToolkit/issues/51)) ([ee399db](https://github.com/calmcacil/CalmsToolkit/commit/ee399db3563e7c555b5eb19034e7b6747ad54abb))
+
 ## [1.2.1](https://github.com/calmcacil/CalmsToolkit/compare/v1.2.0...v1.2.1) (2026-07-16)
 
 
