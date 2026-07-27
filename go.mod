@@ -3,8 +3,8 @@ module github.com/calmcacil/CalmsToolkit
 go 1.25.0
 
 require (
-	github.com/klauspost/compress v1.19.0
-	github.com/mattn/go-runewidth v0.0.24
+	github.com/klauspost/compress v1.19.1
+	github.com/mattn/go-runewidth v0.0.27
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
