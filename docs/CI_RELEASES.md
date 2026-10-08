@@ -2,6 +2,9 @@
 
 ## Pull request validation
 
+CI and release builds read the exact Go version from `go.mod` (currently Go 1.27.1).
+Keep the module directive and contributor toolchain aligned when upgrading Go.
+
 Every pull request to `main` runs `CI` and `Security`. The required status contexts are:
 
 - `CI / Quality`
@@ -16,7 +19,7 @@ Every pull request to `main` runs `CI` and `Security`. The required status conte
 Contributors should run `make check` and the commands below before pushing:
 
 ```bash
-go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 run --timeout=5m
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 run --timeout=5m
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```

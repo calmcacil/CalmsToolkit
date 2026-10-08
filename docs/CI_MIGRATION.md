@@ -23,3 +23,9 @@
 8. Review and manually merge the first Release Please PR; verify it proposes `v1.0.0` and that both Linux archives and `checksums.txt` appear on the GitHub Release.
 
 Do not manually create the initial tag before Release Please runs. If the release App is unavailable, leave the generated release PR unmerged until credentials are repaired; do not substitute a maintainer PAT in the workflow.
+
+## Go toolchain migration (2026-10-08)
+
+Use Go 1.27.1 for contributor builds. CI and release builds obtain the version
+from `go.mod`; future module upgrades no longer need duplicate workflow pins.
+The pinned golangci-lint version is v2.13.2.
