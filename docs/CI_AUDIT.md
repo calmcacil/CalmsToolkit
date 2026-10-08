@@ -82,3 +82,10 @@ This design uses only standard `ubuntu-latest` runners. It cancels superseded CI
 - No generated-file gate: the repository has no committed code generation contract.
 - No separate integration matrix: HTTP/service behavior uses deterministic Go tests; live credentials must never run on public PRs.
 - No SBOM, provenance, signing, package publication, larger runners, or merge queue at this stage. These add operational cost without a current distribution requirement.
+
+## Go toolchain alignment (2026-10-08)
+
+CI and release builds now use `go-version-file: go.mod` instead of a separate
+Go 1.25.12 pin. The module requires Go 1.27.1, and golangci-lint is updated to
+v2.13.2 so linting supports that compiler. Permissions and immutable action
+pins are retained.
