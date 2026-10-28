@@ -1,6 +1,6 @@
 module github.com/calmcacil/CalmsToolkit
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/klauspost/compress v1.20.3
