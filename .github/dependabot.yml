@@ -1,4 +1,5 @@
 version: 2
+# Renovate owns mise.toml tool pins; keep these ecosystems with Dependabot.
 updates:
   - package-ecosystem: gomod
     directory: /
@@ -16,6 +17,7 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
